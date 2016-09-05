@@ -5,12 +5,14 @@ import os
 from math import ceil
 
 def gen_grid(fov, min_, max_, overlap, snake):
-    tilesX = int(ceil((max_[0] - min_[0]) / (fov[0] * (1 - overlap))))
-    tilesY = int(ceil((max_[1] - min_[1]) / (fov[1] * (1 - overlap))))
+    tilesX = int(abs(ceil((max_[0] - min_[0]) / (fov[0] * (1 - overlap)))))
+    tilesY = int(abs(ceil((max_[1] - min_[1]) / (fov[1] * (1 - overlap)))))
+    
+    
     
     res = []
     for y in range(tilesY):
-        row = [( x * (fov[0] * (1 - overlap)), y * (fov[1] * (1 - overlap))) for x in range(tilesX)]
+        row = [(min(min_[0], max_[0]) +  x * (fov[0] * (1 - overlap)), min(min_[1], max_[1]) + y * (fov[1] * (1 - overlap))) for x in range(tilesX)]
         if snake and (y % 2 != 0):
             row.reverse()
         res.extend(row)
