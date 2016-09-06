@@ -5,14 +5,16 @@ import os
 from math import ceil
 
 def gen_grid(fov, min_, max_, overlap, snake):
-    tilesX = int(abs(ceil((max_[0] - min_[0]) / (fov[0] * (1 - overlap)))))
-    tilesY = int(abs(ceil((max_[1] - min_[1]) / (fov[1] * (1 - overlap)))))
-    
-    
+    tilesX =  (max_[0] - min_[0]) / (fov[0] * (1 - overlap))
+    tilesY =  (max_[1] - min_[1]) / (fov[1] * (1 - overlap))
+    stepX = fov[0] * (1 - overlap) if tilesX >= 0 else - (fov[0] * (1 - overlap))
+    stepY = fov[1] * (1 - overlap) if tilesY >= 0 else - (fov[1] * (1 - overlap))
+    tilesX = int(ceil(abs(tilesX)))
+    tilesY = int(ceil(abs(tilesY)))
     
     res = []
     for y in range(tilesY):
-        row = [(min(min_[0], max_[0]) +  x * (fov[0] * (1 - overlap)), min(min_[1], max_[1]) + y * (fov[1] * (1 - overlap))) for x in range(tilesX)]
+        row = [(min_[0] + x * stepX, min_[1] + y * stepY) for x in range(tilesX)]
         if snake and (y % 2 != 0):
             row.reverse()
         res.extend(row)
@@ -251,3 +253,6 @@ class NDAcquisition:
             subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
         finally:
             os.remove(ntf.name)
+
+
+print(gen_grid([1,1], [1,0], [0,1], 0.1, True))
