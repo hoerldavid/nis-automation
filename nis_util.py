@@ -194,8 +194,9 @@ class NDAcquisition:
         
     def compile_xy_cmd(self):
         lines = list()
-        lines.append('ND_SetMultipointExp(0,1,"","",0,0.00000,0.00000);')
+        lines.append('ND_SetMultipointExp(0,0,"","",0,0.00000,0.00000);')
         lines.append('ND_ResetMultipointExp();')
+        lines.append('ND_KeepPFSOnDuringStageMove(1);')
         for i in range(len(self.xy)):
             lines.append('ND_AppendMultipointPoint({},{},{},"{}");'.format(*self.xy[i] + [i]))
         return '\n'.join(lines)
