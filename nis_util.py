@@ -35,7 +35,21 @@ def set_optical_configuration(path_to_nis, oc_name):
     finally:
         os.remove(ntf.name)
     
-    
+def do_large_image_scan(path_to_nis, save_path,
+                   left, right, top, bottom,
+                   overlap = 0,
+                   registration = False):
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        cmd = 'Stg_LargeImageScanArea({},{},{},{},0,{},0,{},0,"{}");'.format(
+            left, right, top, bottom, overlap, 1 if registration else 0, save_path)
+   
+        ntf.writelines([bytes(cmd, 'utf-8')])
+        
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
 
 def get_resolution(path_to_nis):
     
@@ -255,5 +269,5 @@ class NDAcquisition:
         finally:
             os.remove(ntf.name)
 
-
-print(gen_grid([1,1], [1,0], [0,1], 0.1, True))
+if __name__ == '__main__':
+    print(gen_grid([1,1], [1,0], [0,1], 0.1, True))
