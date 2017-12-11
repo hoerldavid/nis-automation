@@ -18,8 +18,8 @@ from skimage.transform import rescale, pyramid_gaussian, resize
 from skimage.color import label2rgb
 
 def bbox_pix2unit(bbox, start, pixsize, direction):
-    res = np.array(bbox, dtype=float).reshape((2,2)) * np.array(pixsize, dtype=float) *
-            np.array(direction, dtype=float) + np.array(start, dtype=float)
+    res = (np.array(bbox, dtype=float).reshape((2,2)) * np.array(pixsize, dtype=float) *
+            np.array(direction, dtype=float) + np.array(start, dtype=float))
     return res.reshape((4,))
 
 def aspect(bbox):
