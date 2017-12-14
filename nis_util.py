@@ -270,4 +270,4 @@ class NDAcquisition:
             os.remove(ntf.name)
 
 if __name__ == '__main__':
-    print(gen_grid([1,1], [1,0], [0,1], 0.1, True))
+    print(gen_grid([.5,.5], [1,0], [0,1], 0.1, False))
