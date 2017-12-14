@@ -6,6 +6,7 @@ from skimage.measure import regionprops, label
 from skimage.filters import threshold_adaptive, threshold_otsu, threshold_local
 from skimage.morphology import binary_closing, ball, disk, binary_opening
 from skimage.exposure import rescale_intensity
+from scipy.ndimage.filters import gaussian_filter
 
 import javabridge
 import bioformats
@@ -40,6 +41,9 @@ def detect_wings_simple(img, start, pixsize, direction,
     # rescale to (0-1)
     img_ds = img_ds.astype(float)
     rescale_intensity(img_ds, out_range=(0.0, 1.0))
+    
+    # smooth
+    img_ds = gaussian_filter(img_ds, 2.0)
 
     # adaptive threshold
     if threshold_fun is None:
