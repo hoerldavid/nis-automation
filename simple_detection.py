@@ -34,7 +34,7 @@ def aspect(bbox):
     exx = xmax - xmin
     return (exy / exx) if (exx > exy) else (exx / exy)
 
-def detect_wings_simple(img, start, pixsize, direction,
+def detect_wings_simple(img,
                         ds=2, layers=2, thresh_window=351,
                         minarea=20000, maxarea=80000, minsolidity=.6,
                         minaspect=.3, plot=False, threshold_fun=None):
@@ -42,9 +42,7 @@ def detect_wings_simple(img, start, pixsize, direction,
     logger = logging.getLogger(__name__)
     # some debug output:
     logger.info('wing detection started')
-    logger.debug('detection start: {}'.format(start))
-    logger.debug('detection pixsize: {}'.format(pixsize))
-    logger.debug('detection direction: {}'.format(direction))
+    
     logger.debug('input shape: {}'.format(img.shape))
     logger.debug('ds: {}, layer:{}'.format(ds, layers))
 
@@ -107,8 +105,8 @@ def detect_wings_simple(img, start, pixsize, direction,
             ax.add_patch(rect)
 
     logger.info('found {} object(s)'.format(len(bboxes)) )
-    # pixels to units
-    return [bbox_pix2unit(b, start, pixsize, direction) for b in bboxes]
+    
+    return bboxes
 
 def scale_bbox(bbox, expand_factor = .15):
     (ymin, xmin, ymax, xmax) = tuple(bbox)

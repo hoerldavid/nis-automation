@@ -92,6 +92,92 @@ def get_resolution(path_to_nis):
     
     return res
 
+def get_rotation_matrix(path_to_nis):
+    
+    res = None
+    
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
+        ntf2.close()
+        
+        cmd = '''
+        double a11;
+        double a12;
+        double a21;
+        double a22;
+
+        Get_CalibrationAngleMatrix(0,&a11,&a12,&a21,&a22);
+        
+        Int_SetKeyValue("{0}","res","a11",a11);
+        Int_SetKeyValue("{0}","res","a12",a12);
+        Int_SetKeyValue("{0}","res","a21",a21);
+        Int_SetKeyValue("{0}","res","a22",a22);
+        '''.format(*[ntf2.name])        
+        
+        ntf.writelines([bytes(cmd, 'utf-8')])
+        
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)])) 
+        
+        config = configparser.ConfigParser()
+        config.read(ntf2.name)
+        
+        res = (config['res']['a11'], config['res']['a12'], config['res']['a21'], config.get('res', 'a22'))
+        
+        res = tuple(map(float, res))
+        
+    finally:
+        os.remove(ntf.name)
+        os.remove(ntf2.name)
+    
+    return res
+
+def get_cam_rotation(path_to_nis):
+    
+    res = None
+    
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
+        ntf2.close()
+        
+        cmd = '''
+        int flip;
+        int rot180;
+        double rotation;
+        double rotation2;
+
+        CameraGet_Cam0Flip(1,&flip);
+        CameraGet_Cam0Rotate180(1,&rot180);
+        CameraGet_Rotate(1,&rotation);
+        Camera_RotateGet(&rotation2);
+        
+        Int_SetKeyValue("{0}","res","flip",flip);
+        Int_SetKeyValue("{0}","res","rot180",rot180);
+        Int_SetKeyValue("{0}","res","rotation",rotation);
+        Int_SetKeyValue("{0}","res","rotation2",rotation2);
+
+
+        '''.format(*[ntf2.name])        
+        
+        ntf.writelines([bytes(cmd, 'utf-8')])
+        
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)])) 
+        
+        config = configparser.ConfigParser()
+        config.read(ntf2.name)
+        
+        res = (config['res']['flip'], config['res']['rot180'], config['res']['rotation'], config['res']['rotation2'])       
+        res = tuple(map(float, res))
+        
+    finally:
+        os.remove(ntf.name)
+        os.remove(ntf2.name)
+    
+    return res
+
 def get_optical_confs(path_to_nis):
     res = None
     
