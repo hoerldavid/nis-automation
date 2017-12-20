@@ -38,10 +38,14 @@ def set_optical_configuration(path_to_nis, oc_name):
 def do_large_image_scan(path_to_nis, save_path,
                    left, right, top, bottom,
                    overlap = 0,
-                   registration = False):
+                   registration = False, z_count=1, z_step=1.5 ):
     try:
         ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        cmd = 'Stg_LargeImageScanArea({},{},{},{},0,{},0,{},0,"{}");'.format(
+        cmd = '''
+        Stg_SetLargeImageStageZParams({}, {}, {});
+        Stg_LargeImageScanArea({},{},{},{},0,{},0,{},0,"{}");
+        CloseCurrentDocument(2);
+        '''.format(0 if (z_count <= 1) else 1, z_step, z_count,
             left, right, top, bottom, overlap, 1 if registration else 0, save_path)
    
         ntf.writelines([bytes(cmd, 'utf-8')])
