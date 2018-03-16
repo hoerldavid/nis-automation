@@ -52,7 +52,7 @@ def aspect(bbox):
 
 def detect_wings_simple(img, pixel_size=1,
                         ds=2, layers=2, thresh_window=1400,
-                        minarea=1250, maxarea=5000, minsolidity=.6,
+                        minarea=3000, maxarea=12500, minsolidity=.6,
                         minaspect=.3, plot=False, threshold_fun=None):
     """
     simple wing detection via adaptive thresholding and some filtering by shape
@@ -103,6 +103,8 @@ def detect_wings_simple(img, pixel_size=1,
     
     logger.debug('input shape: {}'.format(img.shape))
     logger.debug('ds: {}, layer:{}'.format(ds, layers))
+    logger.debug('minarea: {}, maxarea:{}'.format(minarea, maxarea))
+    logger.debug('threshold window: {}'.format(thresh_window))
 
     # downsample
     pyr = [p for p in pyramid_gaussian(img, max_layer= layers, downscale = ds)]
@@ -112,7 +114,7 @@ def detect_wings_simple(img, pixel_size=1,
 
     # rescale to (0-1)
     img_ds = img_ds.astype(float)
-    rescale_intensity(img_ds, out_range=(0.0, 1.0))
+    img_ds = rescale_intensity(img_ds, out_range=(0.0, 1.0))
     
     # smooth
     img_ds = gaussian_filter(img_ds, 2.0)
@@ -146,8 +148,8 @@ def detect_wings_simple(img, pixel_size=1,
     # show detections
     if plot:
         image_label_overlay = label2rgb(label(r2), image=img_ds)
-        fig, ax = plt.subplots(figsize=(12, 12))
-        ax.imshow(image_label_overlay)     
+        plt.imshow(image_label_overlay)
+        ax = plt.gca()
 
     # get bboxes
     bboxes = []
