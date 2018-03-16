@@ -55,6 +55,57 @@ def do_large_image_scan(path_to_nis, save_path,
     finally:
         os.remove(ntf.name)
 
+        
+def get_camera_format(path_to_nis):
+    """
+    get camera format string (should contain binning & bit depth)
+    
+    Parameters
+    ----------
+    path_to_nis: str
+        path to the nis_ar.exe executable
+        
+    Returns
+    -------
+    live_format, capture_format: str
+        format strings for live mode and capture mode
+    """
+    
+    res = None
+    
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
+        ntf2.close()
+        
+        cmd = '''
+        char fmt_live[256];
+        char fmt_capture[256];
+        
+        CameraFormatGet(1, &fmt_live);
+        CameraFormatGet(2, &fmt_capture);
+        
+        Int_SetKeyString("{0}","res","fmt_live", &fmt_live);
+        Int_SetKeyString("{0}","res","fmt_capture", &fmt_capture);
+        '''.format(*[ntf2.name])        
+        
+        ntf.writelines([bytes(cmd, 'utf-8')])
+        
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)])) 
+        
+        config = configparser.ConfigParser()
+        config.read(ntf2.name)
+        
+        res = (config['res']['fmt_live'], config['res']['fmt_capture'])
+        
+    finally:
+        os.remove(ntf.name)
+        os.remove(ntf2.name)
+    
+    return res    
+    
+    
 def get_resolution(path_to_nis):
     
     res = None
