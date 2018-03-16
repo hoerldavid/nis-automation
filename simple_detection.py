@@ -1,45 +1,103 @@
-from skimage.morphology import remove_small_holes, watershed, binary_erosion, remove_small_objects
-from skimage.feature import peak_local_max
-from scipy import ndimage as ndi
-from skimage.morphology import binary_closing, binary_opening, ball, disk
+from skimage.morphology import remove_small_holes, binary_erosion
 from skimage.measure import regionprops, label
-from skimage.filters import threshold_adaptive, threshold_otsu, threshold_local
-from skimage.morphology import binary_closing, ball, disk, binary_opening
+from skimage.filters import threshold_local
+from skimage.morphology import disk, binary_opening
 from skimage.exposure import rescale_intensity
 from scipy.ndimage.filters import gaussian_filter
+from skimage.transform import pyramid_gaussian
+from skimage.color import label2rgb
 
 import javabridge
 import bioformats
 
-from matplotlib.widgets import RectangleSelector, Button
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-from skimage.transform import rescale, pyramid_gaussian, resize
-from skimage.color import label2rgb
-
 import logging
 
+
 def bbox_pix2unit(bbox, start, pixsize, direction):
+    """
+    old pixel->unit conversion for bounding boxes
+    NB: may no be corect
+    TODO: remove if it is no longer necessary
+    """
     logger = logging.getLogger(__name__)
     res = (np.array(bbox, dtype=float).reshape((2,2)) * np.array(pixsize, dtype=float) *
             np.array(direction, dtype=float) + np.array(start, dtype=float))
     logger.debug('bbox: {}, toUnit: {}'.format(bbox, res.reshape((4,))))
     return res.reshape((4,))
 
+
 def aspect(bbox):
+    """
+    get inverse aspect ratio a bounding box (smaller axis/larger axis)
+    Parameters
+    ----------
+    bbox: 4-tuple
+        ymin, xmin, ymax, xmax
+
+    Returns
+    -------
+    aspect: scalar
+        inverse aspect ratio (in 0-1)
+    """
+
     (ymin, xmin, ymax, xmax) = bbox
     exy = ymax - ymin
     exx = xmax - xmin
     return (exy / exx) if (exx > exy) else (exx / exy)
 
-def detect_wings_simple(img,
-                        ds=2, layers=2, thresh_window=351,
-                        minarea=20000, maxarea=80000, minsolidity=.6,
+
+def detect_wings_simple(img, pixel_size=1,
+                        ds=2, layers=2, thresh_window=1400,
+                        minarea=1250, maxarea=5000, minsolidity=.6,
                         minaspect=.3, plot=False, threshold_fun=None):
+    """
+    simple wing detection via adaptive thresholding and some filtering by shape
+
+    Parameters
+    ----------
+    img: np-array (2-dim)
+        the input image
+    pixel_size: scalar
+        pixel size in input image
+    ds: scalar
+        downsampling factor at each layer
+    layers: scalat
+        how may downsampling layers to calculate
+    thresh_window: integer
+        window for adaptive threshold, in original image pixels
+    minarea: scalar
+        minimum size of objects to detect, in units^2
+    maxarea: scalar
+        maximum size of objects to detect, in units^2
+    minsolidity: scalar
+        minimal solidity of detected objects \in (0,1)
+    minaspect: scalar
+        minimal inverse aspect ratio of detected objects \in (0,1)
+    plot: boolean
+        whether to plot detections or not
+    threshold_fun: function pointer, optional
+        thresholding function to use in windows
+
+    Returns
+    -------
+    bboxes: list of 4-tuples
+        bounding boxes (in original image pixel units)
+    """
+
+    # scale min and max area to be in pixels^2
+    minarea = minarea / pixel_size**2 * ds**(layers*2)
+    maxarea = maxarea / pixel_size**2 * ds**(layers*2)
+
+    # scale thresh window size, make sure it is odd
+    thresh_window = int(thresh_window/ds**layers)
+    thresh_window += 0 if thresh_window%2 == 1 else 1
 
     logger = logging.getLogger(__name__)
+
     # some debug output:
     logger.info('wing detection started')
     
@@ -51,6 +109,7 @@ def detect_wings_simple(img,
     img_ds = pyr[layers]
 
     logger.debug('img size after ds: {}'.format(img_ds.shape))
+
     # rescale to (0-1)
     img_ds = img_ds.astype(float)
     rescale_intensity(img_ds, out_range=(0.0, 1.0))
@@ -63,6 +122,7 @@ def detect_wings_simple(img,
         thrd = img_ds > threshold_local(img_ds, thresh_window)
     else:
         thrd = img_ds > threshold_local(img_ds, thresh_window, method='generic', param=threshold_fun)
+
     # clean a bit
     thrd = np.bitwise_not(thrd)
     thrd = binary_opening(thrd, selem=disk(4))
@@ -82,16 +142,18 @@ def detect_wings_simple(img,
     # more cleaning, plus some erosion to separate touching wings
     r2 = remove_small_holes(res.astype(np.bool), 25000)
     r2 = binary_erosion(r2, selem=disk(3))
-    
+
+    # show detections
     if plot:
         image_label_overlay = label2rgb(label(r2), image=img_ds)
         fig, ax = plt.subplots(figsize=(12, 12))
         ax.imshow(image_label_overlay)     
-        
-    
+
     # get bboxes
     bboxes = []
     for r in regionprops(label(r2)):
+
+        # TODO: is this really necessary?
         if r.area < (minarea * .8 ):
             continue
 
@@ -108,14 +170,46 @@ def detect_wings_simple(img,
     
     return bboxes
 
+
 def scale_bbox(bbox, expand_factor = .15):
+    """
+    expand a bounding box by a fixed factor
+
+    Parameters
+    ----------
+    bbox: 4-tuple
+        ymin, xmin, ymax, xmax
+    expand_factor: scalar
+        factor by which to scale ( resulting size will be 1+expand_factor)
+
+    Returns
+    -------
+    bbox_scaled: 4-tuple
+        ymin, xmin, ymax, xmax, scaled by factor
+    """
     (ymin, xmin, ymax, xmax) = tuple(bbox)
     yrange = ymax - ymin
     xrange = xmax - xmin
-    return (ymin - yrange * expand_factor / 2., xmin - xrange * expand_factor / 2.,
-            ymax + yrange * expand_factor / 2., xmax + xrange * expand_factor / 2.) 
-    
+    bbox_scaled = (ymin - yrange * expand_factor / 2., xmin - xrange * expand_factor / 2.,
+                   ymax + yrange * expand_factor / 2., xmax + xrange * expand_factor / 2.)
+    return bbox_scaled
+
+
 def read_bf(path):
+    """
+
+    read an image into a np-array using BioFormats
+
+    Parameters
+    ----------
+    path: str
+        file path to read
+
+    Returns
+    -------
+    img: np.array
+        image as np-array
+    """
     javabridge.start_vm(class_path=bioformats.JARS, run_headless=True)
     img = bioformats.load_image(path, rescale=False)
     return img
