@@ -4,14 +4,49 @@ from tempfile import NamedTemporaryFile
 import os
 from math import ceil
 
-def gen_grid(fov, min_, max_, overlap, snake):
-    tilesX =  (max_[0] - min_[0]) / (fov[0] * (1 - overlap))
-    tilesY =  (max_[1] - min_[1]) / (fov[1] * (1 - overlap))
-    stepX = fov[0] * (1 - overlap) if tilesX >= 0 else - (fov[0] * (1 - overlap))
-    stepY = fov[1] * (1 - overlap) if tilesY >= 0 else - (fov[1] * (1 - overlap))
-    tilesX = int(ceil(abs(tilesX)))
-    tilesY = int(ceil(abs(tilesY)))
-    
+
+def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True):
+    """
+    generate a grid of coordinates at which to do a tiled acquisition
+
+    Parameters
+    ----------
+    fov: array-like
+        field-of-view in units
+    min_: array-like
+        minimum of bbox to scan
+    max_: array-like
+        maximum of bbox to scan
+    overlap: scalar \in (0,1)
+        percent overlap
+    snake: boolean
+        whether to alternate in x or not
+    half_fov_offset: boolean
+        whether to correct for NIS 'centering' on locations (-> half FOV offset)
+
+    Returns
+    -------
+    grid: list of 2-tuples
+        (x,y) - coordinates at which to image
+    """
+
+    # whether coordinates are increasing or decreasing in a dimension
+    direction = [1 if max_[0] > min_[0] else -1, 1 if max_[1] > min_[1] else -1]
+
+    # number of tiles
+    tilesX = (abs(max_[0] - min_[0]) - fov[0]) / (fov[0] * (1 - overlap))
+    tilesY = (abs(max_[1] - min_[1]) - fov[1]) / (fov[1] * (1 - overlap))
+    tilesX = max(0, int(ceil(tilesX))) + 1
+    tilesY = max(0, int(ceil(tilesY))) + 1
+
+    # correct for NIS's half FOV offset
+    if half_fov_offset:
+        min_ = [min_[0] + 0.5 * fov[0] * direction[0], min_[1] + 0.5 * fov[1] * direction[1]]
+
+    # steps: increasing or decreasing
+    stepX = fov[0] * (1 - overlap) if direction[0] == 1 else - (fov[0] * (1 - overlap))
+    stepY = fov[1] * (1 - overlap) if direction[1] == 1 else - (fov[1] * (1 - overlap))
+
     res = []
     for y in range(tilesY):
         row = [(min_[0] + x * stepX, min_[1] + y * stepY) for x in range(tilesX)]
@@ -21,8 +56,10 @@ def gen_grid(fov, min_, max_, overlap, snake):
         
     return res
 
+
 def quote(s):
     return '"{}"'.format(s)
+
 
 def set_optical_configuration(path_to_nis, oc_name):
     try:
@@ -34,7 +71,8 @@ def set_optical_configuration(path_to_nis, oc_name):
         subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
     finally:
         os.remove(ntf.name)
-    
+
+
 def do_large_image_scan(path_to_nis, save_path,
                    left, right, top, bottom,
                    overlap = 0,
@@ -147,6 +185,7 @@ def get_resolution(path_to_nis):
     
     return res
 
+
 def get_rotation_matrix(path_to_nis):
     
     res = None
@@ -187,6 +226,7 @@ def get_rotation_matrix(path_to_nis):
         os.remove(ntf2.name)
     
     return res
+
 
 def get_cam_rotation(path_to_nis):
     
@@ -233,6 +273,7 @@ def get_cam_rotation(path_to_nis):
     
     return res
 
+
 def get_optical_confs(path_to_nis):
     res = None
     
@@ -273,7 +314,8 @@ def get_optical_confs(path_to_nis):
         os.remove(ntf2.name)
     
     return res
-        
+
+
 def get_position(path_to_nis):
     res = None
     
@@ -320,9 +362,11 @@ def get_position(path_to_nis):
         os.remove(ntf2.name)
     
     return res
-    
+
+
 def get_fov_from_res(res):
     return (res[0] * res[2] / res[3], res[1] * res[2] / res[3])
+
 
 class NDAcquisition:
     def __init__(self, outfile):
@@ -410,5 +454,6 @@ class NDAcquisition:
         finally:
             os.remove(ntf.name)
 
+
 if __name__ == '__main__':
-    print(gen_grid([.5,.5], [1,0], [0,1], 0.1, False))
+    print(gen_grid([.5,.5], [1,0], [0,1], 0.1, False, True))
