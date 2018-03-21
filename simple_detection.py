@@ -51,11 +51,12 @@ def aspect(bbox):
 
 
 def detect_wings_simple(img, pixel_size=1,
-                        ds=2, layers=2, thresh_window=1400,
-                        minarea=3000, maxarea=12500, minsolidity=.6,
+                        ds=2, layers=2, thresh_window=1.8e3,
+                        minarea=0.5e6, maxarea=2e6, minsolidity=.6,
                         minaspect=.3, plot=False, threshold_fun=None):
     """
     simple wing detection via adaptive thresholding and some filtering by shape
+    default area 0.5-2 mm^2
 
     Parameters
     ----------
@@ -89,11 +90,11 @@ def detect_wings_simple(img, pixel_size=1,
     """
 
     # scale min and max area to be in pixels^2
-    minarea = minarea / pixel_size**2 * ds**(layers*2)
-    maxarea = maxarea / pixel_size**2 * ds**(layers*2)
+    minarea = minarea / pixel_size**2 / ds**(layers*2)
+    maxarea = maxarea / pixel_size**2 / ds**(layers*2)
 
     # scale thresh window size, make sure it is odd
-    thresh_window = int(thresh_window/ds**layers)
+    thresh_window = int(thresh_window / pixel_size / ds**layers)
     thresh_window += 0 if thresh_window%2 == 1 else 1
 
     logger = logging.getLogger(__name__)
