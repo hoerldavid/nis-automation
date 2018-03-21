@@ -5,7 +5,7 @@ import os
 from math import ceil
 
 
-def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True):
+def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True):
     """
     generate a grid of coordinates at which to do a tiled acquisition
 
@@ -23,6 +23,8 @@ def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True):
         whether to alternate in x or not
     half_fov_offset: boolean
         whether to correct for NIS 'centering' on locations (-> half FOV offset)
+    center: boolean
+        whether to center the grid on the bounding box or not (in this case, the object will be in the upper left corner)
 
     Returns
     -------
@@ -38,6 +40,18 @@ def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True):
     tilesY = (abs(max_[1] - min_[1]) - fov[1]) / (fov[1] * (1 - overlap))
     tilesX = max(0, int(ceil(tilesX))) + 1
     tilesY = max(0, int(ceil(tilesY))) + 1
+
+    # re-center grid on bbox
+    if center:
+        totalX = fov[0] + (tilesX - 1) * (fov[0] * (1 - overlap))
+        totalY = fov[1] + (tilesY - 1) * (fov[1] * (1 - overlap))
+
+        #print('{} {}'.format(totalX, totalY))
+        extraX = totalX - abs(max_[0] - min_[0])
+        extraY = totalY - abs(max_[1] - min_[1])
+
+        #print('{} {}'.format(extraX, extraY))
+        min_ = [min_[0] - 0.5 * extraX * direction[0], min_[1] - 0.5 * extraY * direction[1]]
 
     # correct for NIS's half FOV offset
     if half_fov_offset:
@@ -456,4 +470,4 @@ class NDAcquisition:
 
 
 if __name__ == '__main__':
-    print(gen_grid([.5,.5], [1,0], [0,1], 0.1, False, True))
+    print(gen_grid([.6,.6], [1,0], [0,1], 0.0, True, True, True))
