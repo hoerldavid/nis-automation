@@ -66,7 +66,7 @@ def detect_wings_simple(img, pixel_size=1,
         pixel size in input image
     ds: scalar
         downsampling factor at each layer
-    layers: scalat
+    layers: scalar
         how may downsampling layers to calculate
     thresh_window: integer
         window for adaptive threshold, in original image pixels
