@@ -3,6 +3,57 @@ import configparser
 from tempfile import NamedTemporaryFile
 import os
 from math import ceil
+from shutil import move
+
+# autofocus constants
+DEFAULT_FOCUS_CRITERION = 0
+DEFAULT_FOCUS_STEP_COARSE = 10.0
+DEFAULT_FOCUS_STEP_FINE = 1.0
+
+# NIS flags for exporting as multipage TIFF
+EXPORT_TIFF_MASK_T = 1
+EXPORT_TIFF_MASK_XY = 16
+EXPORT_TIFF_MASK_Z = 256
+
+# prefix for the named tiles in a multipoint ND-acq.
+TILE_NAME_PREFIX = 'tile'
+
+# export to TIFF needs a prefix -> dummy that is removed later
+EXPORT_DUMMY_PREFIX = '$tiffexport$'
+
+def export_nd2_to_tiff(path_to_nis, nd2_file, out_dir=None, combine_t=False, combine_yx=False, combine_z=True, combine_c=False):
+    # NB: suffix order should be t, xy, z, c (?)
+
+    if out_dir is None:
+        # same dir
+        out_dir = nd2_file.rsplit(os.sep, 1)[0]
+
+    # multipage mask
+    mask = 0
+    if combine_t:
+        mask += EXPORT_TIFF_MASK_T
+    if combine_yx:
+        mask += EXPORT_TIFF_MASK_XY
+    if combine_z:
+        mask += EXPORT_TIFF_MASK_Z
+
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        cmd = '''
+        char emptystring[1];
+        ND_ExportToTIFF("{}","{}","{}",{},0,0,{});
+        '''.format(nd2_file, out_dir, EXPORT_DUMMY_PREFIX, 3 if combine_c else 0, mask)
+
+        ntf.writelines([bytes(cmd, 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
+
+    # NIS needs a prefix for export -> manually remove the dummy prefix and rename files
+    for f in os.listdir(out_dir):
+        if f.startswith(EXPORT_DUMMY_PREFIX):
+            move(os.path.join(out_dir, f), os.path.join(out_dir, f.replace(EXPORT_DUMMY_PREFIX, '')))
 
 
 def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True):
@@ -73,6 +124,23 @@ def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True)
 
 def quote(s):
     return '"{}"'.format(s)
+
+
+def do_autofocus(path_to_nis, step_coarse=None, step_fine=None, focus_criterion=None):
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        cmd = '''
+        StgFocusSetCriterion({});
+        StgFocusAdaptiveTwoPasses({},{});
+        Freeze();
+        '''.format(focus_criterion if not focus_criterion is None else DEFAULT_FOCUS_CRITERION,
+                   step_coarse if not step_coarse is None else DEFAULT_FOCUS_STEP_COARSE,
+                   step_fine if not step_fine is None else DEFAULT_FOCUS_STEP_FINE,)
+        ntf.writelines([bytes(cmd, 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
 
 
 def set_optical_configuration(path_to_nis, oc_name):
@@ -330,6 +398,29 @@ def get_optical_confs(path_to_nis):
     return res
 
 
+def set_position(path_to_nis, pos_xy=None, pos_z=None, pos_piezo=None, relative_xy=False, relative_z=False, relative_piezo=False):
+
+    # nothing to do
+    if pos_xy is None and pos_z is None and pos_piezo is None:
+        return
+
+    cmd = []
+    if not pos_xy is None:
+        cmd.append('StgMoveXY({},{},{});'.format(pos_xy[0], pos_xy[1], 1 if relative_xy else 0))
+    if not pos_z is None:
+        cmd.append('StgMoveMainZ({},{});'.format(pos_z, 1 if relative_z else 0))
+    if not pos_piezo is None:
+        cmd.append('StgMovePiezoZ({},{});'.format(pos_z, 1 if relative_piezo else 0))
+
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf.writelines([bytes('\n'.join(cmd), 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
+
+
 def get_position(path_to_nis):
     res = None
     
@@ -411,7 +502,7 @@ class NDAcquisition:
         lines.append('ND_ResetMultipointExp();')
         lines.append('ND_KeepPFSOnDuringStageMove(1);')
         for i in range(len(self.xy)):
-            lines.append('ND_AppendMultipointPoint({},{},{},"{}");'.format(*self.xy[i] + [i]))
+            lines.append('ND_AppendMultipointPoint({},{},{},"{}{}");'.format(*self.xy[i] + [TILE_NAME_PREFIX, i]))
         return '\n'.join(lines)
     
     def add_c(self, oc_name):
