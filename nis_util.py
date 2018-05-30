@@ -119,21 +119,23 @@ def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True)
             row.reverse()
         res.extend(row)
         
-    return res
+    return res, tilesX, tilesY, overlap
 
 
 def quote(s):
     return '"{}"'.format(s)
 
 
-def do_autofocus(path_to_nis, step_coarse=None, step_fine=None, focus_criterion=None):
+def do_autofocus(path_to_nis, step_coarse=None, step_fine=None, focus_criterion=None, focus_with_piezo=False):
     try:
         ntf = NamedTemporaryFile(suffix='.mac', delete=False)
         cmd = '''
+        StgZ_SetActiveZ({});
         StgFocusSetCriterion({});
         StgFocusAdaptiveTwoPasses({},{});
         Freeze();
-        '''.format(focus_criterion if not focus_criterion is None else DEFAULT_FOCUS_CRITERION,
+        '''.format(1 if focus_with_piezo else 0,
+                   focus_criterion if not focus_criterion is None else DEFAULT_FOCUS_CRITERION,
                    step_coarse if not step_coarse is None else DEFAULT_FOCUS_STEP_COARSE,
                    step_fine if not step_fine is None else DEFAULT_FOCUS_STEP_FINE,)
         ntf.writelines([bytes(cmd, 'utf-8')])
