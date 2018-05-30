@@ -7,8 +7,11 @@ from scipy.ndimage.filters import gaussian_filter
 from skimage.transform import pyramid_gaussian
 from skimage.color import label2rgb
 
-import javabridge
-import bioformats
+try:
+    import javabridge
+    import bioformats
+except ImportError as e:
+    print('WARNING: Bioformats bridge not installed')
 
 import numpy as np
 import matplotlib.pyplot as plt
