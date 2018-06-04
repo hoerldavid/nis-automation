@@ -483,6 +483,7 @@ class NDAcquisition:
         self.c = None
         self.z = None
         self.z_device = None
+        self.logger = logging.getLogger(__name__)
         
     def set_z(self, bottom, top, step, device_name=None):
         self.z = {'top':top, 'bottom':bottom, 'step':step}
@@ -524,7 +525,7 @@ class NDAcquisition:
         dev = str(self.z_device) if self.z_device != None else ''
         #cmd = 'StgZ_SetActiveZ({0});'.format(*[self.z_device]) if self.z_device != None else ''
         cmd = ('ND_ResetZSeriesExp();\nND_SetZSeriesExp(3,{top},0.00000,{bottom},{step},0,0,0,"'+ dev + '","","");').format(**self.z)
-        print(cmd)
+        self.logger.debug(cmd)
         return cmd
     
     def prepare(self, path_to_nis):
