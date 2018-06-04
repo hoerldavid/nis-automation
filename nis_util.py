@@ -4,6 +4,7 @@ from tempfile import NamedTemporaryFile
 import os
 from math import ceil
 from shutil import move
+import logging
 
 # autofocus constants
 DEFAULT_FOCUS_CRITERION = 0
