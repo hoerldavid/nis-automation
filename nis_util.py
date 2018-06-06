@@ -127,6 +127,20 @@ def quote(s):
     return '"{}"'.format(s)
 
 
+def backup_optical_configurations(path_to_nis, backup_path):
+    """
+    export all optical configurations as XML
+    """
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        cmd = '''BackupOptConf("{}");'''.format(backup_path)
+        ntf.writelines([bytes(cmd, 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
+
+
 def do_autofocus(path_to_nis, step_coarse=None, step_fine=None, focus_criterion=None, focus_with_piezo=False):
     try:
         ntf = NamedTemporaryFile(suffix='.mac', delete=False)
