@@ -6,6 +6,8 @@ from math import ceil
 from shutil import move
 import logging
 
+from resources import dummy_nd2
+
 # autofocus constants
 DEFAULT_FOCUS_CRITERION = 0
 DEFAULT_FOCUS_STEP_COARSE = 10.0
@@ -548,7 +550,10 @@ class NDAcquisition:
             ntf = NamedTemporaryFile(suffix='.mac', delete=False)
             l = [self.t, self.xy, self.z, self.c]
             b = list(map(lambda x: 1 if x else 0, l))
-            ntf.writelines([bytes('ND_DefineExperiment({},{},{},{},0,"{}","",0,0,0,0);'.format(*b + [self.outfile]), 'utf-8')])
+            ntf.writelines([bytes('''
+                ND_ReuseExperiment("{}");
+                ND_DefineExperiment({},{},{},{},0,"{}","",0,0,0,0);
+                '''.format(*[dummy_nd2] + b + [self.outfile]), 'utf-8')])
             
             if self.z:
                 ntf.writelines([bytes(self.compile_z_cmd(), 'utf-8')])  
