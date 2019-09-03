@@ -24,6 +24,20 @@ TILE_NAME_PREFIX = 'tile'
 # export to TIFF needs a prefix -> dummy that is removed later
 EXPORT_DUMMY_PREFIX = '$tiffexport$'
 
+
+#TODO: color camera centercrop
+'''
+InputHWUnit("DS-Ri2 Direct 1.0x", "Ri2_Camera_Color_SN_703130")
+InputHWUnit("DS-Ri2 Direct 1.0x", "Ri2_Camera_Mono_Emulated_SN_703130")
+InputHWUnit("DS-Ri2 Zoom 2.5x", "Ri2_Camera_Mono_Emulated_SN_703130")
+InputHWUnit("DS-Ri2 Zoom 2.5x", "Ri2_Camera_Color_SN_703130")
+CameraFormatSet(1, "3x8_Kaiser_Full_Area_2.5x_1/3");
+CameraFormatSet(1, "3x8_Kaiser_Full_Area_2.5x");
+InputHWUnit("DS-Ri2 Direct 1.0x", "Ri2_Camera_Color_SN_703130");
+CameraFormatSet(1, "3x8_Kaiser_Center_Scan");
+CameraFormatSet(1, "3x8_Kaiser_Center_Scan_1/3");
+'''
+
 def export_nd2_to_tiff(path_to_nis, nd2_file, out_dir=None, combine_t=False, combine_yx=False, combine_z=True, combine_c=False):
     # NB: suffix order should be t, xy, z, c (?)
 
