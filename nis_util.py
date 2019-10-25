@@ -38,6 +38,14 @@ CameraFormatSet(1, "3x8_Kaiser_Center_Scan");
 CameraFormatSet(1, "3x8_Kaiser_Center_Scan_1/3");
 '''
 
+def is_color_camera(path_to_nis):
+    '''
+    Hacky check if we have the color camera active
+    '''
+    live_fmt, capture_fmt = get_camera_format(path_to_nis)
+    return '3x8_Kaiser' in capture_fmt
+
+
 def export_nd2_to_tiff(path_to_nis, nd2_file, out_dir=None, combine_t=False, combine_yx=False, combine_z=True, combine_c=False):
     # NB: suffix order should be t, xy, z, c (?)
 
