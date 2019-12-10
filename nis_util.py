@@ -38,6 +38,10 @@ CameraFormatSet(1, "3x8_Kaiser_Center_Scan");
 CameraFormatSet(1, "3x8_Kaiser_Center_Scan_1/3");
 '''
 
+#def set_camera(path_to_nis, camera_type='grey'):
+    
+    
+
 def is_color_camera(path_to_nis):
     '''
     Hacky check if we have the color camera active
