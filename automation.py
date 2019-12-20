@@ -14,7 +14,7 @@ from skimage.transform import AffineTransform
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-from calmutils.imageio import read_bf
+from simple_detection import read_bf
 import nis_util
 from annotation import manually_correct_rois
 from simple_detection import scale_bbox
@@ -351,13 +351,21 @@ def _do_detection(config: CommonParameters, ov_parameters: OverviewParameters, d
 
     # do the detection
     with ServerProxy(det_params.detector_adress) as proxy:
-        bboxes = proxy.detect_bbox(remote_path, det_params.object_filter, label_export_path)
+        try:
+            bboxes = proxy.detect_bbox(remote_path, det_params.object_filter, label_export_path)
+        except Exception as e:
+            bboxes = None
+            traceback.print_exc()
+            
         bboxes = [] if bboxes is None else bboxes
         print(bboxes)
 
     if det_params.do_manual_annotation:
-        annots = manually_correct_rois(img, [[x0, y0, x1 - x0, y1 - y0] for (y0, x0, y1, x1) in bboxes],
-                                       [1] * len(bboxes))
+        if len(bboxes)==0:
+            annots = manually_correct_rois(img, [], [1])
+        else:
+            annots = manually_correct_rois(img, [[x0, y0, x1 - x0, y1 - y0] for (y0, x0, y1, x1) in bboxes],
+                                           [1] * len(bboxes))
         annotation_out = os.path.join(config.server_path_local, config.prefix, 'overviews', config.prefix + '_manualrois.json')
         with open(annotation_out, 'w') as fd:
             json.dump([a.to_json() for a in annots], fd)
