@@ -13,6 +13,7 @@ from skimage.external.tifffile import imread
 from skimage.transform import AffineTransform
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from IPython import embed # for debugging 
 
 from simple_detection import read_bf
 import nis_util
@@ -43,7 +44,7 @@ def copy_lock_to_dir(src, dst, copyfun=shutil.copy2, lock_ending='lock'):
         raise ValueError('destination has to be a dirctory')
 
     for s in src:
-        copy_lock(s, dst, copyfun, lock_ending)
+        shutil.copy2(s, dst)#, copyfun, lock_ending)
 
 
 def _pix2unit(x, transform):
@@ -356,7 +357,7 @@ def _do_detection(config: CommonParameters, ov_parameters: OverviewParameters, d
         except Exception as e:
             bboxes = None
             traceback.print_exc()
-            
+
         bboxes = [] if bboxes is None else bboxes
         print(bboxes)
 
@@ -526,13 +527,16 @@ def _do_detail(bboxes, config: CommonParameters, detail_params: DetailParameters
                     os.makedirs(os.path.join(config.server_path_local, _prefix, 'raw'))
 
                 # copy raw data to server
-                copy_lock(_wing_path, os.path.join(config.server_path_local, _prefix, 'raw'))
+                logger.debug('about to copy nd2')
+                shutil.copy2(_wing_path, os.path.join(config.server_path_local, _prefix, 'raw'))
+                logger.debug('done copy nd2')
                 if detail_params.tiff_export_details:
                     files = [os.path.join(_wing_out_dir, f) for f in os.listdir(_wing_out_dir) if
                              os.path.isfile(os.path.join(_wing_out_dir, f))]
+                    logger.debug('about to copy tiff')
                     copy_lock_to_dir(files, os.path.join(os.path.join(config.server_path_local, _prefix, 'raw'),
                                                          _wing_out_dir.rsplit(os.sep)[-1]))
-
+                logger.debug('done copy')
                 remote_path = '/'.join([config.server_path_remote, _prefix, 'raw',
                                         _wing_out_dir.rsplit(os.sep)[-1] if detail_params.tiff_export_details else
                                         _wing_path.rsplit(os.sep)[-1]])
@@ -544,13 +548,25 @@ def _do_detail(bboxes, config: CommonParameters, detail_params: DetailParameters
 
                 # parameters for cleanup
                 # move stitching to oc directories, delete raw tiffs and temporary stitching folder
-                cleanup_params = {'stitching_path': remote_path + '_stitched',
+                
+                # FIXME: check if we mix color and grayscale, error then!                
+                if color:
+                    cleanup_params = {'stitching_path': remote_path + '_stitched',
+                                  'outpaths': ['/'.join([config.server_path_remote, _prefix, oc]) for oc in detail_params.ocs_detail] * 3,
+                                  'outnames': [_wing_out_dir.rsplit(os.sep)[-1] + '_' + rgb_suffix + TIFF_SUFFIX for rgb_suffix in ['r', 'g', 'b']],
+                                  'raw_paths': [remote_path],
+                                  'delete_raw': True,
+                                  'delete_stitching': True
+                                  }
+                else:
+                    cleanup_params = {'stitching_path': remote_path + '_stitched',
                                   'outpaths': ['/'.join([config.server_path_remote, _prefix, oc]) for oc in detail_params.ocs_detail],
                                   'outnames': [_wing_out_dir.rsplit(os.sep)[-1] + TIFF_SUFFIX] * len(detail_params.ocs_detail),
                                   'raw_paths': [remote_path],
                                   'delete_raw': True,
                                   'delete_stitching': True
                                   }
+                
 
                 with ServerProxy(detail_params.stitcher_adress) as proxy:
                     proxy.stitch([remote_path, _tilesX, _tilesY, _overlap, detail_params.channel_for_stitch + 1 if not color else 'RGB'], detail_params.tiff_export_details,
@@ -565,6 +581,7 @@ def _do_detail(bboxes, config: CommonParameters, detail_params: DetailParameters
             copy_det_thread = threading.Thread(target=copy_details)
             threads.append(copy_det_thread)
             copy_det_thread.start()
+
 
             # update progress
             progress_indicator = config.progress_indicator
@@ -617,4 +634,3 @@ def do_scan_detection_first(configs: Iterable[CommonParameters], ov_params: Iter
 
     for (config, detail_param, bboxes) in zip(configs, detail_params, bboxes_acc):
         _do_detail(bboxes, config, detail_param)
-
