@@ -20,6 +20,10 @@ class ROIAnnotationResult(Namespace):
         d = self.__dict__.copy()
         d['roi'] = list((int(di) for di in d['roi']))
         return d
+
+    # ROIAnnotationResults should not be compared by value
+    def __eq__(self, other):
+        return self is other
         
         
 def manually_correct_rois(img, rois, labels, colors=None):
