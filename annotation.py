@@ -154,7 +154,10 @@ def manually_correct_rois(img, rois, labels, colors=None):
         nonlocal roi_results
         
         # create new roi at last mouse position
-        new_roi = [int(last_mouse_pos.x()), int(last_mouse_pos.y()), 20,20]
+        avg_w = np.mean([r.roi[2] for r in roi_results])
+        avg_h = np.mean([r.roi[3] for r in roi_results])
+
+        new_roi = [int(last_mouse_pos.x()), int(last_mouse_pos.y()), avg_w, avg_h]
         new_roi_results = ROIAnnotationResult(new_roi, labels_list[0], True)
         roi_results.append(new_roi_results)
         
@@ -173,3 +176,8 @@ def manually_correct_rois(img, rois, labels, colors=None):
         qt.QtGui.QApplication.processEvents()
     
     return roi_results
+
+
+if __name__ == '__main__':
+    res = manually_correct_rois(np.random.uniform(size=(200,200)), [[0,0,30,40], [0,22,30,4], [120,0,30,40]], [1,1,1])
+    print(res)
