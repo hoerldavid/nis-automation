@@ -7,11 +7,14 @@ just runs them in a loop.
 
 Per cycle:
   1. run the current ND experiment, saved to <stamp>_c<NN>_survey.nd2
-  2. detect objects in the survey image (detection.detect)
+  2. detect objects in the survey image (detection.detect) — returns
+     a (labels, stimulation_mask) tuple
   3. remap object labels against the previous cycle (IoU matching)
-     and pick the smallest not-yet-stimulated label
+     and pick the smallest not-yet-stimulated label that has at least
+     one pixel in the stimulation mask
   4. open the survey image in NIS, add the object's polygon as a
-     stimulation ROI (type 3)
+     stimulation ROI (type 3) — polygon is drawn only where
+     (labels == cell_id) & stimulation_mask
   5. switch optical conf to FRAPPA, run the current sequential
      stimulation experiment
   6. save the FRAP timeseries to <stamp>_c<NN>_frap.nd2 (the stimulation
@@ -20,8 +23,8 @@ Per cycle:
      and close the FRAP + survey documents
 -> next cycle (the ND experiment definition restores the survey OC)
 
-The loop stops when every detected object has been stimulated or
-max_cycles is reached.
+The loop stops when every detected object has been stimulated, when
+no cell has stimulation-eligible pixels, or when max_cycles is reached.
 """
 import os
 import sys
@@ -44,10 +47,49 @@ IOU_THRESHOLD = 0.3
 def next_cell(labels, stimulated):
     """
     smallest label > 0 not in `stimulated`; None if none left
+
+    Kept for backward compatibility; use ``next_stimulatable_cell``
+    when a stimulation mask is available.
     """
     for lbl in sorted(np.unique(labels).tolist()):
         if lbl > 0 and lbl not in stimulated:
             return lbl
+    return None
+
+
+def next_stimulatable_cell(labels, stimulation_mask, stimulated, skip=None):
+    """
+    Find the next unstimulated cell that has at least one nonzero
+    pixel in the stimulation mask.
+
+    Iterates over labels in sorted order. For each candidate label
+    that is not in the stimulated set, checks whether
+    ``(labels == lbl) & stimulation_mask`` has any nonzero pixels;
+    if not, skips to the next candidate.
+
+    Parameters
+    ----------
+    labels: 2D np.ndarray
+        label map (0 = background, 1..N = objects)
+    stimulation_mask: 2D np.ndarray
+        binary mask of areas eligible for photostimulation
+    stimulated: set of int
+        already-stimulated cell IDs
+    skip: int or None
+        if provided, skip labels <= skip (useful for retrying
+        after a failed stimulation)
+
+    Returns
+    -------
+    cell_id: int or None
+        the next stimulatable cell, or None if none found
+    """
+    for lbl in sorted(np.unique(labels).tolist()):
+        if lbl > 0 and lbl not in stimulated:
+            if skip is not None and lbl <= skip:
+                continue
+            if np.any((labels == lbl) & stimulation_mask):
+                return lbl
     return None
 
 
@@ -116,26 +158,36 @@ def autofrap(nis_exe, out_dir, max_cycles=None, survey_channel=0,
         print('[c%02d] survey saved (%.1f s)' % (cycle, time.time() - t0), flush=True)
 
         # 3. detect
-        labels = detection.detect(survey_file, channel=survey_channel)
+        labels, stimulation_mask = detection.detect(
+            survey_file, channel=survey_channel
+        )
         n_obj = len(np.unique(labels)) - 1
 
-        # 4. pick the next unused cell
+        # 4. pick the next unused cell with stimulation-eligible pixels
         if prev_labels is None:
             cur_labels = labels
-            cell = next_cell(cur_labels, stimulated)
         else:
-            cur_labels, stimulated = remap_stimulated(prev_labels, labels,
-                                                      stimulated, iou_threshold)
-            cell = next_cell(cur_labels, stimulated)
+            cur_labels, stimulated = remap_stimulated(
+                prev_labels, labels, stimulated, iou_threshold
+            )
+
+        cell = next_stimulatable_cell(
+            cur_labels, stimulation_mask, stimulated
+        )
 
         if cell is None:
-            print('[c%02d] %d objects, all stimulated -> stop' % (cycle, n_obj))
+            print(
+                '[c%02d] %d objects, all stimulated or no '
+                'stimulation mask -> stop' % (cycle, n_obj)
+            )
             break
 
         print('[c%02d] %d objects, stimulating cell %d' % (cycle, n_obj, cell))
 
         # 5. stimulation ROI + stimulation run
-        poly = detection.label_to_polygon(cur_labels, cell)
+        poly = detection.detect_polygon_stim_mask(
+            cur_labels, stimulation_mask, cell
+        )
         if not poly:
             raise RuntimeError('no polygon for cell %d' % cell)
 
