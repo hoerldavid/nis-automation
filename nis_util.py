@@ -24,6 +24,10 @@ TILE_NAME_PREFIX = 'tile'
 # export to TIFF needs a prefix -> dummy that is removed later
 EXPORT_DUMMY_PREFIX = '$tiffexport$'
 
+# placeholder for the temp .ini path in macro bodies; _run_macro
+# substitutes it with the real path (only when ini=True)
+INI_PLACEHOLDER = '__INI_PATH__'
+
 
 #TODO: color camera centercrop
 '''
@@ -40,7 +44,8 @@ CameraFormatSet(1, "3x8_Kaiser_Center_Scan_1/3");
 
 #def set_camera(path_to_nis, camera_type='grey'):
     
-    
+
+
 
 def is_color_camera(path_to_nis):
     '''
@@ -66,18 +71,11 @@ def export_nd2_to_tiff(path_to_nis, nd2_file, out_dir=None, combine_t=False, com
     if combine_z:
         mask += EXPORT_TIFF_MASK_Z
 
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        cmd = '''
+    cmd = f'''
         char emptystring[1];
-        ND_ExportToTIFF("{}","{}","{}",{},0,0,{});
-        '''.format(nd2_file, out_dir, EXPORT_DUMMY_PREFIX, 3 if combine_c else 0, mask)
-
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+        ND_ExportToTIFF("{nd2_file}","{out_dir}","{EXPORT_DUMMY_PREFIX}",{3 if combine_c else 0},0,0,{mask});
+        '''
+    _run_macro(path_to_nis, cmd)
 
     # NIS needs a prefix for export -> manually remove the dummy prefix and rename files
     for f in os.listdir(out_dir):
@@ -155,132 +153,133 @@ def quote(s):
     return '"{}"'.format(s)
 
 
+def _cleanup(*paths):
+    """
+    remove temp files, tolerating NIS keeping a lock on the .mac file
+    of a *failed* macro (os.remove then raises PermissionError)
+    """
+    for p in paths:
+        if p is None:
+            continue
+        try:
+            os.remove(p)
+        except (PermissionError, FileNotFoundError):
+            pass
+
+
+def _run_macro(path_to_nis, body, ini=False):
+    """
+    run a NIS macro: write it to a temp .mac file and execute it with
+    `nis_ar -mw` (attaches to the running NIS GUI, blocks until the
+    macro finishes), then clean up the temp files
+
+    Parameters
+    ----------
+    path_to_nis: str
+        path to the nis_ar.exe executable
+    body: str
+        macro code; every occurrence of INI_PLACEHOLDER is replaced
+        with the temp .ini path (only when ini=True)
+    ini: bool
+        create a temp .ini for the macro to write results into
+        (Int_SetKeyValue / Int_SetKeyString); when True, the parsed
+        .ini is returned
+
+    Returns
+    -------
+    config: configparser.ConfigParser or None
+        the parsed .ini file (ini=True), or None (ini=False);
+        like the old per-function code, a missing section/key raises
+        KeyError in the caller
+    """
+    ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+    ntf2 = None
+    try:
+        if ini:
+            # pre-create an empty .ini for the macro to fill
+            ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
+            ntf2.close()
+            body = body.replace(INI_PLACEHOLDER, ntf2.name)
+        ntf.writelines([bytes(body, 'utf-8')])
+        # the .mac handle must be closed before nis_ar opens the file,
+        # otherwise the GUI reports "Can't open file for reading"
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+        if ini:
+            config = configparser.ConfigParser()
+            config.read(ntf2.name)
+            return config
+    finally:
+        _cleanup(ntf.name, ntf2.name if ntf2 else None)
+
+
 def backup_optical_configurations(path_to_nis, backup_path):
     """
     export all optical configurations as XML
     """
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        cmd = '''BackupOptConf("{}");'''.format(backup_path)
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    _run_macro(path_to_nis, f'BackupOptConf("{backup_path}");')
 
 
 def do_autofocus(path_to_nis, step_coarse=None, step_fine=None, focus_criterion=None, focus_with_piezo=False):
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        cmd = '''
-        StgZ_SetActiveZ({});
-        StgFocusSetCriterion({});
-        StgFocusAdaptiveTwoPasses({},{});
+    focus_criterion = DEFAULT_FOCUS_CRITERION if focus_criterion is None else focus_criterion
+    step_coarse = DEFAULT_FOCUS_STEP_COARSE if step_coarse is None else step_coarse
+    step_fine = DEFAULT_FOCUS_STEP_FINE if step_fine is None else step_fine
+
+    cmd = f'''
+        StgZ_SetActiveZ({1 if focus_with_piezo else 0});
+        StgFocusSetCriterion({focus_criterion});
+        StgFocusAdaptiveTwoPasses({step_coarse},{step_fine});
         Freeze();
-        '''.format(1 if focus_with_piezo else 0,
-                   focus_criterion if not focus_criterion is None else DEFAULT_FOCUS_CRITERION,
-                   step_coarse if not step_coarse is None else DEFAULT_FOCUS_STEP_COARSE,
-                   step_fine if not step_fine is None else DEFAULT_FOCUS_STEP_FINE,)
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+        '''
+    _run_macro(path_to_nis, cmd)
 
 
 def set_optical_configuration(path_to_nis, oc_name):
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        cmd = 'SelectOptConf("{0}");'.format(*[oc_name])
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    _run_macro(path_to_nis, f'SelectOptConf("{oc_name}");')
 
 
 def do_large_image_scan(path_to_nis, save_path,
                    left, right, top, bottom,
                    overlap = 0,
                    registration = False, z_count=1, z_step=1.5, close=True ):
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        cmd = '''
-        Stg_SetLargeImageStageZParams({}, {}, {});
-        Stg_LargeImageScanArea({},{},{},{},0,{},0,{},0,"{}");
-        {}
-        '''.format(0 if (z_count <= 1) else 1, z_step, z_count,
-            left, right, top, bottom, overlap, 1 if registration else 0, save_path, 'CloseCurrentDocument(2);' if close else '')
-   
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    cmd = f'''
+        Stg_SetLargeImageStageZParams({0 if (z_count <= 1) else 1}, {z_step}, {z_count});
+        Stg_LargeImageScanArea({left},{right},{top},{bottom},0,{overlap},0,{1 if registration else 0},0,"{save_path}");
+        {'' if not close else 'CloseCurrentDocument(2);'}
+        '''
+    _run_macro(path_to_nis, cmd)
 
-        
+
 def get_camera_format(path_to_nis):
     """
     get camera format string (should contain binning & bit depth)
-    
+
     Parameters
     ----------
     path_to_nis: str
         path to the nis_ar.exe executable
-        
+
     Returns
     -------
     live_format, capture_format: str
         format strings for live mode and capture mode
     """
-    
-    res = None
-    
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
-        ntf2.close()
-        
-        cmd = '''
+    cmd = f'''
         char fmt_live[256];
         char fmt_capture[256];
         
         CameraFormatGet(1, &fmt_live);
         CameraFormatGet(2, &fmt_capture);
         
-        Int_SetKeyString("{0}","res","fmt_live", &fmt_live);
-        Int_SetKeyString("{0}","res","fmt_capture", &fmt_capture);
-        '''.format(*[ntf2.name])        
-        
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)])) 
-        
-        config = configparser.ConfigParser()
-        config.read(ntf2.name)
-        
-        res = (config['res']['fmt_live'], config['res']['fmt_capture'])
-        
-    finally:
-        os.remove(ntf.name)
-        os.remove(ntf2.name)
-    
-    return res    
-    
-    
+        Int_SetKeyString("{INI_PLACEHOLDER}","res","fmt_live", &fmt_live);
+        Int_SetKeyString("{INI_PLACEHOLDER}","res","fmt_capture", &fmt_capture);
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    return (config['res']['fmt_live'], config['res']['fmt_capture'])
+
+
 def get_resolution(path_to_nis):
-    
-    res = None
-    
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
-        ntf2.close()
-        
-        cmd = '''
+    cmd = f'''
         int x;
         int y;
         double siz;
@@ -288,41 +287,18 @@ def get_resolution(path_to_nis):
         GetCameraResolution(2,&x,&y,&siz);
         mag = GetCurrentObjMagnification();
         
-        Int_SetKeyValue("{0}","res","xres",x);
-        Int_SetKeyValue("{0}","res","yres",y);
-        Int_SetKeyValue("{0}","res","siz",siz);
-        Int_SetKeyValue("{0}","res","mag",mag);
-        '''.format(*[ntf2.name])        
-        
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)])) 
-        
-        config = configparser.ConfigParser()
-        config.read(ntf2.name)
-        
-        res = (config['res']['xres'], config['res']['yres'], config['res']['siz'], config.get('res', 'mag'))
-        
-        res = tuple(map(float, res))
-        
-    finally:
-        os.remove(ntf.name)
-        os.remove(ntf2.name)
-    
-    return res
+        Int_SetKeyValue("{INI_PLACEHOLDER}","res","xres",x);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","res","yres",y);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","res","siz",siz);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","res","mag",mag);
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    res = (config['res']['xres'], config['res']['yres'], config['res']['siz'], config.get('res', 'mag'))
+    return tuple(map(float, res))
 
 
 def get_rotation_matrix(path_to_nis):
-    
-    res = None
-    
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
-        ntf2.close()
-        
-        cmd = '''
+    cmd = f'''
         double a11;
         double a12;
         double a21;
@@ -330,29 +306,14 @@ def get_rotation_matrix(path_to_nis):
 
         Get_CalibrationAngleMatrix(0,&a11,&a12,&a21,&a22);
         
-        Int_SetKeyValue("{0}","res","a11",a11);
-        Int_SetKeyValue("{0}","res","a12",a12);
-        Int_SetKeyValue("{0}","res","a21",a21);
-        Int_SetKeyValue("{0}","res","a22",a22);
-        '''.format(*[ntf2.name])        
-        
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)])) 
-        
-        config = configparser.ConfigParser()
-        config.read(ntf2.name)
-        
-        res = (config['res']['a11'], config['res']['a12'], config['res']['a21'], config.get('res', 'a22'))
-        
-        res = tuple(map(float, res))
-        
-    finally:
-        os.remove(ntf.name)
-        os.remove(ntf2.name)
-    
-    return res
+        Int_SetKeyValue("{INI_PLACEHOLDER}","res","a11",a11);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","res","a12",a12);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","res","a21",a21);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","res","a22",a22);
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    res = (config['res']['a11'], config['res']['a12'], config['res']['a21'], config.get('res', 'a22'))
+    return tuple(map(float, res))
 
 
 def get_cam_rotation(path_to_nis):
@@ -370,119 +331,63 @@ def get_cam_rotation(path_to_nis):
         CameraGet_Rotate (camera property rotation) and Camera_RotateGet
         (current rotation), in degrees
     """
-    
-    res = None
-    
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
-        ntf2.close()
-        
-        cmd = '''
+    cmd = f'''
         double rotation;
         double rotation2;
 
         CameraGet_Rotate(1,&rotation);
         Camera_RotateGet(&rotation2);
         
-        Int_SetKeyValue("{0}","res","rotation",rotation);
-        Int_SetKeyValue("{0}","res","rotation2",rotation2);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","res","rotation",rotation);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","res","rotation2",rotation2);
 
 
-        '''.format(*[ntf2.name])        
-        
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)])) 
-        
-        config = configparser.ConfigParser()
-        config.read(ntf2.name)
-        
-        res = (config['res']['rotation'], config['res']['rotation2'])       
-        res = tuple(map(float, res))
-        
-    finally:
-        os.remove(ntf.name)
-        os.remove(ntf2.name)
-    
-    return res
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    res = (config['res']['rotation'], config['res']['rotation2'])
+    return tuple(map(float, res))
 
 
 def get_optical_confs(path_to_nis):
-    res = None
-    
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
-        ntf2.close()
-        
-        cmd = '''
+    cmd = f'''
         int i;
         char buf[256];
         char name[256];
         
-        Int_SetKeyValue("{0}","oc","count",GetOptConfCount());
+        Int_SetKeyValue("{INI_PLACEHOLDER}","oc","count",GetOptConfCount());
         
         for(i=0; i < GetOptConfCount(); i=i+1)
         {{
             GetOptConfName(i, &name, 256);
             sprintf(&buf, "conf%i", "i" );
-            Int_SetKeyString("{0}","oc",&buf,&name);
+            Int_SetKeyString("{INI_PLACEHOLDER}","oc",&buf,&name);
         }}        
 
-        '''.format(*[ntf2.name])
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)])) 
-        
-        config = configparser.ConfigParser()
-        config.read(ntf2.name)
-        
-        res = []
-        for i in range(int(config.get('oc', 'count'))):
-            res.append(config.get('oc', 'conf' + str(i)))
-                
-    finally:
-        os.remove(ntf.name)
-        os.remove(ntf2.name)
-    
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    res = []
+    for i in range(int(config.get('oc', 'count'))):
+        res.append(config.get('oc', 'conf' + str(i)))
     return res
 
 
 def set_position(path_to_nis, pos_xy=None, pos_z=None, pos_piezo=None, relative_xy=False, relative_z=False, relative_piezo=False):
-
     # nothing to do
     if pos_xy is None and pos_z is None and pos_piezo is None:
         return
 
     cmd = []
-    if not pos_xy is None:
-        cmd.append('StgMoveXY({},{},{});'.format(pos_xy[0], pos_xy[1], 1 if relative_xy else 0))
-    if not pos_z is None:
-        cmd.append('StgMoveMainZ({},{});'.format(pos_z, 1 if relative_z else 0))
-    if not pos_piezo is None:
-        cmd.append('StgMovePiezoZ({},{});'.format(pos_z, 1 if relative_piezo else 0))
-
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf.writelines([bytes('\n'.join(cmd), 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    if pos_xy is not None:
+        cmd.append(f'StgMoveXY({pos_xy[0]},{pos_xy[1]},{1 if relative_xy else 0});')
+    if pos_z is not None:
+        cmd.append(f'StgMoveMainZ({pos_z},{1 if relative_z else 0});')
+    if pos_piezo is not None:
+        cmd.append(f'StgMovePiezoZ({pos_piezo},{1 if relative_piezo else 0});')
+    _run_macro(path_to_nis, '\n'.join(cmd))
 
 
 def get_position(path_to_nis):
-    res = None
-    
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
-        ntf2.close()
-        
-        cmd = '''
+    cmd = f'''
         double x;
         double y;
         double z_0;
@@ -493,33 +398,20 @@ def get_position(path_to_nis):
         if (StgZ_IsPresent(1))
         {{
             StgGetPosZ(&z_1, 1);
-            Int_SetKeyValue("{0}","pos","z1",z_1);
+            Int_SetKeyValue("{INI_PLACEHOLDER}","pos","z1",z_1);
         }}        
         
-        Int_SetKeyValue("{0}","pos","x",x);
-        Int_SetKeyValue("{0}","pos","y",y);
-        Int_SetKeyValue("{0}","pos","z0",z_0);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","pos","x",x);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","pos","y",y);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","pos","z0",z_0);
         
-        '''.format(*[ntf2.name])
-        
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)])) 
-        
-        config = configparser.ConfigParser()
-        config.read(ntf2.name)
-        
-        res = [config.get('pos', 'x'), config.get('pos', 'y'), 
-               config.get('pos', 'z0'), config.get('pos', 'z1', fallback=None)]
-        
-        res = tuple(map(float, res))
-    
-    finally:
-        os.remove(ntf.name)
-        os.remove(ntf2.name)
-    
-    return res
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    res = [float(config.get('pos', k)) for k in ('x', 'y', 'z0')]
+    # z1 (piezo) is only written when a second Z device is present
+    z1 = config.get('pos', 'z1', fallback=None)
+    res.append(float(z1) if z1 is not None else None)
+    return tuple(res)
 
 
 def get_fov_from_res(res):
@@ -585,16 +477,10 @@ def run_current_nd_experiment(path_to_nis, outfile=None, open_after=True, progre
     progress_bar: bool
         show the ND Experiment Acquisition Status window
     """
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        cmd = 'ND_DefineExperiment(-1,-1,-1,-1,-1,"{}","",-1,-1,-1,-1);\n'.format(outfile or '')
-        run_fn = 'ND_RunExperiment' if progress_bar else 'ND_RunExperimentNoProgressBar'
-        cmd += '{}({});'.format(run_fn, 1 if open_after else 0)
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    cmd = f'ND_DefineExperiment(-1,-1,-1,-1,-1,"{outfile or ""}","",-1,-1,-1,-1);\n'
+    run_fn = 'ND_RunExperiment' if progress_bar else 'ND_RunExperimentNoProgressBar'
+    cmd += f'{run_fn}({1 if open_after else 0});'
+    _run_macro(path_to_nis, cmd)
 
 
 def run_stimulation_experiment(path_to_nis):
@@ -606,13 +492,7 @@ def run_stimulation_experiment(path_to_nis):
     the result stays open in the GUI as the current document (unsaved);
     save it with save_current_document
     """
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf.writelines([bytes('ND_RunSequentialStimulationExp();', 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    _run_macro(path_to_nis, 'ND_RunSequentialStimulationExp();')
 
 
 # predefined NIS ROI colors (RGB values, see CreatePolygonROI docs)
@@ -633,13 +513,7 @@ def open_image(path_to_nis, image_path):
     """
     open an image file (makes it the current document)
     """
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf.writelines([bytes('ImageOpen("{}");'.format(image_path), 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    _run_macro(path_to_nis, f'ImageOpen("{image_path}");')
 
 
 def get_current_document(path_to_nis):
@@ -653,28 +527,13 @@ def get_current_document(path_to_nis):
         title for unsaved documents (e.g. 'ND Acquisition');
         raises KeyError if the query macro failed (like the other get_* functions)
     """
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
-        ntf2.close()
-
-        cmd = '''
+    cmd = f'''
         char buf[1024];
         Get_Filename(5, buf);
-        Int_SetKeyString("{0}","doc","path",buf);
-        '''.format(ntf2.name)
-
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-
-        config = configparser.ConfigParser()
-        config.read(ntf2.name)
-        return config.get('doc', 'path')
-
-    finally:
-        os.remove(ntf.name)
-        os.remove(ntf2.name)
+        Int_SetKeyString("{INI_PLACEHOLDER}","doc","path",buf);
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    return config.get('doc', 'path')
 
 
 def save_current_document(path_to_nis, outfile):
@@ -691,13 +550,7 @@ def save_current_document(path_to_nis, outfile):
     outfile: str
         full destination path
     """
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf.writelines([bytes('ImageSaveAs("{}", 15, 0);'.format(outfile), 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    _run_macro(path_to_nis, f'ImageSaveAs("{outfile}", 15, 0);')
 
 
 def close_current_document(path_to_nis, save='discard'):
@@ -715,13 +568,7 @@ def close_current_document(path_to_nis, save='discard'):
         'yes'     - save the changes, then close
     """
     save_flag = {'ask': 0, 'discard': 2, 'yes': 1}[save]
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf.writelines([bytes('CloseCurrentDocument({});'.format(save_flag), 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    _run_macro(path_to_nis, f'CloseCurrentDocument({save_flag});')
 
 
 def add_polygon_roi(path_to_nis, points, color='green'):
@@ -745,28 +592,13 @@ def add_polygon_roi(path_to_nis, points, color='green'):
     if n < 3:
         raise ValueError('a polygon needs at least 3 points')
 
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
-        ntf2.close()
-
-        cmd = ['double pts[{}];'.format(2 * n)]
-        for i, (x, y) in enumerate(points):
-            cmd.append('pts[{}]={:.6f};'.format(2 * i, x))
-            cmd.append('pts[{}]={:.6f};'.format(2 * i + 1, y))
-        cmd.append('Int_SetKeyValue("{0}","roi","id",CreatePolygonROI(pts,{1},{2}));'.format(
-            ntf2.name, n, color))
-
-        ntf.writelines([bytes('\n'.join(cmd), 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-
-        config = configparser.ConfigParser()
-        config.read(ntf2.name)
-        return int(config['roi']['id'])
-    finally:
-        os.remove(ntf.name)
-        os.remove(ntf2.name)
+    cmd = [f'double pts[{2 * n}];']
+    for i, (x, y) in enumerate(points):
+        cmd.append(f'pts[{2 * i}]={x:.6f};')
+        cmd.append(f'pts[{2 * i + 1}]={y:.6f};')
+    cmd.append(f'Int_SetKeyValue("{INI_PLACEHOLDER}","roi","id",CreatePolygonROI(pts,{n},{color}));')
+    config = _run_macro(path_to_nis, '\n'.join(cmd), ini=True)
+    return int(config['roi']['id'])
 
 
 def set_roi_type(path_to_nis, roi_id, roi_type):
@@ -777,13 +609,7 @@ def set_roi_type(path_to_nis, roi_id, roi_type):
     note: type 1 *hides* the ROI — do not use
     (the macro's return value is unreliable; verify with get_roi_count if needed)
     """
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf.writelines([bytes('ChangeROIType({}, {});'.format(roi_id, roi_type), 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    _run_macro(path_to_nis, f'ChangeROIType({roi_id}, {roi_type});')
 
 
 def delete_roi(path_to_nis, roi_id):
@@ -791,35 +617,17 @@ def delete_roi(path_to_nis, roi_id):
     remove an ROI from the current image (DeleteROI)
     (always returns 0 — verify with get_roi_count if needed)
     """
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf.writelines([bytes('DeleteROI({});'.format(roi_id), 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-    finally:
-        os.remove(ntf.name)
+    _run_macro(path_to_nis, f'DeleteROI({roi_id});')
 
 
 def get_roi_count(path_to_nis):
     """
     number of visible ROIs on the current image (GetROICount)
     """
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
-        ntf2.close()
-
-        ntf.writelines([bytes('Int_SetKeyValue("{0}","roi","count",GetROICount());'.format(ntf2.name), 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-
-        config = configparser.ConfigParser()
-        config.read(ntf2.name)
-        return int(config['roi']['count'])
-
-    finally:
-        os.remove(ntf.name)
-        os.remove(ntf2.name)
+    config = _run_macro(path_to_nis,
+                        f'Int_SetKeyValue("{INI_PLACEHOLDER}","roi","count",GetROICount());',
+                        ini=True)
+    return int(config['roi']['count'])
 
 
 def get_roi_info(path_to_nis, roi_id):
@@ -831,43 +639,29 @@ def get_roi_info(path_to_nis, roi_id):
     dict with keys: bbox_l, bbox_t, bbox_r, bbox_b, center_x, center_y,
                    min_feret, max_feret, rotation, color
     """
-    try:
-        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
-        ntf2.close()
-
-        cmd = '''
+    cmd = f'''
         int l, t, r, b, cx, cy, minf, maxf;
         double rot;
         dword col;
-        GetROIInfo({1}, &l, &t, &r, &b, &cx, &cy, &minf, &maxf, &rot, &col);
-        Int_SetKeyValue("{0}","roi","l",l);
-        Int_SetKeyValue("{0}","roi","t",t);
-        Int_SetKeyValue("{0}","roi","r",r);
-        Int_SetKeyValue("{0}","roi","b",b);
-        Int_SetKeyValue("{0}","roi","cx",cx);
-        Int_SetKeyValue("{0}","roi","cy",cy);
-        Int_SetKeyValue("{0}","roi","minf",minf);
-        Int_SetKeyValue("{0}","roi","maxf",maxf);
-        Int_SetKeyValue("{0}","roi","rot",rot);
-        Int_SetKeyValue("{0}","roi","col",col);
-        '''.format(ntf2.name, roi_id)
-
-        ntf.writelines([bytes(cmd, 'utf-8')])
-        ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-
-        config = configparser.ConfigParser()
-        config.read(ntf2.name)
-        res = {k: int(config['roi'][k]) for k in ('l', 't', 'r', 'b', 'cx', 'cy', 'minf', 'maxf')}
-        res = {'bbox_l': res['l'], 'bbox_t': res['t'], 'bbox_r': res['r'], 'bbox_b': res['b'],
-               'center_x': res['cx'], 'center_y': res['cy'],
-               'min_feret': res['minf'], 'max_feret': res['maxf'],
-               'rotation': float(config['roi']['rot']), 'color': int(config['roi']['col'])}
-        return res
-    finally:
-        os.remove(ntf.name)
-        os.remove(ntf2.name)
+        GetROIInfo({roi_id}, &l, &t, &r, &b, &cx, &cy, &minf, &maxf, &rot, &col);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","l",l);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","t",t);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","r",r);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","b",b);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","cx",cx);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","cy",cy);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","minf",minf);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","maxf",maxf);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","rot",rot);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","col",col);
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    res = {k: int(config['roi'][k]) for k in ('l', 't', 'r', 'b', 'cx', 'cy', 'minf', 'maxf')}
+    res = {'bbox_l': res['l'], 'bbox_t': res['t'], 'bbox_r': res['r'], 'bbox_b': res['b'],
+           'center_x': res['cx'], 'center_y': res['cy'],
+           'min_feret': res['minf'], 'max_feret': res['maxf'],
+           'rotation': float(config['roi']['rot']), 'color': int(config['roi']['col'])}
+    return res
 
 
 class NDAcquisition:
@@ -924,41 +718,21 @@ class NDAcquisition:
         return cmd
     
     def prepare(self, path_to_nis):
-        try:
-            ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-            l = [self.t, self.xy, self.z, self.c]
-            b = list(map(lambda x: 1 if x else 0, l))
-            ntf.writelines([bytes('''
-                ND_ReuseExperiment("{}");
-                ND_DefineExperiment({},{},{},{},0,"{}","",0,0,0,0);
-                '''.format(*[dummy_nd2] + b + [self.outfile]), 'utf-8')])
-            
-            if self.z:
-                ntf.writelines([bytes(self.compile_z_cmd(), 'utf-8')])  
-            
-            if self.xy:
-                ntf.writelines([bytes(self.compile_xy_cmd(), 'utf-8')])
-                
-            if self.c:
-                ntf.writelines([bytes(self.compile_c_cmd(), 'utf-8')])
-                
-            ntf.close()
-            subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-            
-        finally:
-            os.remove(ntf.name)
-            
+        b = [1 if x else 0 for x in (self.t, self.xy, self.z, self.c)]
+        cmd = f'''
+                ND_ReuseExperiment("{dummy_nd2}");
+                ND_DefineExperiment({b[0]},{b[1]},{b[2]},{b[3]},0,"{self.outfile}","",0,0,0,0);
+                '''
+        if self.z:
+            cmd += self.compile_z_cmd()
+        if self.xy:
+            cmd += self.compile_xy_cmd()
+        if self.c:
+            cmd += self.compile_c_cmd()
+        _run_macro(path_to_nis, cmd)
+    
     def run(self, path_to_nis):
-        try:
-            ntf = NamedTemporaryFile(suffix='.mac', delete=False)
-                       
-            # run cmd
-            ntf.writelines([bytes('ND_RunExperiment(0);', 'utf-8')])
-            
-            ntf.close()
-            subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
-        finally:
-            os.remove(ntf.name)
+        _run_macro(path_to_nis, 'ND_RunExperiment(0);')
 
 
 if __name__ == '__main__':

@@ -27,6 +27,25 @@ auto-FRAP loop demo (`autofrap.py`, three consecutive verified runs)._
   which **do not exist** in this API → whole macro aborted at compile → empty ini →
   `KeyError: 'res'`. Now uses `CameraGet_Rotate` / `Camera_RotateGet`. Flip/180° info is
   part of the camera→stage calibration matrix (`get_rotation_matrix`).
+- **Refactor** (TODO #5): all the temp-`.mac` → `nis_ar -mw` → temp-`.ini` read-back
+  boilerplate is now in one shared helper, `_run_macro(path_to_nis, body, ini=False)`
+  (returns the parsed `ConfigParser` when `ini=True`); the ini path in macro bodies is
+  written as the `__INI_PATH__` placeholder (module constant `INI_PLACEHOLDER`) and
+  substituted in the helper. Every wrapper is now ~5 lines of macro body + read-back.
+  Verified byte-for-byte: all 33 generated macro bodies (every wrapper, incl. edge
+  arg combos) are **identical** to what the pre-refactor code produced (checked with a
+  one-off old-vs-new harness using deterministic fake temp files + no-op
+  `subprocess.call`; the pre-refactor module was snapshotted for the comparison).
+  Also made the temp-file cleanup tolerate `PermissionError` (NIS keeps a lock on the
+  `.mac` of a *failed* macro — previously documented gotcha, now handled in one place).
+- **Latent bugs fixed in the refactor** (neither was reachable in the current code
+  paths, so behavior on the microscope is unchanged):
+  - `get_position`: `tuple(map(float, res))` raised `TypeError` when no piezo is
+    present (`z1` missing from the ini → `float(None)`); it now correctly returns
+    `z1=None` as documented.
+  - `set_position(pos_piezo=...)`: the piezo branch formatted `pos_z` instead of
+    `pos_piezo` → `StgMovePiezoZ(None,0)` (macro compile error) whenever `pos_z` was
+    None; now uses `pos_piezo`.
 
 ## Inspection (all `get_*` verified live)
 
@@ -166,11 +185,15 @@ auto-FRAP loop demo (`autofrap.py`, three consecutive verified runs)._
    the stimulation phase duration of the current stimulation experiment is reused
    from when it was configured for the previous, larger ROI (not recomputed per
    ROI). Check the GUI phase settings / `ND_StimulationAppendPhase` durations.
-5. Refactor `nis_util.py`: every wrapper repeats the temp `.mac` → `nis_ar -mw` →
-   temp `.ini` read-back boilerplate (~15 lines each, copied through a dozen
-   functions). Extract a shared helper (e.g. `_run_macro(nis, cmd)` / context
-   manager returning a parsed `ConfigParser`) so new wrappers only describe the
-   macro body and the values to read back.
+5. ~~Refactor `nis_util.py`: shared helper for the temp-`.mac` → `nis_ar -mw` →
+   temp-`.ini` boilerplate~~ — **done**: `_run_macro(path_to_nis, body, ini=False)`
+   + `__INI_PATH__` placeholder (see Infrastructure notes). Verified byte-for-byte
+   against the pre-refactor code for all 33 macro bodies; also fixed two latent
+   bugs found along the way (`get_position` without piezo, `set_position(pos_piezo=)`).
+   Caveat: `get_optical_confs`'s macro contains the mysterious
+   `sprintf(&buf, "conf%i", "i" )` (string literal where an int is expected) —
+   verified live before, so it was preserved byte-for-byte in the refactor;
+   worth a proper look (and fixing to `i`) on the next microscope session.
 6. Cleanup: test data is now organized in `test_acquisitions/` and kept (incl.
    `test_stim.nd2` and the `autofrap_out/` FRAP files, which contain saved
    stimulation ROIs). Remaining junk at the root: `__pycache__/`,
@@ -188,7 +211,7 @@ under `test_acquisitions/`, and the NIS macro wrappers at the root (`nis_util.py
 
 | file | purpose |
 |---|---|
-| `nis_util.py` | NIS macro wrappers: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `grid_positions`, `open_image`, `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
+| `nis_util.py` | NIS macro wrappers on top of the shared `_run_macro` helper: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `grid_positions`, `open_image`, `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
 | `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat) |
 | `autofrap/detection.py` | Part 2: `detect`, `dummy_detect_objects`, `read_channel`, `label_to_polygon` |
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
@@ -197,6 +220,8 @@ under `test_acquisitions/`, and the NIS macro wrappers at the root (`nis_util.py
 | `autofrap/autofrap_bitsnpieces/test_merge_label_slices.py` | colleague's sketch: `merge_label_slices` test |
 | `autofrap/autofrap_bitsnpieces/split_mask_along_axis_equal_area.py` | mask utility: split a label mask into two equal-area halves along an axis (skimage) |
 | `autofrap/autofrap_bitsnpieces/test_stim_save.py` | one-off test script (save-current-document probe; cleanup candidate) |
+| `autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py` | equivalence check for the `_run_macro` refactor: all generated `.mac` bodies byte-identical to the frozen pre-refactor snapshot + round-trip / cleanup tests (run: `python autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py`) |
+| `autofrap/autofrap_bitsnpieces/nis_util_old.py` | **frozen snapshot** of the pre-refactor `nis_util.py` (input of the equivalence check; do not edit — a deliberate macro-body change means updating this snapshot) |
 
 ### Test data (`test_acquisitions/`)
 
