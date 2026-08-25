@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# pi coding agent
+.virtual_documents/
+pi-session-*.html
+
+# macOS
+.DS_Store
