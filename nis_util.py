@@ -97,7 +97,7 @@ def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True)
         minimum of bbox to scan
     max_: array-like
         maximum of bbox to scan
-    overlap: scalar \in (0,1)
+    overlap: scalar \\in (0,1)
         percent overlap
     snake: boolean
         whether to alternate in x or not
@@ -356,6 +356,20 @@ def get_rotation_matrix(path_to_nis):
 
 
 def get_cam_rotation(path_to_nis):
+    """
+    get camera rotation angles [deg]
+
+    Note: flip / 180-deg rotation of the optical path is not exposed by a
+    separate macro function in this NIS-Elements version; it is part of the
+    camera->stage calibration matrix (see get_rotation_matrix), which NIS
+    documents as the "rotation and flip" transformation.
+
+    Returns
+    -------
+    rotation, rotation2: (float, float)
+        CameraGet_Rotate (camera property rotation) and Camera_RotateGet
+        (current rotation), in degrees
+    """
     
     res = None
     
@@ -365,18 +379,12 @@ def get_cam_rotation(path_to_nis):
         ntf2.close()
         
         cmd = '''
-        int flip;
-        int rot180;
         double rotation;
         double rotation2;
 
-        CameraGet_Cam0Flip(1,&flip);
-        CameraGet_Cam0Rotate180(1,&rot180);
         CameraGet_Rotate(1,&rotation);
         Camera_RotateGet(&rotation2);
         
-        Int_SetKeyValue("{0}","res","flip",flip);
-        Int_SetKeyValue("{0}","res","rot180",rot180);
         Int_SetKeyValue("{0}","res","rotation",rotation);
         Int_SetKeyValue("{0}","res","rotation2",rotation2);
 
@@ -391,7 +399,7 @@ def get_cam_rotation(path_to_nis):
         config = configparser.ConfigParser()
         config.read(ntf2.name)
         
-        res = (config['res']['flip'], config['res']['rot180'], config['res']['rotation'], config['res']['rotation2'])       
+        res = (config['res']['rotation'], config['res']['rotation2'])       
         res = tuple(map(float, res))
         
     finally:
@@ -516,6 +524,350 @@ def get_position(path_to_nis):
 
 def get_fov_from_res(res):
     return (res[0] * res[2] / res[3], res[1] * res[2] / res[3])
+
+
+def grid_positions(path_to_nis, nx=2, ny=2, spacing=1.0):
+    """
+    compute a grid of stage positions centered on the current stage position
+
+    Parameters
+    ----------
+    path_to_nis: str
+        path to the nis_ar.exe executable
+    nx, ny: int
+        number of grid positions in x and y
+    spacing: float
+        distance between neighboring positions in units of FOV size:
+        1 -> touching (non-overlapping) FOVs,
+        <1 -> overlapping FOVs,
+        >1 -> non-overlapping FOVs with a gap
+
+    Returns
+    -------
+    positions: list of 2-tuples
+        (x, y) stage positions, row-major order
+    """
+    fov_x, fov_y = get_fov_from_res(get_resolution(path_to_nis))
+    x0, y0, _, _ = get_position(path_to_nis)
+
+    step_x = spacing * fov_x
+    step_y = spacing * fov_y
+
+    return [(x0 + (i - (nx - 1) / 2) * step_x,
+             y0 + (j - (ny - 1) / 2) * step_y)
+            for j in range(ny) for i in range(nx)]
+
+
+def run_current_nd_experiment(path_to_nis, outfile=None, open_after=True, progress_bar=True):
+    """
+    run the ND experiment as currently configured in the NIS GUI
+    (ND Acquisition window), without rebuilding its definition
+
+    All experiment parameters are passed as -1 ("keep current") to
+    ND_DefineExperiment except the Filename, which acts as the save
+    on/off switch: a non-empty **full path** (folder + filename) saves
+    there (regardless of the GUI checkbox), an empty filename disables
+    saving (the result then stays open in the GUI, and NIS may prompt
+    "do you want to save?" when the acquisition closes).
+
+    Parameters
+    ----------
+    path_to_nis: str
+        path to the nis_ar.exe executable
+    outfile: str, optional
+        destination ND2 file, **full path** (folder + filename);
+        None or empty -> no saving
+    open_after: bool, default True
+        True (default): keep the result open as the current document after
+        the run. False: NIS closes the result after the run — with no save
+        destination this triggers a save/discard/cancel dialog, so only use
+        False when saving
+    progress_bar: bool
+        show the ND Experiment Acquisition Status window
+    """
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        cmd = 'ND_DefineExperiment(-1,-1,-1,-1,-1,"{}","",-1,-1,-1,-1);\n'.format(outfile or '')
+        run_fn = 'ND_RunExperiment' if progress_bar else 'ND_RunExperimentNoProgressBar'
+        cmd += '{}({});'.format(run_fn, 1 if open_after else 0)
+        ntf.writelines([bytes(cmd, 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
+
+
+def run_stimulation_experiment(path_to_nis):
+    """
+    run the currently configured sequential stimulation ND experiment
+    (ND_RunSequentialStimulationExp = "starts the current Sequential
+    Stimulation ND experiment"); blocks until the experiment finishes
+
+    the result stays open in the GUI as the current document (unsaved);
+    save it with save_current_document
+    """
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf.writelines([bytes('ND_RunSequentialStimulationExp();', 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
+
+
+# predefined NIS ROI colors (RGB values, see CreatePolygonROI docs)
+ROI_COLORS = {
+    'black': 0,
+    'red': 255,
+    'green': 65280,
+    'yellow': 65535,
+    'blue': 16711680,
+    'magenta': 16711935,
+    'cyan': 16776960,
+    'white': 16777215,
+    'default': 2147483647,
+}
+
+
+def open_image(path_to_nis, image_path):
+    """
+    open an image file (makes it the current document)
+    """
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf.writelines([bytes('ImageOpen("{}");'.format(image_path), 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
+
+
+def get_current_document(path_to_nis):
+    """
+    query the current GUI document (Get_Filename FILE_IMAGE)
+
+    Returns
+    -------
+    name: str
+        full path of the currently opened image file, or the document
+        title for unsaved documents (e.g. 'ND Acquisition');
+        raises KeyError if the query macro failed (like the other get_* functions)
+    """
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
+        ntf2.close()
+
+        cmd = '''
+        char buf[1024];
+        Get_Filename(5, buf);
+        Int_SetKeyString("{0}","doc","path",buf);
+        '''.format(ntf2.name)
+
+        ntf.writelines([bytes(cmd, 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+
+        config = configparser.ConfigParser()
+        config.read(ntf2.name)
+        return config.get('doc', 'path')
+
+    finally:
+        os.remove(ntf.name)
+        os.remove(ntf2.name)
+
+
+def save_current_document(path_to_nis, outfile):
+    """
+    save the current GUI document to outfile (ImageSaveAs)
+
+    saves all layers of the document (ImType 15), lossless (ImCompr 0);
+    the format is determined by the file extension (e.g. .nd2 = ND2 format)
+
+    Parameters
+    ----------
+    path_to_nis: str
+        path to the nis_ar.exe executable
+    outfile: str
+        full destination path
+    """
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf.writelines([bytes('ImageSaveAs("{}", 15, 0);'.format(outfile), 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
+
+
+def close_current_document(path_to_nis, save='discard'):
+    """
+    close the current GUI document (CloseCurrentDocument)
+
+    Parameters
+    ----------
+    path_to_nis: str
+        path to the nis_ar.exe executable
+    save: {'ask', 'discard', 'yes'}, default 'discard'
+        what to do if the document has unsaved changes:
+        'ask'     - show the save/discard/cancel dialog (blocks!)
+        'discard' - close without saving, no user interaction
+        'yes'     - save the changes, then close
+    """
+    save_flag = {'ask': 0, 'discard': 2, 'yes': 1}[save]
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf.writelines([bytes('CloseCurrentDocument({});'.format(save_flag), 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
+
+
+def add_polygon_roi(path_to_nis, points, color='green'):
+    """
+    create a polygon ROI on the current image
+
+    Parameters
+    ----------
+    points: sequence of (x, y)
+        polygon vertices in pixel coordinates ((0,0) = top-left)
+    color: str or int
+        color name from ROI_COLORS or an RGB value
+
+    Returns
+    -------
+    roi_id: int
+        >0 on success, <0 on failure
+    """
+    color = ROI_COLORS.get(color, color)
+    n = len(points)
+    if n < 3:
+        raise ValueError('a polygon needs at least 3 points')
+
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
+        ntf2.close()
+
+        cmd = ['double pts[{}];'.format(2 * n)]
+        for i, (x, y) in enumerate(points):
+            cmd.append('pts[{}]={:.6f};'.format(2 * i, x))
+            cmd.append('pts[{}]={:.6f};'.format(2 * i + 1, y))
+        cmd.append('Int_SetKeyValue("{0}","roi","id",CreatePolygonROI(pts,{1},{2}));'.format(
+            ntf2.name, n, color))
+
+        ntf.writelines([bytes('\n'.join(cmd), 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+
+        config = configparser.ConfigParser()
+        config.read(ntf2.name)
+        return int(config['roi']['id'])
+    finally:
+        os.remove(ntf.name)
+        os.remove(ntf2.name)
+
+
+def set_roi_type(path_to_nis, roi_id, roi_type):
+    """
+    set the type of an ROI (ChangeROIType)
+
+    roi_type: 0 standard, 1 background, 2 reference, 3 stimulation
+    note: type 1 *hides* the ROI — do not use
+    (the macro's return value is unreliable; verify with get_roi_count if needed)
+    """
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf.writelines([bytes('ChangeROIType({}, {});'.format(roi_id, roi_type), 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
+
+
+def delete_roi(path_to_nis, roi_id):
+    """
+    remove an ROI from the current image (DeleteROI)
+    (always returns 0 — verify with get_roi_count if needed)
+    """
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf.writelines([bytes('DeleteROI({});'.format(roi_id), 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+    finally:
+        os.remove(ntf.name)
+
+
+def get_roi_count(path_to_nis):
+    """
+    number of visible ROIs on the current image (GetROICount)
+    """
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
+        ntf2.close()
+
+        ntf.writelines([bytes('Int_SetKeyValue("{0}","roi","count",GetROICount());'.format(ntf2.name), 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+
+        config = configparser.ConfigParser()
+        config.read(ntf2.name)
+        return int(config['roi']['count'])
+
+    finally:
+        os.remove(ntf.name)
+        os.remove(ntf2.name)
+
+
+def get_roi_info(path_to_nis, roi_id):
+    """
+    read back parameters of an ROI (see GetROIInfo in the NIS manual)
+
+    Returns
+    -------
+    dict with keys: bbox_l, bbox_t, bbox_r, bbox_b, center_x, center_y,
+                   min_feret, max_feret, rotation, color
+    """
+    try:
+        ntf = NamedTemporaryFile(suffix='.mac', delete=False)
+        ntf2 = NamedTemporaryFile(suffix='.ini', delete=False)
+        ntf2.close()
+
+        cmd = '''
+        int l, t, r, b, cx, cy, minf, maxf;
+        double rot;
+        dword col;
+        GetROIInfo({1}, &l, &t, &r, &b, &cx, &cy, &minf, &maxf, &rot, &col);
+        Int_SetKeyValue("{0}","roi","l",l);
+        Int_SetKeyValue("{0}","roi","t",t);
+        Int_SetKeyValue("{0}","roi","r",r);
+        Int_SetKeyValue("{0}","roi","b",b);
+        Int_SetKeyValue("{0}","roi","cx",cx);
+        Int_SetKeyValue("{0}","roi","cy",cy);
+        Int_SetKeyValue("{0}","roi","minf",minf);
+        Int_SetKeyValue("{0}","roi","maxf",maxf);
+        Int_SetKeyValue("{0}","roi","rot",rot);
+        Int_SetKeyValue("{0}","roi","col",col);
+        '''.format(ntf2.name, roi_id)
+
+        ntf.writelines([bytes(cmd, 'utf-8')])
+        ntf.close()
+        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+
+        config = configparser.ConfigParser()
+        config.read(ntf2.name)
+        res = {k: int(config['roi'][k]) for k in ('l', 't', 'r', 'b', 'cx', 'cy', 'minf', 'maxf')}
+        res = {'bbox_l': res['l'], 'bbox_t': res['t'], 'bbox_r': res['r'], 'bbox_b': res['b'],
+               'center_x': res['cx'], 'center_y': res['cy'],
+               'min_feret': res['minf'], 'max_feret': res['maxf'],
+               'rotation': float(config['roi']['rot']), 'color': int(config['roi']['col'])}
+        return res
+    finally:
+        os.remove(ntf.name)
+        os.remove(ntf2.name)
 
 
 class NDAcquisition:
