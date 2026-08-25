@@ -8,5 +8,9 @@ __pycache__/
 .virtual_documents/
 pi-session-*.html
 
+# microscope data + extracted NIS macro reference (keep out of git)
+test_acquisitions/
+nis_ar_help_html/
+
 # macOS
 .DS_Store
