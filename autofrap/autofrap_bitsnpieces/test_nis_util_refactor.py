@@ -305,7 +305,7 @@ print('  OK   _cleanup swallowed PermissionError on .mac removal')
 
 # and normal runs still remove both temp files
 body, _ = run_capture(new, lambda m: m.get_roi_count(NIS))
-leftovers = [f for f in os.listdir('/tmp') if f.startswith('nistest_')]
+leftovers = [f for f in os.listdir(TMPDIR) if f.startswith('nistest_')]
 assert not leftovers, 'leftover temp files: %r' % leftovers
 print('  OK   both temp files removed in the normal case')
 

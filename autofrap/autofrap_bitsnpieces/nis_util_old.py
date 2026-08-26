@@ -431,7 +431,7 @@ def get_optical_confs(path_to_nis):
         for(i=0; i < GetOptConfCount(); i=i+1)
         {{
             GetOptConfName(i, &name, 256);
-            sprintf(&buf, "conf%i", "i" );
+            sprintf(&buf, "conf%i", i);
             Int_SetKeyString("{0}","oc",&buf,&name);
         }}        
 

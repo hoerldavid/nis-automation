@@ -10,6 +10,7 @@ pi-session-*.html
 
 # microscope data + extracted NIS macro reference (keep out of git)
 test_acquisitions/
+autofrap/autofrap_out/
 nis_ar_help_html/
 
 # macOS

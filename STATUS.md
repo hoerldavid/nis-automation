@@ -1,8 +1,9 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: after the reorganization — generated code moved into `autofrap/`, all
-acquired test data into `test_acquisitions/` (see File map). Before that: after the
-auto-FRAP loop demo (`autofrap.py`, three consecutive verified runs)._
+_Last updated: after live-testing the new detection contract (cells + stimulation
+mask, `b0ad1675`) — 2-cycle auto-FRAP run verified, TODO #4 (duration vs ROI area)
+resolved. Before that: after the reorganization — generated code moved into
+`autofrap/`, all acquired test data into `test_acquisitions/` (see File map)._
 
 ## Infrastructure (solid, verified)
 
@@ -56,10 +57,11 @@ auto-FRAP loop demo (`autofrap.py`, three consecutive verified runs)._
 | `get_resolution` | (xres, yres, pixel_size, magnification) |
 | `get_rotation_matrix` | (a11, a12, a21, a22) camera→stage "rotation and flip" |
 | `get_cam_rotation` | (rotation, rotation2) deg |
-| `get_optical_confs` | list of 13 names (incl. `FRAPPA`) |
+| `get_optical_confs` | list of 16 names (incl. `FRAPPA`; was 13) |
 
-**FOV formula**: `FOV = xres × pixel_size / magnification` → **665.6 µm** for the current
-20x / 13 µm-pixel setup (`get_fov_from_res`).
+**FOV formula**: `FOV = xres × pixel_size / magnification` (`get_fov_from_res`) —
+e.g. **665.6 µm** at 20x / 13 µm pixels; 20260826 read-out (1024, 1024, 13.0 µm, 100x)
+→ **133.1 µm**.
 
 ## Part 1 — Grid scan (done, tested)
 
@@ -94,10 +96,12 @@ auto-FRAP loop demo (`autofrap.py`, three consecutive verified runs)._
   labels: 2D label map, same (y, x) shape as the image, 0 = background, 1..N = objects;
   stimulation_mask: 2D binary mask (same shape), True = areas eligible for photostimulation.
 - Dummy detector: circle (label 1, center ⅓/⅓, r = min(h,w)/16) + rectangle
-  (label 2, lower-right quadrant, 1/8 of the image per side). Both objects are
-  fully included in the stimulation mask. Objects are kept small on purpose: FRAP
-  bleaching is a laser scan, so stimulation time scales with ROI area. Real detector
-  swaps in behind the same interface.
+  (label 2, lower-right quadrant, 1/16 of the image per side). Both objects are
+  fully included in the stimulation mask (`stim_mask = labels > 0`). Objects are
+  kept small on purpose: FRAP bleaching is a laser scan, so stimulation time
+  scales with ROI area; the two sizes differ by ~3x (12853 px vs 4096 px at
+  1024×1024) on purpose, so a two-cycle run doubles as a duration-scaling test
+  (see TODO #4). Real detector swaps in behind the same interface.
 - `detection.label_to_polygon(labels, label_id, tolerance=2.0)` → simplified polygon
   vertices (x, y) pixels via `find_contours` + `approximate_polygon` (Douglas–Peucker).
   At 1024×1024: circle → 17 vertices, rectangle → 5.
@@ -170,8 +174,11 @@ auto-FRAP loop demo (`autofrap.py`, three consecutive verified runs)._
   `next_stimulatable_cell` picks the smallest unstimulated label with nonzero stim
   pixels (skips cells with no stim-eligible area) → polygon from
   `detect_polygon_stim_mask` (ROI clipped to `(cell == id) & stim_mask`) →
-  `set_roi_type(3)` → FRAPPA → `run_stimulation_experiment` (~48 s) →
-  `save_current_document` → `delete_roi` → close both documents.
+  `set_roi_type(3)` → FRAPPA → `run_stimulation_experiment` (duration tracks ROI
+  area, see TODO #4) → `save_current_document` → `delete_roi` → close both
+  documents. Re-verified end-to-end on 20260826 after the detection-contract change
+  (circle → 25.2 s, rectangle → 18.2 s; 40 frames × 1024×1024 each; StimulationROI
+  saved in both FRAP files with the right polygon and center).
   Verified: correct object each cycle (circle, then rectangle); each FRAP file contains
   the ROI with `InterpType.StimulationROI` in the nd2 `rois` metadata (deletion happens
   *after* saving, so it stays in the file for downstream analysis); GUI left clean.
@@ -192,33 +199,37 @@ auto-FRAP loop demo (`autofrap.py`, three consecutive verified runs)._
    — everything at this point is ephemeral testing, so re-running recreating the old
    folders is acceptable for now; point them at `test_acquisitions/` (or make them CLI
    args) once real data starts accumulating.
-2. Pixel ↔ stage coordinate transform for per-tile ROIs (calibration matrix from
-   `get_rotation_matrix` + pixel size; `get_roi_info` center as a shortcut) — needed to move
-   the stage to a detected object before stimulating.
-3. Real detector to replace the dummy (interface: `image -> (labels, stimulation_mask)`).
-4. Investigate: stimulation run duration did **not** scale down with the smaller
-  dummy ROIs (48 s at ¼ area vs 42.5 s for the earlier larger ROI). Hypothesis:
-  the stimulation phase duration of the current stimulation experiment is reused
-  from when it was configured for the previous, larger ROI (not recomputed per
-  ROI). Check the GUI phase settings / `ND_StimulationAppendPhase` durations.
-5. ~~Refactor `nis_util.py`: shared helper for the temp-`.mac` → `nis_ar -mw` →
+2. Real detector to replace the dummy (interface: `image -> (labels, stimulation_mask)`).
+3. ~~Investigate: stimulation run duration did not scale with ROI area~~ —
+   **resolved (20260826, 2-cycle run with dummy areas differing ~3x)**: the earlier
+   anomaly was leftovers from previous tests on the microscope (a ROI still in
+   memory, etc.). Test result: circle (12853 px) → 25.2 s, rectangle (4096 px) →
+   18.2 s. Fits `T ≈ 15 s fixed overhead + 0.8 ms/px × area`: the area-dependent
+   part (≈10.3 s vs ≈3.3 s) scales exactly with the area ratio (3.1x).
+4. ~~Refactor `nis_util.py`: shared helper for the temp-`.mac` → `nis_ar -mw` →
    temp-`.ini` boilerplate~~ — **done**: `_run_macro(path_to_nis, body, ini=False)`
    + `__INI_PATH__` placeholder (see Infrastructure notes). Verified byte-for-byte
    against the pre-refactor code for all 33 macro bodies; also fixed two latent
    bugs found along the way (`get_position` without piezo, `set_position(pos_piezo=)`).
-   Caveat: `get_optical_confs`'s macro contains the mysterious
-   `sprintf(&buf, "conf%i", "i" )` (string literal where an int is expected) —
-   verified live before, so it was preserved byte-for-byte in the refactor; worth
-   a proper look (and fixing to `i`) on the next microscope session.
-6. Cleanup: test data is now organized in `test_acquisitions/` and kept (incl.
+   Note: `get_optical_confs`'s macro had `sprintf(&buf, "conf%i", "i" )` — a
+   string literal where the loop int was expected (worked only because the NIS
+   macro compiler is permissive about it). Fixed to `i` on 20260826 (snapshot
+   `nis_util_old.py` updated to match, equivalence check still 33/33),
+   re-verified live: all 16 names still returned.
+   **Live-verified 20260826** at the microscope: all read-only `get_*` wrappers +
+   `set_position` XY round-trip (±2 µm, back within 0.1 µm) + piezo round-trip
+   (±1 µm, exact) pass — `autofrap/autofrap_bitsnpieces/test_nis_util_live.py`.
+5. Cleanup: test data is now organized in `test_acquisitions/` and kept (incl.
    `test_stim.nd2` and the `autofrap_out/` FRAP files, which contain saved
    stimulation ROIs). Remaining junk at the root: `__pycache__/`,
    `.ipynb_checkpoints/`, `.virtual_documents/`, `pi-session-*.html` (pi session
    logs) — the `._*.py` AppleDouble files in `autofrap/autofrap_bitsnpieces/`
    (leftovers from the macOS move) have been deleted.
-7. Pixel ↔ stage coordinate transform for per-tile ROIs (calibration matrix from
+6. Pixel ↔ stage coordinate transform for per-tile ROIs (calibration matrix from
    `get_rotation_matrix` + pixel size; `get_roi_info` center as a shortcut) — needed
-   to move the stage to a detected object before stimulating.
+   to move the stage to a detected object before stimulating. **Low priority**:
+   centering the object before stimulating was considered, but the current
+   approach (no stage move, ROI drawn directly on the survey image) works fine.
 
 ## File map
 
@@ -242,6 +253,7 @@ under `test_acquisitions/`, and the NIS macro wrappers at the root (`nis_util.py
 | `autofrap/autofrap_bitsnpieces/split_mask_along_axis_equal_area.py` | mask utility: split a label mask into two equal-area halves along an axis (skimage) |
 | `autofrap/autofrap_bitsnpieces/test_stim_save.py` | one-off test script (save-current-document probe; cleanup candidate) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py` | equivalence check for the `_run_macro` refactor: all generated `.mac` bodies byte-identical to the frozen pre-refactor snapshot + round-trip / cleanup tests (run: `python autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py`) |
+| `autofrap/autofrap_bitsnpieces/test_nis_util_live.py` | live smoke test for the refactored wrappers (run at the microscope): all read-only `get_*` + `set_position` XY/piezo round-trip |
 | `autofrap/autofrap_bitsnpieces/nis_util_old.py` | **frozen snapshot** of the pre-refactor `nis_util.py` (input of the equivalence check; do not edit — a deliberate macro-body change means updating this snapshot) |
 
 ### Test data (`test_acquisitions/`)

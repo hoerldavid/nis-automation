@@ -51,20 +51,23 @@ def dummy_detect_objects(image):
     """
     h, w = image.shape
     labels = np.zeros((h, w), dtype=np.int32)
-    stim_mask = np.zeros((h, w), dtype=np.bool_)
     yy, xx = np.ogrid[:h, :w]
 
     # keep the objects small: FRAP bleaching is a laser scan, so the
-    # stimulation time scales with ROI area
+    # stimulation time scales with ROI area. The two sizes differ by
+    # ~3x on purpose, so a run over both objects also tests that the
+    # stimulation duration tracks the ROI area.
 
     # object 1: circle, center in the upper-left third, radius 1/16 of min. axis
     cy, cx, r = h // 3, w // 3, min(h, w) // 16
     labels[(yy - cy) ** 2 + (xx - cx) ** 2 <= r ** 2] = 1
-    stim_mask[(yy - cy) ** 2 + (xx - cx) ** 2 <= r ** 2] = True
 
-    # object 2: rectangle, in the lower-right quadrant, 1/8 of the image per side
-    labels[3 * h // 4 - h // 8:3 * h // 4, 3 * w // 4 - w // 8:3 * w // 4] = 2
-    stim_mask[3 * h // 4 - h // 8:3 * h // 4, 3 * w // 4 - w // 8:3 * w // 4] = True
+    # object 2: rectangle, in the lower-right quadrant, 1/16 of the image per side
+    labels[3 * h // 4 - h // 16:3 * h // 4,
+           3 * w // 4 - w // 16:3 * w // 4] = 2
+
+    # dummy: all detected objects are fully stimulation-eligible
+    stim_mask = labels > 0
 
     return labels, stim_mask
 
