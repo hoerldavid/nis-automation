@@ -12,15 +12,16 @@ Per cycle:
   3. remap object labels against the previous cycle (IoU matching)
      and pick the smallest not-yet-stimulated label that has at least
      one pixel in the stimulation mask
-  4. open the survey image in NIS, add the object's polygon as a
-     stimulation ROI (type 3) — polygon is drawn only where
-     (labels == cell_id) & stimulation_mask
+  4. open the survey image in NIS, add two ROIs: the whole cell
+     (for downstream analysis) and the stimulation region
+     ((labels == cell_id) & stimulation_mask), the latter set to
+     stimulation mode (type 3)
   5. switch optical conf to FRAPPA, run the current sequential
      stimulation experiment
   6. save the FRAP timeseries to <stamp>_c<NN>_frap.nd2 (the stimulation
      ROI is part of the saved file)
-  7. delete the stimulation ROI (so it doesn't linger for the next cycle)
-     and close the FRAP + survey documents
+  7. delete both ROIs (so they don't linger for the next cycle) and
+     close the FRAP + survey documents
 -> next cycle (the ND experiment definition restores the survey OC)
 
 The loop stops when every detected object has been stimulated, when
@@ -184,18 +185,24 @@ def autofrap(nis_exe, out_dir, max_cycles=None, survey_channel=0,
 
         print('[c%02d] %d objects, stimulating cell %d' % (cycle, n_obj, cell))
 
-        # 5. stimulation ROI + stimulation run
-        poly = detection.detect_polygon_stim_mask(
+        # 5. ROIs + stimulation run: whole cell (saved for downstream
+        #    analysis) + stimulation region, the latter set to
+        #    stimulation mode
+        cell_poly = detection.label_to_polygon(cur_labels, cell)
+        stim_poly = detection.detect_polygon_stim_mask(
             cur_labels, stimulation_mask, cell
         )
-        if not poly:
+        if not cell_poly or not stim_poly:
             raise RuntimeError('no polygon for cell %d' % cell)
 
         nis_util.open_image(nis_exe, survey_file)
-        roi_id = nis_util.add_polygon_roi(nis_exe, poly, color='green')
-        if roi_id <= 0:
-            raise RuntimeError('ROI creation failed (id=%d)' % roi_id)
-        nis_util.set_roi_type(nis_exe, roi_id, 3)  # 3 = stimulation
+        cell_roi = nis_util.add_polygon_roi(nis_exe, cell_poly)
+        if cell_roi <= 0:
+            raise RuntimeError('cell ROI creation failed (id=%d)' % cell_roi)
+        stim_roi = nis_util.add_polygon_roi(nis_exe, stim_poly)
+        if stim_roi <= 0:
+            raise RuntimeError('stim ROI creation failed (id=%d)' % stim_roi)
+        nis_util.set_roi_type(nis_exe, stim_roi, 3)  # 3 = stimulation
 
         nis_util.set_optical_configuration(nis_exe, frap_oc)
         t0 = time.time()
@@ -205,14 +212,15 @@ def autofrap(nis_exe, out_dir, max_cycles=None, survey_channel=0,
         # 6. save the FRAP timeseries (includes the stimulation ROI)
         nis_util.save_current_document(nis_exe, frap_file)
 
-        # 7. close FRAP document (current), then delete the stimulation ROI
-        #    on the survey document (after saving, so it stays in the saved
-        #    FRAP file but doesn't linger for the next cycle) and close it
+        # 7. close FRAP document (current), then delete both ROIs on the
+        #    survey document (after saving, so they stay in the saved FRAP
+        #    file but don't linger for the next cycle) and close it
         nis_util.close_current_document(nis_exe, save='discard')
         doc = nis_util.get_current_document(nis_exe)
         if os.path.normcase(doc) != os.path.normcase(survey_file):
             nis_util.open_image(nis_exe, survey_file)
-        nis_util.delete_roi(nis_exe, roi_id)
+        nis_util.delete_roi(nis_exe, stim_roi)
+        nis_util.delete_roi(nis_exe, cell_roi)
         nis_util.close_current_document(nis_exe, save='discard')
 
         results.append((cycle, cell, survey_file, frap_file))

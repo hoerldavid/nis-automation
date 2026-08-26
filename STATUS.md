@@ -1,7 +1,10 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: after live-testing the new detection contract (cells + stimulation
-mask, `b0ad1675`) — 2-cycle auto-FRAP run verified, TODO #4 (duration vs ROI area)
+_Last updated: auto-FRAP loop now saves two ROIs per cell (whole cell +
+stimulation half) and the dummy stim mask is the left half of each object —
+verified 20260826; camera ROI detection added (`get_camera_roi`). Before that:
+after live-testing the new detection contract (cells + stimulation mask,
+`b0ad1675`) — 2-cycle auto-FRAP run verified, TODO #3 (duration vs ROI area)
 resolved. Before that: after the reorganization — generated code moved into
 `autofrap/`, all acquired test data into `test_acquisitions/` (see File map)._
 
@@ -106,12 +109,14 @@ colleagues.
   labels: 2D label map, same (y, x) shape as the image, 0 = background, 1..N = objects;
   stimulation_mask: 2D binary mask (same shape), True = areas eligible for photostimulation.
 - Dummy detector: circle (label 1, center ⅓/⅓, r = min(h,w)/16) + rectangle
-  (label 2, lower-right quadrant, 1/16 of the image per side). Both objects are
-  fully included in the stimulation mask (`stim_mask = labels > 0`). Objects are
-  kept small on purpose: FRAP bleaching is a laser scan, so stimulation time
-  scales with ROI area; the two sizes differ by ~3x (12853 px vs 4096 px at
-  1024×1024) on purpose, so a two-cycle run doubles as a duration-scaling test
-  (see TODO #4). Real detector swaps in behind the same interface.
+  (label 2, lower-right quadrant, 1/16 of the image per side). The stimulation
+  mask is the **left half** of each object (equal-area split via
+  `split_mask_along_axis_equal_area`, ported from
+  `autofrap/autofrap_bitsnpieces/split_mask_along_axis_equal_area.py`),
+  mimicking a real FRAP experiment in which part of the cell is bleached and
+  diffusion from the rest is recorded. Objects are kept small on purpose: FRAP
+  bleaching is a laser scan, so stimulation time scales with ROI area. Real
+  detector swaps in behind the same interface.
 - `detection.label_to_polygon(labels, label_id, tolerance=2.0)` → simplified polygon
   vertices (x, y) pixels via `find_contours` + `approximate_polygon` (Douglas–Peucker).
   At 1024×1024: circle → 17 vertices, rectangle → 5.
@@ -179,19 +184,22 @@ colleagues.
   → `ND_RunSequentialStimulationExp()` (42.5 s) → `save_current_document`
   → `test_stim.nd2` (12 time points × 1024×1024). Note: the optical conf **must** be
   FRAPPA before the stimulation run (earlier run without it produced no useful data).
-- **Automated loop verified end-to-end** (`autofrap.py`): 2-cycle test with the dummy
-  detector. Per cycle: survey via `run_current_nd_experiment` (~8 s) → detect →
-  `next_stimulatable_cell` picks the smallest unstimulated label with nonzero stim
-  pixels (skips cells with no stim-eligible area) → polygon from
-  `detect_polygon_stim_mask` (ROI clipped to `(cell == id) & stim_mask`) →
-  `set_roi_type(3)` → FRAPPA → `run_stimulation_experiment` (duration tracks ROI
-  area, see TODO #4) → `save_current_document` → `delete_roi` → close both
-  documents. Re-verified end-to-end on 20260826 after the detection-contract change
-  (circle → 25.2 s, rectangle → 18.2 s; 40 frames × 1024×1024 each; StimulationROI
-  saved in both FRAP files with the right polygon and center).
-  Verified: correct object each cycle (circle, then rectangle); each FRAP file contains
-  the ROI with `InterpType.StimulationROI` in the nd2 `rois` metadata (deletion happens
-  *after* saving, so it stays in the file for downstream analysis); GUI left clean.
+- **Automated loop verified end-to-end** (`autofrap.py`): per cycle: survey via
+  `run_current_nd_experiment` (~10 s) → detect → `next_stimulatable_cell` picks the
+  smallest unstimulated label with nonzero stim pixels (skips cells with no
+  stim-eligible area) → **two ROIs** on the survey image: the whole cell
+  (`label_to_polygon`, standard type — saved for downstream analysis) and the
+  stimulation region (`detect_polygon_stim_mask`, clipped to
+  `(cell == id) & stim_mask`), the latter set to stimulation mode
+  (`set_roi_type(3)`) → FRAPPA → `run_stimulation_experiment` (duration tracks ROI
+  area, see TODO #3) → `save_current_document` → delete both ROIs → close both
+  documents. Verified 20260826 (halved dummy ROIs): circle half → 20.9 s,
+  rectangle half → 17.0 s (model T ≈ 15 s + 0.8 ms/px × area predicts 20.1/16.6);
+  40 frames × 1024×1024 each. Each FRAP file contains both the standard whole-cell
+  polygon **and** the `InterpType.StimulationROI` half (correct polygon and center;
+  NIS stores closed polygons without the repeated closing vertex, so one point
+  fewer than the pixel-space polygon). Deletion happens *after* saving, so both ROIs
+  stay in the file for downstream analysis; GUI left clean.
 - **`next_cell()` kept** for backward compatibility; `next_stimulatable_cell()` is the
   preferred function when a stimulation mask is available (integrates the mask check
   into the search loop — cells with zero stim pixels are skipped automatically).
@@ -254,13 +262,14 @@ under `test_acquisitions/`, and the NIS macro wrappers at the root (`nis_util.py
 | `nis_util.py` | NIS macro wrappers on top of the shared `_run_macro` helper: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `grid_positions`, `open_image`, `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
 | `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat) |
 | `autofrap/detection.py` | Part 2: `detect` (returns `(labels, stimulation_mask)` tuple),
-`dummy_detect_objects`, `read_channel`, `label_to_polygon`, `detect_stim_mask`,
-`detect_polygon_stim_mask` |
+`dummy_detect_objects` (stim mask = left half of each object), `read_channel`,
+`label_to_polygon`, `detect_stim_mask`, `detect_polygon_stim_mask`,
+`split_mask_along_axis_equal_area` (ported from bitsnpieces) |
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
 | `autofrap/autofrap_bitsnpieces/inspect_microscope.ipynb` | notebook walking through the `get_*` functions + FOV |
 | `autofrap/autofrap_bitsnpieces/stimulation_loop.py` | colleague's sketch (source of the label-remapping logic, now ported into `autofrap.py`) |
 | `autofrap/autofrap_bitsnpieces/test_merge_label_slices.py` | colleague's sketch: `merge_label_slices` test |
-| `autofrap/autofrap_bitsnpieces/split_mask_along_axis_equal_area.py` | mask utility: split a label mask into two equal-area halves along an axis (skimage) |
+| `autofrap/autofrap_bitsnpieces/split_mask_along_axis_equal_area.py` | mask utility: split a label mask into two equal-area halves along an axis (skimage); ported into `detection.py` (the pipeline copy is canonical) |
 | `autofrap/autofrap_bitsnpieces/test_stim_save.py` | one-off test script (save-current-document probe; cleanup candidate) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py` | equivalence check for the `_run_macro` refactor: all generated `.mac` bodies byte-identical to the frozen pre-refactor snapshot + round-trip / cleanup tests (run: `python autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_live.py` | live smoke test for the refactored wrappers (run at the microscope): all read-only `get_*` + `set_position` XY/piezo round-trip |

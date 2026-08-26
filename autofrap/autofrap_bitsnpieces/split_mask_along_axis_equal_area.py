@@ -23,8 +23,8 @@ def split_mask_along_axis_equal_area(label_mask: np.ndarray, axis: int = 0) -> t
     label_mask : np.ndarray
         2‑D binary mask of the object.
     axis : int, optional
-        0 → split along rows (vertical cut → left/right halves)
-        1 → split along columns (horizontal cut → top/bottom halves)
+        0 → cut across rows (horizontal line → top/bottom halves)
+        1 → cut across columns (vertical line → left/right halves)
 
     Returns
     -------
@@ -43,7 +43,7 @@ def split_mask_along_axis_equal_area(label_mask: np.ndarray, axis: int = 0) -> t
         raise ValueError("Empty mask – no object found")
 
     # Compute cumulative sum along the chosen axis
-    if axis == 0:  # vertical split → cut along rows
+    if axis == 0:  # horizontal cut → top/bottom halves
         # Sum per row
         row_sums = mask.sum(axis=1)
         # Cumulative sum
@@ -57,7 +57,7 @@ def split_mask_along_axis_equal_area(label_mask: np.ndarray, axis: int = 0) -> t
         first[:cut_row, :] = mask[:cut_row, :]
         second = np.zeros_like(mask, dtype=bool)
         second[cut_row:, :] = mask[cut_row:, :]
-    elif axis == 1:  # horizontal split → cut along columns
+    elif axis == 1:  # vertical cut → left/right halves
         col_sums = mask.sum(axis=0)
         cum = np.cumsum(col_sums)
         target = total_area / 2
@@ -67,7 +67,7 @@ def split_mask_along_axis_equal_area(label_mask: np.ndarray, axis: int = 0) -> t
         second = np.zeros_like(mask, dtype=bool)
         second[:, cut_col:] = mask[:, cut_col:]
     else:
-        raise ValueError("axis must be 0 (vertical) or 1 (horizontal)")
+        raise ValueError("axis must be 0 (top/bottom) or 1 (left/right)")
 
     return first, second
 

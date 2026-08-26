@@ -33,6 +33,56 @@ def read_channel(nd2_file, channel=0):
         return f.asarray()[channel]
 
 
+def split_mask_along_axis_equal_area(label_mask, axis=0):
+    """
+    split a binary mask into two halves of (approximately) equal area
+
+    Ported from autofrap/autofrap_bitsnpieces/
+    split_mask_along_axis_equal_area.py (colleague's sketch). Note: axis
+    is the numpy axis summed over, so axis=0 gives a horizontal cut
+    (top/bottom halves) and axis=1 a vertical cut (left/right halves).
+
+    Parameters
+    ----------
+    label_mask: 2D np.ndarray
+        binary mask of the object
+    axis: int
+        0 -> horizontal cut (top/bottom halves),
+        1 -> vertical cut (left/right halves)
+
+    Returns
+    -------
+    (first_half, second_half)
+        two boolean masks of the same shape; disjoint, covering the object
+    """
+    if label_mask.ndim != 2:
+        raise ValueError('label_mask must be 2-D')
+
+    mask = label_mask.astype(bool)
+    total_area = mask.sum()
+    if total_area == 0:
+        raise ValueError('Empty mask - no object found')
+
+    if axis == 0:  # horizontal cut: top/bottom halves
+        sums = mask.sum(axis=1)
+        cut = np.searchsorted(np.cumsum(sums), total_area / 2)
+        first = np.zeros_like(mask)
+        first[:cut, :] = mask[:cut, :]
+        second = np.zeros_like(mask)
+        second[cut:, :] = mask[cut:, :]
+    elif axis == 1:  # vertical cut: left/right halves
+        sums = mask.sum(axis=0)
+        cut = np.searchsorted(np.cumsum(sums), total_area / 2)
+        first = np.zeros_like(mask)
+        first[:, :cut] = mask[:, :cut]
+        second = np.zeros_like(mask)
+        second[:, cut:] = mask[:, cut:]
+    else:
+        raise ValueError('axis must be 0 (top/bottom) or 1 (left/right)')
+
+    return first, second
+
+
 def dummy_detect_objects(image):
     """
     dummy object detector: places one circle and one rectangle
@@ -47,7 +97,8 @@ def dummy_detect_objects(image):
     labels: 2D np.ndarray (y, x), int
         0 = background, 1 = circle, 2 = rectangle
     stimulation_mask: 2D np.ndarray (y, x), bool
-        binary mask of areas eligible for stimulation (True = eligible)
+        binary mask of areas eligible for stimulation (True = eligible);
+        for the dummy: the left half of each detected object
     """
     h, w = image.shape
     labels = np.zeros((h, w), dtype=np.int32)
@@ -66,8 +117,14 @@ def dummy_detect_objects(image):
     labels[3 * h // 4 - h // 16:3 * h // 4,
            3 * w // 4 - w // 16:3 * w // 4] = 2
 
-    # dummy: all detected objects are fully stimulation-eligible
-    stim_mask = labels > 0
+    # dummy: only the left half of each object is stimulation-eligible
+    # (equal-area split), mimicking a real FRAP experiment in which part
+    # of the cell is bleached and diffusion from the rest is recorded
+    stim_mask = np.zeros((h, w), dtype=np.bool_)
+    for lbl in np.unique(labels):
+        if lbl > 0:
+            left, _ = split_mask_along_axis_equal_area(labels == lbl, axis=1)
+            stim_mask |= left
 
     return labels, stim_mask
 
