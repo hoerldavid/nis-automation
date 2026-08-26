@@ -297,6 +297,46 @@ def get_resolution(path_to_nis):
     return tuple(map(float, res))
 
 
+def get_camera_roi(path_to_nis):
+    """
+    query the camera ROI (sub-region of the camera chip read out for speed)
+
+    Note: ROIGet returns the *stored* rectangle even when the ROI is
+    disabled; use the enabled flag to tell stored from active. When
+    enabled, get_resolution reports the ROI size, so get_fov_from_res
+    keeps working.
+
+    Parameters
+    ----------
+    path_to_nis: str
+        path to the nis_ar.exe executable
+
+    Returns
+    -------
+    (enabled, (left, top, right, bottom))
+        enabled: bool — ROI active (1) or off (0)
+        left, top: x, y of the top-left corner, in pixels
+        right, bottom: x, y of the bottom-right corner, in pixels
+        (right/bottom appear exclusive: (256,256,768,768) = 512x512)
+    """
+    cmd = f'''
+        int en;
+        int l, t, r, b;
+        en = ROIEnabled();
+        ROIGet(&l, &t, &r, &b);
+        
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","enabled",en);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","left",l);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","top",t);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","right",r);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","bottom",b);
+        
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    return (bool(int(config['roi']['enabled'])),
+            tuple(int(config['roi'][k]) for k in ('left', 'top', 'right', 'bottom')))
+
+
 def get_rotation_matrix(path_to_nis):
     cmd = f'''
         double a11;

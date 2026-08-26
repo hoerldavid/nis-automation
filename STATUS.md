@@ -55,6 +55,7 @@ resolved. Before that: after the reorganization — generated code moved into
 | `get_camera_format` | (live, capture) format strings |
 | `get_position` | (x, y, z0, z1-or-None) µm |
 | `get_resolution` | (xres, yres, pixel_size, magnification) |
+| `get_camera_roi` | (enabled: bool, (left, top, right, bottom) px) camera ROI rectangle |
 | `get_rotation_matrix` | (a11, a12, a21, a22) camera→stage "rotation and flip" |
 | `get_cam_rotation` | (rotation, rotation2) deg |
 | `get_optical_confs` | list of 16 names (incl. `FRAPPA`; was 13) |
@@ -62,6 +63,15 @@ resolved. Before that: after the reorganization — generated code moved into
 **FOV formula**: `FOV = xres × pixel_size / magnification` (`get_fov_from_res`) —
 e.g. **665.6 µm** at 20x / 13 µm pixels; 20260826 read-out (1024, 1024, 13.0 µm, 100x)
 → **133.1 µm**.
+
+**Camera ROI** (chip sub-region for read-out speed): `get_camera_roi` reads back the
+stored rectangle (right/bottom exclusive) plus the enabled flag — `ROIGet` returns the
+rectangle even when the ROI is off, the flag distinguishes stored from active; when
+active, `get_resolution` reports the ROI size so the FOV formula keeps working. Setting:
+`ROISet(l,t,r,b)` + `ROIEnable(0|1)` (or the `_ROIDefine()` GUI dialog) — not wrapped
+yet. 20260826 live probe: a stored central 512×512 (256,256,768,768) is present but
+disabled (full 1024 read-out) — leftover from earlier manual testing by user and
+colleagues.
 
 ## Part 1 — Grid scan (done, tested)
 
@@ -254,7 +264,7 @@ under `test_acquisitions/`, and the NIS macro wrappers at the root (`nis_util.py
 | `autofrap/autofrap_bitsnpieces/test_stim_save.py` | one-off test script (save-current-document probe; cleanup candidate) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py` | equivalence check for the `_run_macro` refactor: all generated `.mac` bodies byte-identical to the frozen pre-refactor snapshot + round-trip / cleanup tests (run: `python autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_live.py` | live smoke test for the refactored wrappers (run at the microscope): all read-only `get_*` + `set_position` XY/piezo round-trip |
-| `autofrap/autofrap_bitsnpieces/nis_util_old.py` | **frozen snapshot** of the pre-refactor `nis_util.py` (input of the equivalence check; do not edit — a deliberate macro-body change means updating this snapshot) |
+| `autofrap/autofrap_bitsnpieces/nis_util_old.py` | **frozen snapshot** of the pre-refactor `nis_util.py` (input of the equivalence check). The check served its purpose (33/33 byte-identical + live re-verification); the snapshot is no longer kept in sync with deliberate macro-body changes and will be removed (with `test_nis_util_refactor.py`) once the code stabilizes |
 
 ### Test data (`test_acquisitions/`)
 
