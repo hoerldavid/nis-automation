@@ -26,7 +26,9 @@ resolved. Before that: after the reorganization — generated code moved into
   Browsable and grep-able; source of truth for macro function signatures.
 - **Dependencies**: `requirements.txt` gained `nd2`, `numpy`, `scikit-image`,
   `calmutils` (label remapping between cycles via
-  `calmutils.segmentation.merge_label_slices`).
+  `calmutils.segmentation.merge_label_slices`), `fastremap`
+  (fast label-remap kernels; already present transitively via calmutils,
+  now an explicit dep for `detection.shuffle_labels`).
 - **Bug fixed**: `get_cam_rotation` called `CameraGet_Cam0Flip` / `CameraGet_Cam0Rotate180`,
   which **do not exist** in this API → whole macro aborted at compile → empty ini →
   `KeyError: 'res'`. Now uses `CameraGet_Rotate` / `Camera_RotateGet`. Flip/180° info is
@@ -117,6 +119,17 @@ colleagues.
   diffusion from the rest is recorded. Objects are kept small on purpose: FRAP
   bleaching is a laser scan, so stimulation time scales with ROI area. Real
   detector swaps in behind the same interface.
+- `detection.shuffle_labels(labels, seed=None)` → label map with 1..N randomly
+  permuted (background stays 0), via `fastremap.remap` with a permutation dict —
+  detectors number objects in raster order (top-left first), which would bias
+  order-dependent processing when only part of the FOV is imaged.
+  (scikit-image has no shuffle — only `relabel_sequential` — hence fastremap.)
+- `detection.relabel_by_distance(labels, reference=None)` → relabels 1..N by
+  increasing centroid distance to a reference point (centroids from skimage
+  `regionprops`; remap via `fastremap.remap`). Works for 2D (y, x) and 3D
+  (z, y, x) label maps (numpy-based, one coordinate per axis). Default
+  reference = image center (optical axis: least distortion/vignetting →
+  process first). Background stays 0.
 - `detection.label_to_polygon(labels, label_id, tolerance=2.0)` → simplified polygon
   vertices (x, y) pixels via `find_contours` + `approximate_polygon` (Douglas–Peucker).
   At 1024×1024: circle → 17 vertices, rectangle → 5.
@@ -206,6 +219,8 @@ colleagues.
 - **New detection helpers** (`detect_stim_mask`, `detect_polygon_stim_mask`) are thin
   wrappers around the existing `find_contours`/`approximate_polygon` pipeline, applied
   to the intersection mask `(labels == cell_id) & stimulation_mask`.
+- **Code cleanup**: the main loop in `autofrap.py` now uses f-strings instead of
+  old-style `%` formatting (no logic changes).
 
 ## TODO (next days)
 

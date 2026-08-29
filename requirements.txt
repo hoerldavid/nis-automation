@@ -3,3 +3,4 @@ nd2
 numpy
 scikit-image
 calmutils
+fastremap

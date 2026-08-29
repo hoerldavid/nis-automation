@@ -141,6 +141,94 @@ def dummy_detect_objects(image):
     return labels, stim_mask
 
 
+def shuffle_labels(labels, seed=None):
+    """
+    randomly permute the object labels of a label map
+
+    Detectors usually number objects in raster order (top-left first),
+    which can bias downstream processing that treats labels in order.
+    This function renumbers 1..N with a random permutation; the
+    background (0) is left unchanged.
+
+    Parameters
+    ----------
+    labels: np.ndarray
+        label map (0 = background, 1..N = objects)
+    seed: int, optional
+        seed for the random permutation (for reproducibility)
+
+    Returns
+    -------
+    shuffled: np.ndarray
+        label map of the same shape and dtype with the labels 1..N
+        randomly permuted
+    """
+    import fastremap
+
+    n = int(labels.max()) if labels.size else 0
+    if n == 0:
+        return labels.copy()
+
+    rng = np.random.default_rng(seed)
+    perm = np.concatenate([[0], rng.permutation(np.arange(1, n + 1))])
+    remap = dict(zip(range(n + 1), perm))  # old -> new, background stays 0
+
+    return fastremap.remap(labels, remap)
+
+
+def relabel_by_distance(labels, reference=None):
+    """
+    relabel objects by increasing distance from a reference point
+
+    The object whose centroid (skimage `regionprops`) is closest to
+    `reference` becomes label 1, the next closest label 2, and so on;
+    the background (0) is left unchanged. The default reference is the
+    image center, i.e. the optical axis of the microscope, which has the
+    least distortion/vignetting and should therefore be processed first.
+
+    Parameters
+    ----------
+    labels: np.ndarray
+        label map (0 = background, 1..N = objects), 2D or 3D
+    reference: array-like of pixel coordinates, optional
+        point to measure distances from; one value per axis, e.g. (y, x)
+        for 2D or (z, y, x) for 3D. Defaults to the image center.
+
+    Returns
+    -------
+    relabeled: np.ndarray
+        label map of the same shape and dtype with 1..N renumbered by
+        increasing centroid distance to the reference
+    """
+    import fastremap
+    from skimage.measure import regionprops
+
+    n = int(labels.max()) if labels.size else 0
+    if n == 0:
+        return labels.copy()
+
+    if reference is None:
+        # per-axis center, e.g. (h/2, w/2) for 2D or (d/2, h/2, w/2) for 3D
+        reference = np.array(labels.shape, dtype=float) / 2.0
+    ref = np.asanyarray(reference, dtype=float)
+
+    props = regionprops(labels)
+    # centroids are in array-index order, e.g. (y, x) or (z, y, x)
+    centroids = np.array([p.centroid for p in props])
+    ids = np.array([p.label for p in props])
+
+    # squared Euclidean distance from each centroid to the reference
+    dist2 = np.sum((centroids - ref) ** 2, axis=1)
+    order = np.argsort(dist2, kind="stable")
+
+    # new labels 1..N assigned to the objects in increasing-distance order
+    remap = {0: 0}
+    for new_lbl, idx in enumerate(order, start=1):
+        remap[int(ids[idx])] = new_lbl
+
+    return fastremap.remap(labels, remap)
+
+
 def detect(nd2_file, channel=0):
     """
     run detection on a saved ND2 file
