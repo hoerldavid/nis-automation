@@ -33,52 +33,64 @@ def read_channel(nd2_file, channel=0):
         return f.asarray()[channel]
 
 
-def split_mask_along_axis_equal_area(label_mask, axis=0):
+def split_mask_along_axis_equal_area(mask, axis=0):
     """
-    split a binary mask into two halves of (approximately) equal area
-
-    Ported from autofrap/autofrap_bitsnpieces/
-    split_mask_along_axis_equal_area.py (colleague's sketch). Note: axis
-    is the numpy axis summed over, so axis=0 gives a horizontal cut
-    (top/bottom halves) and axis=1 a vertical cut (left/right halves).
+    Split a binary mask into two halves of (approximately) equal area along a given axis.
+    This assumes a single connected object in the mask and may produce weird results
+    for masks containing multiple connected components.
 
     Parameters
     ----------
-    label_mask: 2D np.ndarray
-        binary mask of the object
+    label_mask: np.ndarray
+        Binary mask of the object (0/1 or bool dtype)
     axis: int
-        0 -> horizontal cut (top/bottom halves),
-        1 -> vertical cut (left/right halves)
+        Axis along which to split (must be 0..ndim-1)
 
     Returns
     -------
     (first_half, second_half)
-        two boolean masks of the same shape; disjoint, covering the object
+        Two boolean masks of the same shape as mask; disjoint, covering the object
     """
-    if label_mask.ndim != 2:
-        raise ValueError('label_mask must be 2-D')
+    mask = mask.astype(bool)
+    ndim = mask.ndim
+    if axis < 0 or axis >= ndim:
+        raise ValueError(f"axis must be 0..{ndim-1} for {ndim}-D array (got {axis})")
 
-    mask = label_mask.astype(bool)
     total_area = mask.sum()
     if total_area == 0:
+        # TODO: just return zeros and not error?
         raise ValueError('Empty mask - no object found')
 
-    if axis == 0:  # horizontal cut: top/bottom halves
-        sums = mask.sum(axis=1)
-        cut = np.searchsorted(np.cumsum(sums), total_area / 2)
-        first = np.zeros_like(mask)
-        first[:cut, :] = mask[:cut, :]
-        second = np.zeros_like(mask)
-        second[cut:, :] = mask[cut:, :]
-    elif axis == 1:  # vertical cut: left/right halves
-        sums = mask.sum(axis=0)
-        cut = np.searchsorted(np.cumsum(sums), total_area / 2)
-        first = np.zeros_like(mask)
-        first[:, :cut] = mask[:, :cut]
-        second = np.zeros_like(mask)
-        second[:, cut:] = mask[:, cut:]
-    else:
-        raise ValueError('axis must be 0 (top/bottom) or 1 (left/right)')
+    # Sum over all axes except the split axis, giving a 1D profile
+    other_axes = tuple(i for i in range(mask.ndim) if i != axis)
+    sums_along_axis = mask.sum(axis=other_axes)
+    
+    # cumulative sum along profile
+    cumsum = np.cumsum(sums_along_axis)
+
+    # we want to be as close to half area as possible
+    target = total_area / 2
+
+    # Find the first index where cumsum >= target
+    idx = np.searchsorted(cumsum, target, side='left')
+    
+    if idx > 0:
+        diff_at = np.abs(cumsum[idx] - target)
+        diff_prev = np.abs(cumsum[idx - 1] - target)
+        # choose one index before if the difference is smaller
+        idx = idx - 1 if diff_prev < diff_at else idx
+
+    first = np.zeros_like(mask)
+    second = np.zeros_like(mask)
+
+    # Set the slice for the target axis; keep all other axes unchanged
+    slices = [slice(None)] * ndim
+    
+    slices[axis] = slice(0, idx + 1)
+    first[tuple(slices)] = mask[tuple(slices)]
+
+    slices[axis] = slice(idx + 1, None)
+    second[tuple(slices)] = mask[tuple(slices)]
 
     return first, second
 
