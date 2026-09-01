@@ -1,6 +1,16 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **real detector in the loop** — cellpose (cpdino-vitb) on a
+_Last updated: **multi-FOV grid runner** (`autofrap_grid` in
+`autofrap/autofrap.py`) — loops the verified single-FOV `autofrap()` over
+stage positions from `grid_positions`, one sub-directory per FOV, settle
+after each move, return to start, per-FOV failure isolation. **Live
+verified 20260901**: 2×2 grid (spacing 1.0), one cell per FOV, real
+cellpose — 4/4 FOVs (21/17/18/13 objects, different fields per FOV),
+survey 9.2–9.9 s, detection ~2.1 s, stimulation 12.6–13.3 s, returned to
+start; 8 files verified (2-ch surveys + 12-frame FRAPs, each FRAP with
+`StandardROI` + `StimulationROI`); open issue: reading the stage position
+from the *survey* nd2 metadata (TODO #11). Before that: real detector in
+the loop — cellpose (cpdino-vitb) on a
 remote V100 GPU server (`cellpose_server.py`, FastAPI, np.save wire format),
 client in `detection.py`; `detect()` gained `detector` / `relabel` params,
 border-touching objects are discarded (`clear_border`), stim mask moved into
@@ -290,7 +300,30 @@ colleagues.
 
 ## TODO (next days)
 
-1. ~~Fix fallout from the folder move~~ — **import fix done**: `autofrap/autofrap.py`
+1. **Multi-FOV: loop `autofrap()` over stage positions** — run the
+   verified single-FOV loop on a grid of positions (grid first; a
+   center-out spiral ordering is a possible later upgrade — calmutils has
+   no spiral function yet, only `centered_tiles` with `snake_rows`
+   serpentine order). **Implemented** (`autofrap_grid` in
+   `autofrap/autofrap.py`): `grid_positions` for the coordinate set, one
+   sub-directory per FOV (`<out_dir>/<run_stamp>/fov<i>/`, plain number —
+   exact stage positions live in the nd2 metadata) so the
+   per-cycle `<stamp>_cNN_survey/frap.nd2` names keep working unchanged,
+   `settle_s` after each stage move, return to start after the last FOV,
+   a failing FOV is logged and the run continues; accepts a precomputed
+   `positions` list so any visit ordering (e.g. spiral) can be passed in
+   later. **Live-verified 20260901 at the microscope**: 2×2 grid, spacing
+   1.0, `max_cycles=1`, default cellpose `detection_fun` — 4/4 FOVs,
+   one cell each (21/17/18/13 objects detected, i.e. genuinely different
+   fields), survey 9.2–9.9 s, V100 detection ~2.1 s, stimulation
+   12.6–13.3 s, returned to start; all 8 files present (2-ch × 1024²
+   surveys + 12-frame FRAPs), each FRAP file contains the whole-cell
+   `StandardROI` and the `StimulationROI`; FRAP-file stage positions match
+   commanded within ≤1.3 µm. Run: `test_acquisitions/autofrap_grid/
+   20260901_160216/` (log `grid_live_test.log` in `test_acquisitions/
+   autofrap_grid/`), runner
+   `autofrap/autofrap_bitsnpieces/test_autofrap_grid_live.py`.
+2. ~~Fix fallout from the folder move~~ — **import fix done**: `autofrap/autofrap.py`
    and `autofrap/autofrap_bitsnpieces/overview_scan.py` now prepend the repo root to
    `sys.path` (verified: top-level imports resolve under real script-run semantics).
    AppleDouble `._*.py` junk deleted. **Deferred**: stale hardcoded output dirs
@@ -298,18 +331,18 @@ colleagues.
    — everything at this point is ephemeral testing, so re-running recreating the old
    folders is acceptable for now; point them at `test_acquisitions/` (or make them CLI
    args) once real data starts accumulating.
-2. ~~Real detector to replace the dummy (interface: `image -> (labels,
+3. ~~Real detector to replace the dummy (interface: `image -> (labels,
    stimulation_mask)`)~~ — **done (20260901)**: cellpose cpdino-vitb on the
    V100 server via `cellpose_server.py` / `remote_detect_objects`; wired into
    `autofrap()` as the default `detection_fun`; 2-cycle run on real nuclei
    verified (see Part 2 / Part 3).
-3. ~~Investigate: stimulation run duration did not scale with ROI area~~ —
+4. ~~Investigate: stimulation run duration did not scale with ROI area~~ —
    **resolved (20260826, 2-cycle run with dummy areas differing ~3x)**: the earlier
    anomaly was leftovers from previous tests on the microscope (a ROI still in
    memory, etc.). Test result: circle (12853 px) → 25.2 s, rectangle (4096 px) →
    18.2 s. Fits `T ≈ 15 s fixed overhead + 0.8 ms/px × area`: the area-dependent
    part (≈10.3 s vs ≈3.3 s) scales exactly with the area ratio (3.1x).
-4. ~~Refactor `nis_util.py`: shared helper for the temp-`.mac` → `nis_ar -mw` →
+5. ~~Refactor `nis_util.py`: shared helper for the temp-`.mac` → `nis_ar -mw` →
    temp-`.ini` boilerplate~~ — **done**: `_run_macro(path_to_nis, body, ini=False)`
    + `__INI_PATH__` placeholder (see Infrastructure notes). Verified byte-for-byte
    against the pre-refactor code for all 33 macro bodies; also fixed two latent
@@ -322,25 +355,36 @@ colleagues.
    **Live-verified 20260826** at the microscope: all read-only `get_*` wrappers +
    `set_position` XY round-trip (±2 µm, back within 0.1 µm) + piezo round-trip
    (±1 µm, exact) pass — `autofrap/autofrap_bitsnpieces/test_nis_util_live.py`.
-5. Cleanup: test data is now organized in `test_acquisitions/` and kept (incl.
+6. Cleanup: test data is now organized in `test_acquisitions/` and kept (incl.
    `test_stim.nd2` and the `autofrap_out/` FRAP files, which contain saved
    stimulation ROIs). Remaining junk at the root: `__pycache__/`,
    `.ipynb_checkpoints/`, `.virtual_documents/`, `pi-session-*.html` (pi session
    logs) — the `._*.py` AppleDouble files in `autofrap/autofrap_bitsnpieces/`
    (leftovers from the macOS move) have been deleted.
-6. Pixel ↔ stage coordinate transform for per-tile ROIs (calibration matrix from
+7. Pixel ↔ stage coordinate transform for per-tile ROIs (calibration matrix from
    `get_rotation_matrix` + pixel size; `get_roi_info` center as a shortcut) — needed
    to move the stage to a detected object before stimulating. **Low priority**:
    centering the object before stimulating was considered, but the current
    approach (no stage move, ROI drawn directly on the survey image) works fine.
-7. Per-cycle QC artifact: save a label-overlay PNG next to each `cNN_survey.nd2`
+8. Per-cycle QC artifact: save a label-overlay PNG next to each `cNN_survey.nd2`
    (labels + drawn ROIs) so detection can be spot-checked without opening NIS.
-8. Client timeout: `remote_detect_objects` still has `timeout=1800` (CPU-era
+9. Client timeout: `remote_detect_objects` still has `timeout=1800` (CPU-era
    leftover); ~60 s is right for the V100 — also decide the fail-fast behavior
    when the GPU server is unreachable mid-run.
-9. Detector tuning on real samples: try `diameter` / `min_size` per sample
+10. Detector tuning on real samples: try `diameter` / `min_size` per sample
    (e.g. `min_size` to drop dust/debris); consider multi-channel input
    (channel 1 of the survey is currently unused).
+11. **Stage position in nd2 metadata: pick the right XY device block** —
+    surfaced by the 20260901 grid run: the `ImageMetadataSeqLV` chunk
+    contains several microscope-state blocks (coarse stage + `XYDriver`
+    piezo, each with `XYUseN` / `XYKeyN` / `XYPositionXN` entries); a naive
+    first-match extraction gave a fixed, wrong position for the *survey*
+    files while the *FRAP* files (saved via `ImageSaveAs`) carried the
+    correct one (≤1.3 µm). Needed to recover per-FOV stage coordinates
+    from survey files alone now that filenames are plain `fovNN`. Likely
+    fix: read the block whose `XYUseN` flag is set / match `XYKeyN` to the
+    stage. Calibration target: `test_acquisitions/overview/` part-1 files
+    (commanded coords in the filenames).
 
 ## File map
 
@@ -355,7 +399,7 @@ at the root (`nis_util.py`, `cellpose_server.py`).
 |---|---|
 | `nis_util.py` | NIS macro wrappers on top of the shared `_run_macro` helper: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `grid_positions`, `open_image`, `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
 | `cellpose_server.py` | cellpose inference server for the GPU machine (runs on 10.163.69.12, V100): FastAPI, `POST /detect` (np.save bytes in/out + `model.eval()` query params), `GET /health` (cuda/device); model loaded once at startup with explicit `device`; setup + run instructions in its docstring |
-| `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (a `partial` of `detection.detect`), defaults to the remote cellpose detector (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL`) |
+| `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (a `partial` of `detection.detect`), defaults to the remote cellpose detector (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL`); `autofrap_grid` runs it over a stage grid (`grid_positions` or a custom `positions` list), one sub-dir per FOV, return to start |
 | `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `read_channel`, `label_to_polygon`, `detect_stim_mask`, `detect_polygon_stim_mask`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
 | `autofrap/autofrap_bitsnpieces/inspect_microscope.ipynb` | notebook walking through the `get_*` functions + FOV |
@@ -366,6 +410,7 @@ at the root (`nis_util.py`, `cellpose_server.py`).
 | `autofrap/autofrap_bitsnpieces/test_cellpose.py` | one-off cellpose test: local model or `--server URL` (remote-client A/B), reports objects + saves image/label previews (run: `python autofrap/autofrap_bitsnpieces/test_cellpose.py <nd2> [channel] [--server URL]`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py` | equivalence check for the `_run_macro` refactor: all generated `.mac` bodies byte-identical to the frozen pre-refactor snapshot + round-trip / cleanup tests (run: `python autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_live.py` | live smoke test for the refactored wrappers (run at the microscope): all read-only `get_*` + `set_position` XY/piezo round-trip |
+| `autofrap/autofrap_bitsnpieces/test_autofrap_grid_live.py` | live `autofrap_grid` test (run at the microscope): 2×2 grid, `max_cycles=1`, default cellpose detector; output `test_acquisitions/autofrap_grid/` |
 | `autofrap/autofrap_bitsnpieces/nis_util_old.py` | **frozen snapshot** of the pre-refactor `nis_util.py` (input of the equivalence check). The check served its purpose (33/33 byte-identical + live re-verification); the snapshot is no longer kept in sync with deliberate macro-body changes and will be removed (with `test_nis_util_refactor.py`) once the code stabilizes |
 
 ### Test data (`test_acquisitions/`)

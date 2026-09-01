@@ -249,6 +249,93 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
     return results
 
 
+def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
+                  settle_s=2.0, return_to_start=True, max_cycles=None,
+                  detection_fun=None, frap_oc='FRAPPA',
+                  iou_threshold=IOU_THRESHOLD):
+    """
+    run the autofrap() loop on every position of a stage grid, centered
+    on the current stage position
+
+    Each FOV gets its own sub-directory, so the per-cycle filenames of
+    autofrap() keep working unchanged:
+
+        <out_dir>/<run_stamp>/fov<i>/
+
+    (the exact stage position of each FOV is in the nd2 metadata of
+    the saved files)
+            <stamp>_cNN_survey.nd2
+            <stamp>_cNN_frap.nd2
+
+    Parameters
+    ----------
+    nis_exe, out_dir: str
+        as in autofrap(); a <run_stamp> sub-directory is created in
+        out_dir for this grid run
+    nx, ny: int
+        number of grid positions in x and y
+    spacing: float
+        neighbor distance in units of FOV (1 = touching, <1 = overlap)
+    positions: list of (x, y), optional
+        precomputed stage positions in visit order; if given, nx/ny/spacing
+        are ignored. Any visit order works (grid is row-major; a
+        center-out spiral order could be passed in later)
+    settle_s: float
+        settling time [s] after each stage move
+    return_to_start: bool
+        move back to the starting position after the last FOV
+    max_cycles, detection_fun, frap_oc, iou_threshold:
+        passed through to autofrap() unchanged
+
+    Returns
+    -------
+    results: list of (i, x, y, fov_dir, fov_results)
+        fov_results is autofrap's per-cycle results, or None if that FOV
+        failed (the run continues with the next position)
+    """
+    if positions is None:
+        positions = nis_util.grid_positions(nis_exe, nx=nx, ny=ny, spacing=spacing)
+
+    os.makedirs(out_dir, exist_ok=True)
+    start_xy = nis_util.get_position(nis_exe)[:2]
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    run_dir = os.path.join(out_dir, stamp)
+    os.makedirs(run_dir, exist_ok=True)
+
+    print(f'grid: {len(positions)} position(s), '
+          f'start=({start_xy[0]:+.2f}, {start_xy[1]:+.2f}) um')
+    results = []
+    for i, (x, y) in enumerate(positions, 1):
+        fov_dir = os.path.join(run_dir, f'fov{i:02d}')
+        print(f'\n=== [{i}/{len(positions)}] ({x:+.1f}, {y:+.1f}) um -> {fov_dir}',
+              flush=True)
+
+        nis_util.set_position(nis_exe, pos_xy=(x, y))
+        time.sleep(settle_s)
+
+        try:
+            fov_results = autofrap(nis_exe, fov_dir, max_cycles=max_cycles,
+                                   detection_fun=detection_fun, frap_oc=frap_oc,
+                                   iou_threshold=iou_threshold)
+        except Exception as e:
+            print(f'!!! FOV {i} failed: {e!r} - moving on to the next position',
+                  flush=True)
+            fov_results = None
+
+        results.append((i, x, y, fov_dir, fov_results))
+
+    if return_to_start:
+        nis_util.set_position(nis_exe, pos_xy=start_xy)
+        time.sleep(settle_s)
+        print(f'moved back to start ({start_xy[0]:+.2f}, {start_xy[1]:+.2f})')
+
+    n_ok = sum(1 for r in results if r[4] is not None)
+    n_cells = sum(len(r[4]) for r in results if r[4] is not None)
+    print(f'\nGrid done: {n_ok}/{len(positions)} FOV(s), {n_cells} cell(s) '
+          f'stimulated, output in {run_dir}')
+    return results
+
+
 if __name__ == '__main__':
     NIS_EXE = r'C:\Program Files\NIS-Elements\nis_ar.exe'
     OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'autofrap_out')
