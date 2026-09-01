@@ -1,12 +1,21 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: auto-FRAP loop now saves two ROIs per cell (whole cell +
-stimulation half) and the dummy stim mask is the left half of each object —
-verified 20260826; camera ROI detection added (`get_camera_roi`). Before that:
-after live-testing the new detection contract (cells + stimulation mask,
-`b0ad1675`) — 2-cycle auto-FRAP run verified, TODO #3 (duration vs ROI area)
-resolved. Before that: after the reorganization — generated code moved into
-`autofrap/`, all acquired test data into `test_acquisitions/` (see File map)._
+_Last updated: **real detector in the loop** — cellpose (cpdino-vitb) on a
+remote V100 GPU server (`cellpose_server.py`, FastAPI, np.save wire format),
+client in `detection.py`; `detect()` gained `detector` / `relabel` params,
+border-touching objects are discarded (`clear_border`), stim mask moved into
+`default_stimulation_mask`; `autofrap()` takes a `detection_fun` partial and
+defaults to the remote cellpose detector. **Verified 20260901 at the
+microscope: 2-cycle run on real DAPI-stained nuclei** (26→22 / 27→23 objects
+after border discard, different nucleus per cycle, both ROI types saved,
+14.1 / 13.9 s stimulations). Before that: auto-FRAP loop now saves two ROIs
+per cell (whole cell + stimulation half) and the dummy stim mask is the left
+half of each object — verified 20260826; camera ROI detection added
+(`get_camera_roi`). Before that: after live-testing the new detection contract
+(cells + stimulation mask, `b0ad1675`) — 2-cycle auto-FRAP run verified,
+TODO #3 (duration vs ROI area) resolved. Before that: after the
+reorganization — generated code moved into `autofrap/`, all acquired test
+data into `test_acquisitions/` (see File map)._ 
 
 ## Infrastructure (solid, verified)
 
@@ -28,7 +37,14 @@ resolved. Before that: after the reorganization — generated code moved into
   `calmutils` (label remapping between cycles via
   `calmutils.segmentation.merge_label_slices`), `fastremap`
   (fast label-remap kernels; already present transitively via calmutils,
-  now an explicit dep for `detection.shuffle_labels`).
+  now an explicit dep for `detection.shuffle_labels`), `requests`
+  (cellpose client). **GPU note (20260901)**: torch on the microscope PC is
+  CPU-only — the Quadro K2200 (Kepler, sm_35, 2015 driver 353.53) is
+  unsupported by any PyTorch that runs on Python 3.14, and no bigger GPU fits
+  (no PSU power connectors); detection therefore runs on a **remote Linux GPU
+  server** (10.163.69.12, Tesla V100-PCIE-32GB) via `cellpose_server.py`
+  (server machine: `pip install fastapi uvicorn cellpose` + CUDA torch;
+  weights cached locally).
 - **Bug fixed**: `get_cam_rotation` called `CameraGet_Cam0Flip` / `CameraGet_Cam0Rotate180`,
   which **do not exist** in this API → whole macro aborted at compile → empty ini →
   `KeyError: 'res'`. Now uses `CameraGet_Rotate` / `Camera_RotateGet`. Flip/180° info is
@@ -105,20 +121,57 @@ colleagues.
   - 2×2 test: 4/4 saved (~7.4 s each), recorded metadata positions match commanded within
     ~2 µm, all channels intact.
 
-## Part 2 — Detection (dummy done, contract updated)
+## Part 2 — Detection (done: cellpose client/server; dummy kept for testing)
 
-- `detection.detect(nd2_file, channel=0)` → `(labels, stimulation_mask)` tuple;
-  labels: 2D label map, same (y, x) shape as the image, 0 = background, 1..N = objects;
-  stimulation_mask: 2D binary mask (same shape), True = areas eligible for photostimulation.
-- Dummy detector: circle (label 1, center ⅓/⅓, r = min(h,w)/16) + rectangle
-  (label 2, lower-right quadrant, 1/16 of the image per side). The stimulation
-  mask is the **left half** of each object (equal-area split via
-  `split_mask_along_axis_equal_area`, ported from
+- `detection.detect(nd2_file, channel=0, detector='dummy'|'cellpose-remote',
+  server_url=None, relabel='distance'|'shuffle'|None, **detector_kwargs)`
+  → `(labels, stimulation_mask)` tuple; labels: 2D label map, same (y, x)
+  shape as the image, 0 = background, 1..N = objects; stimulation_mask: 2D
+  binary mask (same shape), True = areas eligible for photostimulation.
+  Pipeline: read channel → detector (labels only) → **border discard** →
+  **relabel** → stim mask.
+- **Cellpose detector (the real one — TODO #2 done 20260901)**:
+  `remote_detect_objects(image, server_url, timeout=1800, **eval_kwargs)`
+  POSTs the channel as raw `np.save` bytes (`application/x-numpy`,
+  `allow_pickle=False` both ends; ~2 MB for 1024² uint16, no compression)
+  to `cellpose_server.py` and receives the label map back the same way.
+  Server: FastAPI, model loaded once at startup (`cpdino-vitb`, the smallest
+  CP4 generalist — SAM/DINOv3 backbones; explicit
+  `device=torch.device('cuda'|'cpu')`), requests serialized by a lock;
+  `POST /detect` also takes the main `model.eval()` knobs as query params
+  (`diameter`, `min_size`, `cellprob_threshold`, `flow_threshold`,
+  `max_size_fraction` — defaults are cellpose's own), `GET /health` reports
+  `cuda` + GPU name. No auth, plain HTTP: lab network only (or SSH-tunnel it).
+  - **Timing** (1024² DAPI): 293.6 s on the PC's CPU → **2.1–2.6 s on the
+    V100** (~109×). Segmentation identical CPU vs GPU (15 objects, per-label
+    areas match within ±2 px float noise).
+  - **Gotchas found while wiring**: current FastAPI reads a bare `bytes`
+    endpoint annotation as a *query* param (422) → use `Body(...)`;
+    scikit-image 0.26 moved `relabel_sequential` from `skimage.measure` to
+    `skimage.segmentation` and it now returns 3 values
+    `(labels, forward_map, inverse_map)`; `ImageSaveAs` on a frozen live view
+    (current doc `"Frozen"`) silently writes nothing — grab a single-frame ND
+    acquisition instead (see Part 3 note).
+- **Border discard** (in `detect`, after detection, before relabelling):
+  `clear_border(labels)` — removes the **whole label** if it touches the
+  image border (partially imaged cells must not be stimulated) — then
+  `relabel_sequential` closes the numbering gaps (gap-free 1..N). 20260901
+  run: 26→22 and 27→23 objects in a dense FOV.
+- **Relabelling modes** (`relabel` param, after border discard):
+  `'distance'` (default) — `relabel_by_distance`, 1..N by increasing centroid
+  distance to image center (optical axis first); `'shuffle'` —
+  `shuffle_labels`, random permutation (no raster-order bias); `None` — as-is.
+- **Stim mask**: `default_stimulation_mask(labels)` — the **left half** of
+  each object (equal-area split via `split_mask_along_axis_equal_area`,
+  ported from
   `autofrap/autofrap_bitsnpieces/split_mask_along_axis_equal_area.py`),
   mimicking a real FRAP experiment in which part of the cell is bleached and
-  diffusion from the rest is recorded. Objects are kept small on purpose: FRAP
-  bleaching is a laser scan, so stimulation time scales with ROI area. Real
-  detector swaps in behind the same interface.
+  diffusion from the rest is recorded. Computed **in `detect()`** from the
+  final labels; the detector functions themselves return labels only.
+- Dummy detector (`detector='dummy'`, no server needed): circle (label 1,
+  center ⅓/⅓, r = min(h,w)/16) + rectangle (label 2, lower-right quadrant,
+  1/16 of the image per side); objects kept small on purpose so runs double
+  as a stimulation-duration-vs-area check.
 - `detection.shuffle_labels(labels, seed=None)` → label map with 1..N randomly
   permuted (background stays 0), via `fastremap.remap` with a permutation dict —
   detectors number objects in raster order (top-left first), which would bias
@@ -213,6 +266,19 @@ colleagues.
   NIS stores closed polygons without the repeated closing vertex, so one point
   fewer than the pixel-space polygon). Deletion happens *after* saving, so both ROIs
   stay in the file for downstream analysis; GUI left clean.
+- **20260901: loop verified with the real cellpose detector** (2 cycles,
+  DAPI-stained nuclei, GUI: 2 ch × 1024², 12 FRAP frames): per cycle survey
+  ~10 s → V100 detection ~2.1 s → stimulation 14.1 / 13.9 s. c01 and c02
+  stimulated **different nuclei** (cross-cycle remapping worked); each FRAP
+  file contains the whole-cell `StandardROI` + the `StimulationROI` whose
+  center is offset to the **left** of the cell center (the default left-half
+  convention survives all the way to NIS). `autofrap()` now takes
+  `detection_fun` (a `partial` of `detection.detect`) and **defaults to the
+  remote cellpose detector** (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL=0`);
+  pass `partial(detection.detect, detector='dummy')` to test without the
+  server. Note: saving the **frozen live view** (`ImageSaveAs`, current doc
+  `"Frozen"`) silently produces no file — grab a single-frame ND acquisition
+  instead (used to acquire `nuclei_20260901_110410.nd2`).
 - **`next_cell()` kept** for backward compatibility; `next_stimulatable_cell()` is the
   preferred function when a stimulation mask is available (integrates the mask check
   into the search loop — cells with zero stim pixels are skipped automatically).
@@ -232,7 +298,11 @@ colleagues.
    — everything at this point is ephemeral testing, so re-running recreating the old
    folders is acceptable for now; point them at `test_acquisitions/` (or make them CLI
    args) once real data starts accumulating.
-2. Real detector to replace the dummy (interface: `image -> (labels, stimulation_mask)`).
+2. ~~Real detector to replace the dummy (interface: `image -> (labels,
+   stimulation_mask)`)~~ — **done (20260901)**: cellpose cpdino-vitb on the
+   V100 server via `cellpose_server.py` / `remote_detect_objects`; wired into
+   `autofrap()` as the default `detection_fun`; 2-cycle run on real nuclei
+   verified (see Part 2 / Part 3).
 3. ~~Investigate: stimulation run duration did not scale with ROI area~~ —
    **resolved (20260826, 2-cycle run with dummy areas differing ~3x)**: the earlier
    anomaly was leftovers from previous tests on the microscope (a ROI still in
@@ -263,29 +333,37 @@ colleagues.
    to move the stage to a detected object before stimulating. **Low priority**:
    centering the object before stimulating was considered, but the current
    approach (no stage move, ROI drawn directly on the survey image) works fine.
+7. Per-cycle QC artifact: save a label-overlay PNG next to each `cNN_survey.nd2`
+   (labels + drawn ROIs) so detection can be spot-checked without opening NIS.
+8. Client timeout: `remote_detect_objects` still has `timeout=1800` (CPU-era
+   leftover); ~60 s is right for the V100 — also decide the fail-fast behavior
+   when the GPU server is unreachable mid-run.
+9. Detector tuning on real samples: try `diameter` / `min_size` per sample
+   (e.g. `min_size` to drop dust/debris); consider multi-channel input
+   (channel 1 of the survey is currently unused).
 
 ## File map
 
 Layout after the reorganization: generated pipeline code under `autofrap/`
 (test-like bits under `autofrap/autofrap_bitsnpieces/`), all acquired test data
-under `test_acquisitions/`, and the NIS macro wrappers at the root (`nis_util.py`).
+under `test_acquisitions/`, and the NIS macro wrappers + the cellpose server
+at the root (`nis_util.py`, `cellpose_server.py`).
 
 ### Generated pipeline code
 
 | file | purpose |
 |---|---|
 | `nis_util.py` | NIS macro wrappers on top of the shared `_run_macro` helper: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `grid_positions`, `open_image`, `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
-| `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat) |
-| `autofrap/detection.py` | Part 2: `detect` (returns `(labels, stimulation_mask)` tuple),
-`dummy_detect_objects` (stim mask = left half of each object), `read_channel`,
-`label_to_polygon`, `detect_stim_mask`, `detect_polygon_stim_mask`,
-`split_mask_along_axis_equal_area` (ported from bitsnpieces) |
+| `cellpose_server.py` | cellpose inference server for the GPU machine (runs on 10.163.69.12, V100): FastAPI, `POST /detect` (np.save bytes in/out + `model.eval()` query params), `GET /health` (cuda/device); model loaded once at startup with explicit `device`; setup + run instructions in its docstring |
+| `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (a `partial` of `detection.detect`), defaults to the remote cellpose detector (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL`) |
+| `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `read_channel`, `label_to_polygon`, `detect_stim_mask`, `detect_polygon_stim_mask`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
 | `autofrap/autofrap_bitsnpieces/inspect_microscope.ipynb` | notebook walking through the `get_*` functions + FOV |
 | `autofrap/autofrap_bitsnpieces/stimulation_loop.py` | colleague's sketch (source of the label-remapping logic, now ported into `autofrap.py`) |
 | `autofrap/autofrap_bitsnpieces/test_merge_label_slices.py` | colleague's sketch: `merge_label_slices` test |
 | `autofrap/autofrap_bitsnpieces/split_mask_along_axis_equal_area.py` | mask utility: split a label mask into two equal-area halves along an axis (skimage); ported into `detection.py` (the pipeline copy is canonical) |
 | `autofrap/autofrap_bitsnpieces/test_stim_save.py` | one-off test script (save-current-document probe; cleanup candidate) |
+| `autofrap/autofrap_bitsnpieces/test_cellpose.py` | one-off cellpose test: local model or `--server URL` (remote-client A/B), reports objects + saves image/label previews (run: `python autofrap/autofrap_bitsnpieces/test_cellpose.py <nd2> [channel] [--server URL]`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py` | equivalence check for the `_run_macro` refactor: all generated `.mac` bodies byte-identical to the frozen pre-refactor snapshot + round-trip / cleanup tests (run: `python autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_live.py` | live smoke test for the refactored wrappers (run at the microscope): all read-only `get_*` + `set_position` XY/piezo round-trip |
 | `autofrap/autofrap_bitsnpieces/nis_util_old.py` | **frozen snapshot** of the pre-refactor `nis_util.py` (input of the equivalence check). The check served its purpose (33/33 byte-identical + live re-verification); the snapshot is no longer kept in sync with deliberate macro-body changes and will be removed (with `test_nis_util_refactor.py`) once the code stabilizes |
@@ -295,8 +373,9 @@ under `test_acquisitions/`, and the NIS macro wrappers at the root (`nis_util.py
 | path | contents |
 |---|---|
 | `test_acquisitions/overview/` | 2×2 grid-scan test, 4 files (20260819) |
-| `test_acquisitions/autofrap_out/<stamp>/` | auto-FRAP runs: `cNN_survey.nd2` + `cNN_frap.nd2` per cycle (three 2-cycle runs, 20260824); FRAP files contain the saved stimulation ROI in the nd2 `rois` metadata |
+| `test_acquisitions/autofrap_out/<stamp>/` | auto-FRAP runs (dummy detector): `cNN_survey.nd2` + `cNN_frap.nd2` per cycle (three 2-cycle runs, 20260824); FRAP files contain the saved stimulation ROI in the nd2 `rois` metadata. Newer runs went to the stale `autofrap/autofrap_out/` dir instead (TODO #1): 20260826 ×4, **20260901** ×1 (cellpose, 2 cycles, real nuclei) |
 | `test_acquisitions/test_*.nd2` | earlier one-off artifacts: `test_current`, `test_current3`, `test_save_on`, `test_saveas`, `test_stim` |
+| `test_acquisitions/nuclei_20260901_110410.nd2` (+ `_cellpose_image/labels.png` previews) | 2-ch single-frame survey of DAPI-stained nuclei (1024², ch0 = DAPI); first real detection test image + cellpose segmentation previews |
 
 ### Pre-existing project files (not part of this work)
 

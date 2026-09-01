@@ -7,8 +7,9 @@ just runs them in a loop.
 
 Per cycle:
   1. run the current ND experiment, saved to <stamp>_c<NN>_survey.nd2
-  2. detect objects in the survey image (detection.detect) — returns
-     a (labels, stimulation_mask) tuple
+  2. detect objects in the survey image (detection_fun — by default
+     cellpose on the GPU server via cellpose_server.py) — returns a
+     (labels, stimulation_mask) tuple
   3. remap object labels against the previous cycle (IoU matching)
      and pick the smallest not-yet-stimulated label that has at least
      one pixel in the stimulation mask
@@ -30,6 +31,7 @@ no cell has stimulation-eligible pixels, or when max_cycles is reached.
 import os
 import sys
 import time
+from functools import partial
 
 import numpy as np
 from calmutils.segmentation import merge_label_slices
@@ -43,6 +45,11 @@ import nis_util
 # IoU threshold for matching object labels between consecutive
 # survey images (see merge_label_slices)
 IOU_THRESHOLD = 0.3
+
+# default detector: cellpose (cpdino-vitb) on the GPU server
+# (cellpose_server.py), DAPI channel
+CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'
+SURVEY_CHANNEL = 0
 
 
 def next_cell(labels, stimulated):
@@ -116,7 +123,7 @@ def remap_stimulated(prev_labels, labels, stimulated, iou_threshold):
     return cur_remapped, stim
 
 
-def autofrap(nis_exe, out_dir, max_cycles=None, survey_channel=0,
+def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
              frap_oc='FRAPPA', iou_threshold=IOU_THRESHOLD):
     """
     run the auto-FRAP loop
@@ -129,8 +136,13 @@ def autofrap(nis_exe, out_dir, max_cycles=None, survey_channel=0,
         output directory for survey + FRAP files
     max_cycles: int, optional
         stop after this many cycles (default: until all cells done)
-    survey_channel: int
-        channel of the survey image to detect on
+    detection_fun: callable, optional
+        survey_file -> (labels, stimulation_mask); defaults to
+        detection.detect with the cellpose server (CELLPOSE_SERVER_URL)
+        on SURVEY_CHANNEL, e.g. partial(detection.detect,
+        detector='cellpose-remote', server_url=..., channel=...);
+        pass partial(detection.detect, detector='dummy') for testing
+        without the server
     frap_oc: str
         optical configuration to activate before each stimulation
     iou_threshold: float
@@ -140,6 +152,14 @@ def autofrap(nis_exe, out_dir, max_cycles=None, survey_channel=0,
     -------
     results: list of (cycle, cell, survey_file, frap_file)
     """
+    if detection_fun is None:
+        detection_fun = partial(
+            detection.detect,
+            detector='cellpose-remote',
+            server_url=CELLPOSE_SERVER_URL,
+            channel=SURVEY_CHANNEL,
+        )
+
     os.makedirs(out_dir, exist_ok=True)
     stamp = time.strftime('%Y%m%d_%H%M%S')
     stimulated = set()
@@ -159,9 +179,7 @@ def autofrap(nis_exe, out_dir, max_cycles=None, survey_channel=0,
         print(f'[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)', flush=True)
 
         # 3. detect
-        labels, stimulation_mask = detection.detect(
-            survey_file, channel=survey_channel
-        )
+        labels, stimulation_mask = detection_fun(survey_file)
         n_obj = len(np.unique(labels)) - 1
 
         # 4. pick the next unused cell with stimulation-eligible pixels
