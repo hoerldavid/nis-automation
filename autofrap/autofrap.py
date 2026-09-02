@@ -176,9 +176,11 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         # 5. ROIs + stimulation run: whole cell (saved for downstream
         #    analysis) + stimulation region, the latter set to
         #    stimulation mode
-        cell_poly = detection.label_to_polygon(cur_labels, cell)
-        stim_poly = detection.detect_polygon_stim_mask(
-            cur_labels, stimulation_mask, cell
+        cell_poly = detection.mask_to_polygon(
+            detection.cell_mask(cur_labels, cell)
+        )
+        stim_poly = detection.mask_to_polygon(
+            detection.cell_mask(cur_labels, cell, stimulation_mask)
         )
         if not cell_poly or not stim_poly:
             raise RuntimeError(f'no polygon for cell {cell}')

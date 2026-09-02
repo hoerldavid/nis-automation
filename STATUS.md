@@ -221,15 +221,15 @@ colleagues.
   (z, y, x) label maps (numpy-based, one coordinate per axis). Default
   reference = image center (optical axis: least distortion/vignetting →
   process first). Background stays 0.
-- `detection.label_to_polygon(labels, label_id, tolerance=2.0)` → simplified polygon
-  vertices (x, y) pixels via `find_contours` + `approximate_polygon` (Douglas–Peucker).
-  At 1024×1024: circle → 17 vertices, rectangle → 5.
-- `detection.detect_stim_mask(labels, stimulation_mask, cell_id)` → binary mask
-  where `(labels == cell_id) & stimulation_mask` (intersection of cell with stim mask).
-- `detection.detect_polygon_stim_mask(labels, stimulation_mask, cell_id, tolerance=2.0)`
-  → polygon for a cell's stimulation-eligible region only (same Douglas–Peucker
-  simplification as `label_to_polygon`). Used by `autofrap.py` to draw the
-  stimulation ROI.
+- `detection.cell_mask(labels, cell_id, stimulation_mask=None)` → binary mask
+  of one cell: `labels == cell_id`, or intersected with the stim mask when one
+  is given (same optional-mask pattern as `next_stimulatable_cell`).
+- `detection.mask_to_polygon(mask, tolerance=2.0)` → simplified polygon
+  vertices (x, y) pixels from a binary mask via `find_contours` +
+  `approximate_polygon` (Douglas–Peucker, largest/outermost contour).
+  At 1024×1024: dummy circle → 17 vertices, rectangle → 5. `autofrap.py`
+  draws both ROIs from these two: whole cell = `mask_to_polygon(cell_mask(...))`,
+  stimulation ROI = `mask_to_polygon(cell_mask(..., stimulation_mask))`.
 - `read_channel` uses `nd2.ND2File.asarray()[channel]` (`read_frame` indexes time, not channels).
 
 ## ROIs in NIS (done, verified live)
@@ -292,9 +292,10 @@ colleagues.
   `run_current_nd_experiment` (~10 s) → detect → `next_stimulatable_cell` picks the
   smallest unstimulated label with nonzero stim pixels (skips cells with no
   stim-eligible area) → **two ROIs** on the survey image: the whole cell
-  (`label_to_polygon`, standard type — saved for downstream analysis) and the
-  stimulation region (`detect_polygon_stim_mask`, clipped to
-  `(cell == id) & stim_mask`), the latter set to stimulation mode
+  (via `mask_to_polygon(cell_mask(...))`, standard type — saved for downstream
+  analysis) and the stimulation region (`mask_to_polygon(cell_mask(...,
+  stimulation_mask))`, i.e. clipped to `(cell == id) & stim_mask`), the latter
+  set to stimulation mode
   (`set_roi_type(3)`) → FRAPPA → `run_stimulation_experiment` (duration tracks ROI
   area, see TODO #3) → `save_current_document` → delete both ROIs → close both
   documents. Verified 20260826 (halved dummy ROIs): circle half → 20.9 s,
@@ -341,9 +342,10 @@ colleagues.
   happens; a failing FOV just moves to the next grid position — was dropped
   at the same time. The `next_cell` in the `stimulation_loop.py` sketch is a
   separate local copy.)
-- **New detection helpers** (`detect_stim_mask`, `detect_polygon_stim_mask`) are thin
-  wrappers around the existing `find_contours`/`approximate_polygon` pipeline, applied
-  to the intersection mask `(labels == cell_id) & stimulation_mask`.
+- **ROI helpers compacted**: `label_to_polygon` / `detect_stim_mask` /
+  `detect_polygon_stim_mask` merged into two primitives — `cell_mask`
+  (whole cell, or cell ∩ stim mask) and `mask_to_polygon` (largest contour →
+  Douglas–Peucker polygon); see Part 2 for the signatures.
 - **Code cleanup**: the main loop in `autofrap.py` now uses f-strings instead of
   old-style `%` formatting (no logic changes).
 
@@ -461,7 +463,7 @@ at the root (`nis_util.py`, `cellpose_server.py`).
 | `grid_utils.py` | pure grid geometry for tiled acquisitions: `gen_grid` (moved out of `nis_util.py` — not NIS-specific); used by the old wing-scanner `automation.py` + `NIS_Macro_Acquisition.ipynb` |
 | `cellpose_server.py` | cellpose inference server for the GPU machine (runs on 10.163.69.12, V100): FastAPI, `POST /detect` (np.save bytes in/out + `model.eval()` query params), `GET /health` (cuda/device); model loaded once at startup with explicit `device`; setup + run instructions in its docstring |
 | `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (a `partial` of `detection.detect`), defaults to the remote cellpose detector (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL`); `grid_positions(position, fov, nx, ny, spacing)` (pure grid math, moved here from `nis_util.py`); `autofrap_grid` runs the loop over that stage grid or a custom `positions` list, one sub-dir per FOV, return to start |
-| `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `read_channel`, `label_to_polygon`, `detect_stim_mask`, `detect_polygon_stim_mask`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
+| `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `read_channel`, `cell_mask`, `mask_to_polygon`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
 | `autofrap/autofrap_bitsnpieces/inspect_microscope.ipynb` | notebook walking through the `get_*` functions + FOV |
 | `autofrap/autofrap_bitsnpieces/stimulation_loop.py` | colleague's sketch (source of the label-remapping logic, now ported into `autofrap.py`) |

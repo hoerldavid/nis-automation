@@ -360,47 +360,45 @@ def detect(nd2_file, channel=0, detector='dummy', server_url=None,
     return labels, default_stimulation_mask(labels)
 
 
-def detect_stim_mask(labels, stimulation_mask, cell_id):
+def cell_mask(labels, cell_id, stimulation_mask=None):
     """
-    compute the combined ROI mask for a specific cell
+    binary mask of one cell of a label map
 
-    The result is the intersection of the cell region with the
-    stimulation mask, so it only covers areas that are both inside
-    the cell and eligible for photostimulation.
+    Without a stimulation mask: the whole cell (``labels == cell_id``).
+    With one: the intersection of the cell with the stimulation mask,
+    i.e. only the areas that are both inside the cell and eligible for
+    photostimulation.
 
     Parameters
     ----------
     labels: 2D np.ndarray
         label map (0 = background, 1..N = objects)
-    stimulation_mask: 2D np.ndarray
-        binary stimulation mask
     cell_id: int
         the cell label to extract
+    stimulation_mask: 2D np.ndarray, optional
+        binary stimulation mask; if given, the cell is intersected with it
 
     Returns
     -------
-    combined_mask: 2D np.ndarray
-        binary mask where (labels == cell_id) & stimulation_mask
+    mask: 2D np.ndarray, bool
+        binary mask of the cell (or its stimulation-eligible part)
     """
+    if stimulation_mask is None:
+        return labels == cell_id
     return (labels == cell_id) & stimulation_mask
 
 
-def detect_polygon_stim_mask(labels, stimulation_mask, cell_id, tolerance=2.0):
+def mask_to_polygon(mask, tolerance=2.0):
     """
-    convert a cell's stimulation-eligible region to polygon vertices
+    convert a binary mask to polygon vertices in pixel coordinates
 
-    This is the same as ``label_to_polygon`` but uses the intersection
-    of the cell with the stimulation mask, so the resulting polygon
-    only covers areas eligible for photostimulation.
+    Uses the largest (outermost) contour of the mask, simplified with
+    Douglas-Peucker (`approximate_polygon`).
 
     Parameters
     ----------
-    labels: 2D np.ndarray
-        label map (0 = background)
-    stimulation_mask: 2D np.ndarray
-        binary stimulation mask
-    cell_id: int
-        cell label to extract
+    mask: 2D np.ndarray (y, x), bool or 0/1
+        binary mask
     tolerance: float
         Douglas-Peucker simplification tolerance [px]
 
@@ -408,45 +406,11 @@ def detect_polygon_stim_mask(labels, stimulation_mask, cell_id, tolerance=2.0):
     -------
     polygon: list of (x, y) tuples
         pixel coordinates (x right, y down, (0,0) at top-left corner);
-        empty list if the combined region is empty
+        empty list if the mask is empty
     """
     from skimage.measure import find_contours, approximate_polygon
 
-    combined_mask = detect_stim_mask(labels, stimulation_mask, cell_id)
-    contours = find_contours(combined_mask, 0.5)
-    if not contours:
-        return []
-
-    contour = max(contours, key=len)  # largest / outermost contour
-    poly = np.column_stack((contour[:, 1], contour[:, 0]))  # (row, col) -> (x, y)
-    if len(poly) > 3:
-        poly = approximate_polygon(poly, tolerance=tolerance)
-
-    return [(float(x), float(y)) for x, y in poly]
-
-
-def label_to_polygon(labels, label_id, tolerance=2.0):
-    """
-    convert one label of a label map to polygon vertices in pixel coordinates
-
-    Parameters
-    ----------
-    labels: 2D np.ndarray (y, x), int
-        label map (0 = background)
-    label_id: int
-        label to convert
-    tolerance: float
-        Douglas-Peucker simplification tolerance [px]
-
-    Returns
-    -------
-    polygon: list of (x, y) tuples
-        pixel coordinates (x right, y down, (0,0) at top-left corner);
-        empty list if the label is not present
-    """
-    from skimage.measure import find_contours, approximate_polygon
-
-    contours = find_contours(labels == label_id, 0.5)
+    contours = find_contours(mask, 0.5)
     if not contours:
         return []
 
