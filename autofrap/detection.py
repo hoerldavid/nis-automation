@@ -14,27 +14,8 @@ Both detectors return a label map; detect() adds the default
 stimulation mask (left half of each object).
 """
 import numpy as np
-import nd2
 
-
-def read_channel(nd2_file, channel=0):
-    """
-    read one channel of an ND2 file as a 2D (y, x) array
-
-    Parameters
-    ----------
-    nd2_file: str
-        path to the ND2 file
-    channel: int
-        channel index to read
-
-    Returns
-    -------
-    image: np.ndarray
-        2D image array (y, x)
-    """
-    with nd2.ND2File(nd2_file) as f:
-        return f.asarray()[channel]
+import nd2_helpers
 
 
 def split_mask_along_axis_equal_area(mask, axis=0):
@@ -334,7 +315,7 @@ def detect(nd2_file, channel=0, detector='dummy', server_url=None,
     """
     from skimage.segmentation import clear_border, relabel_sequential
 
-    image = read_channel(nd2_file, channel)
+    image = nd2_helpers.read_channel(nd2_file, channel)
     if detector == 'dummy':
         labels = dummy_detect_objects(image)
     elif detector == 'cellpose-remote':

@@ -1,6 +1,21 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **`nis_util.py` TODO cleanup** (no microscope needed): dead
+_Last updated: **stage position from nd2 metadata works (TODO #11 closed)** (no
+microscope needed, on the copied `test_acquisitions/autofrap_grid/` data):
+`autofrap/nd2_helpers.py` — new module for nd2 reads, `stage_position(nd2_file)`
+returns the (x, y, z) stage position in µm via the public
+`frame_metadata(0).channels[0].position.stagePositionUm` (NIS writes the coarse
+stage into the per-frame `dXPos`/`dYPos`/`dZPos`; one value per file). The
+previous session's "pick the right XY device block" was a red herring: the raw
+`pDeviceSetting` XY slots are **not** the stage — slot 0 is unused and holds a
+stale value (the "fixed, wrong" survey position), and the only in-use slot is
+`XYDrive` (the Ti XY piezo, position ~0). `read_channel` moved from
+`detection.py` into `nd2_helpers.py` (refs updated). Verified
+(`test_nd2_stage_position.py`, 0 failures, 5 µm tol): all 8 files of the
+20260901_160216 grid run match commanded within ≤1.5 µm (survey **and** FRAP),
+all 4 overview (20260819) files within ≤3.1 µm (commanded coords in filenames);
+12-frame FRAP files carry the same position in every frame. `detect(dummy)`
+round-trip + `test_nis_util_refactor.py` still pass. Before that: **`nis_util.py` TODO cleanup** (no microscope needed): dead
 color-camera-crop macro snippet + commented-out `set_camera` stub removed;
 `gen_grid` moved to `grid_utils.py` (refs in `automation.py` +
 `NIS_Macro_Acquisition.ipynb` updated); `_quote` inlined into `_run_macro`;
@@ -425,17 +440,16 @@ colleagues.
 10. Detector tuning on real samples: try `diameter` / `min_size` per sample
    (e.g. `min_size` to drop dust/debris); consider multi-channel input
    (channel 1 of the survey is currently unused).
-11. **Stage position in nd2 metadata: pick the right XY device block** —
-    surfaced by the 20260901 grid run: the `ImageMetadataSeqLV` chunk
-    contains several microscope-state blocks (coarse stage + `XYDriver`
-    piezo, each with `XYUseN` / `XYKeyN` / `XYPositionXN` entries); a naive
-    first-match extraction gave a fixed, wrong position for the *survey*
-    files while the *FRAP* files (saved via `ImageSaveAs`) carried the
-    correct one (≤1.3 µm). Needed to recover per-FOV stage coordinates
-    from survey files alone now that filenames are plain `fovNN`. Likely
-    fix: read the block whose `XYUseN` flag is set / match `XYKeyN` to the
-    stage. Calibration target: `test_acquisitions/overview/` part-1 files
-    (commanded coords in the filenames).
+11. ~~**Stage position in nd2 metadata: pick the right XY device block**~~ —
+    **done (20260902)**: the stage position is the per-frame `dXPos`/`dYPos`/
+    `dZPos` (public: `frame_metadata(0).channels[0].position.stagePositionUm`),
+    correct in survey *and* FRAP files alike — wrapped as
+    `nd2_helpers.stage_position()`. The "XY device blocks" of the previous
+    attempt are the raw `pDeviceSetting` slots: slot 0 unused (stale value —
+    the "fixed, wrong" survey position), the only in-use slot is `XYDrive`
+    (Ti XY piezo, position ~0). Verified against commanded coords: 8/8 grid-run
+    files ≤1.5 µm, 4/4 overview files ≤3.1 µm
+    (`test_nd2_stage_position.py`).
 12. **Pending live checks in `nis_util.py`** (need the microscope workstation;
     kept as TODO comments in the code): `close_current_document(save='yes')` —
     what happens if the unsaved document is closed with the save flag;
@@ -463,7 +477,8 @@ at the root (`nis_util.py`, `cellpose_server.py`).
 | `grid_utils.py` | pure grid geometry for tiled acquisitions: `gen_grid` (moved out of `nis_util.py` — not NIS-specific); used by the old wing-scanner `automation.py` + `NIS_Macro_Acquisition.ipynb` |
 | `cellpose_server.py` | cellpose inference server for the GPU machine (runs on 10.163.69.12, V100): FastAPI, `POST /detect` (np.save bytes in/out + `model.eval()` query params), `GET /health` (cuda/device); model loaded once at startup with explicit `device`; setup + run instructions in its docstring |
 | `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (a `partial` of `detection.detect`), defaults to the remote cellpose detector (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL`); `grid_positions(position, fov, nx, ny, spacing)` (pure grid math, moved here from `nis_util.py`); `autofrap_grid` runs the loop over that stage grid or a custom `positions` list, one sub-dir per FOV, return to start |
-| `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `read_channel`, `cell_mask`, `mask_to_polygon`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
+| `autofrap/nd2_helpers.py` | ND2 read helpers: `read_channel` (moved from `detection.py`), `stage_position` (per-frame `dXPos`/`dYPos`/`dZPos` → public `stagePositionUm`; the raw `pDeviceSetting` XY slots are *not* the stage — see TODO #11) |
+| `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `cell_mask`, `mask_to_polygon`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
 | `autofrap/autofrap_bitsnpieces/inspect_microscope.ipynb` | notebook walking through the `get_*` functions + FOV |
 | `autofrap/autofrap_bitsnpieces/stimulation_loop.py` | colleague's sketch (source of the label-remapping logic, now ported into `autofrap.py`) |
@@ -471,6 +486,7 @@ at the root (`nis_util.py`, `cellpose_server.py`).
 | `autofrap/autofrap_bitsnpieces/split_mask_along_axis_equal_area.py` | mask utility: split a label mask into two equal-area halves along an axis (skimage); ported into `detection.py` (the pipeline copy is canonical) |
 | `autofrap/autofrap_bitsnpieces/test_stim_save.py` | one-off test script (save-current-document probe; cleanup candidate) |
 | `autofrap/autofrap_bitsnpieces/test_cellpose.py` | one-off cellpose test: local model or `--server URL` (remote-client A/B), reports objects + saves image/label previews (run: `python autofrap/autofrap_bitsnpieces/test_cellpose.py <nd2> [channel] [--server URL]`) |
+| `autofrap/autofrap_bitsnpieces/test_nd2_stage_position.py` | offline check of `nd2_helpers.stage_position` vs commanded coords: 20260901_160216 grid run (positions parsed from `grid_live_test.log`) + 20260819 overview run (coords in filenames), 5 µm tolerance (run: `python autofrap/autofrap_bitsnpieces/test_nd2_stage_position.py`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py` | equivalence check for the `_run_macro` refactor: all generated `.mac` bodies byte-identical to the frozen pre-refactor snapshot + round-trip / cleanup tests (run: `python autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_live.py` | live smoke test for the refactored wrappers (run at the microscope): all read-only `get_*` + `set_position` XY/piezo round-trip |
 | `autofrap/autofrap_bitsnpieces/test_autofrap_grid_live.py` | live `autofrap_grid` test (run at the microscope): 2×2 grid, `max_cycles=1`, default cellpose detector; output `test_acquisitions/autofrap_grid/` |

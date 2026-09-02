@@ -268,7 +268,8 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
         <out_dir>/<run_stamp>/fov<i>/
 
     (the exact stage position of each FOV is in the nd2 metadata of
-    the saved files)
+    the saved files — nd2_helpers.stage_position reads it back)
+
             <stamp>_cNN_survey.nd2
             <stamp>_cNN_frap.nd2
 
