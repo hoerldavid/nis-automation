@@ -52,40 +52,24 @@ CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'
 SURVEY_CHANNEL = 0
 
 
-def next_cell(labels, stimulated):
+def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
     """
-    smallest label > 0 not in `stimulated`; None if none left
-
-    Kept for backward compatibility; use ``next_stimulatable_cell``
-    when a stimulation mask is available.
-    """
-    for lbl in sorted(np.unique(labels).tolist()):
-        if lbl > 0 and lbl not in stimulated:
-            return lbl
-    return None
-
-
-def next_stimulatable_cell(labels, stimulation_mask, stimulated, skip=None):
-    """
-    Find the next unstimulated cell that has at least one nonzero
-    pixel in the stimulation mask.
+    Find the next unstimulated cell (smallest label first).
 
     Iterates over labels in sorted order. For each candidate label
-    that is not in the stimulated set, checks whether
-    ``(labels == lbl) & stimulation_mask`` has any nonzero pixels;
-    if not, skips to the next candidate.
+    that is not in the stimulated set, checks whether it has any pixels
+    in the stimulation mask (if one is given); candidates without
+    stimulation-eligible pixels are skipped.
 
     Parameters
     ----------
     labels: 2D np.ndarray
         label map (0 = background, 1..N = objects)
-    stimulation_mask: 2D np.ndarray
-        binary mask of areas eligible for photostimulation
     stimulated: set of int
         already-stimulated cell IDs
-    skip: int or None
-        if provided, skip labels <= skip (useful for retrying
-        after a failed stimulation)
+    stimulation_mask: 2D np.ndarray, optional
+        binary mask of areas eligible for photostimulation; if given,
+        cells without any pixels in it are skipped
 
     Returns
     -------
@@ -94,9 +78,7 @@ def next_stimulatable_cell(labels, stimulation_mask, stimulated, skip=None):
     """
     for lbl in sorted(np.unique(labels).tolist()):
         if lbl > 0 and lbl not in stimulated:
-            if skip is not None and lbl <= skip:
-                continue
-            if np.any((labels == lbl) & stimulation_mask):
+            if stimulation_mask is None or np.any((labels == lbl) & stimulation_mask):
                 return lbl
     return None
 
@@ -179,7 +161,7 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             )
 
         cell = next_stimulatable_cell(
-            cur_labels, stimulation_mask, stimulated
+            cur_labels, stimulated, stimulation_mask
         )
 
         if cell is None:

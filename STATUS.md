@@ -334,9 +334,13 @@ colleagues.
   longer multi-cycle runs are ever needed: exclude FRAPed cells by centroid
   (id-independent, preferred) or match without re-baselining (calmutils'
   private `_correct_next_plane`).
-- **`next_cell()` kept** for backward compatibility; `next_stimulatable_cell()` is the
-  preferred function when a stimulation mask is available (integrates the mask check
-  into the search loop — cells with zero stim pixels are skipped automatically).
+- `next_cell()` merged into `next_stimulatable_cell(labels, stimulated,
+  stimulation_mask=None)`: the stimulation mask is optional — the "has
+  stimulation-eligible pixels" check is only applied when a mask is given.
+  (The unused `skip` parameter — retry-after-failed-stimulation, which never
+  happens; a failing FOV just moves to the next grid position — was dropped
+  at the same time. The `next_cell` in the `stimulation_loop.py` sketch is a
+  separate local copy.)
 - **New detection helpers** (`detect_stim_mask`, `detect_polygon_stim_mask`) are thin
   wrappers around the existing `find_contours`/`approximate_polygon` pipeline, applied
   to the intersection mask `(labels == cell_id) & stimulation_mask`.
