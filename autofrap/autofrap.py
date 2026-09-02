@@ -101,28 +101,6 @@ def next_stimulatable_cell(labels, stimulation_mask, stimulated, skip=None):
     return None
 
 
-def remap_stimulated(prev_labels, labels, stimulated, iou_threshold):
-    """
-    re-express `stimulated` labels (numbered in `prev_labels`) in the
-    numbering of the new `labels` map
-
-    Returns
-    -------
-    (labels, stimulated)
-        labels: the new label map, unchanged
-        stimulated: remapped set (labels that vanished are dropped)
-    """
-    merged = merge_label_slices([prev_labels, labels], iou_threshold=iou_threshold)
-    prev_remapped, cur_remapped = merged[0], merged[1]
-
-    stim = set()
-    for old in stimulated:
-        mask = prev_remapped == old
-        if np.any(mask):
-            stim.add(int(cur_remapped[mask].max()))
-    return cur_remapped, stim
-
-
 def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
              frap_oc='FRAPPA', iou_threshold=IOU_THRESHOLD):
     """
@@ -186,8 +164,18 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         if prev_labels is None:
             cur_labels = labels
         else:
-            cur_labels, stimulated = remap_stimulated(
-                prev_labels, labels, stimulated, iou_threshold
+            # relabel the new detection into the previous cycle's numbering
+            # (merge_label_slices adjusts the *new* labels to the old ones; new
+            # objects get fresh IDs above the previous max) so the `stimulated`
+            # set, expressed in cycle-1 numbering, stays valid unchanged
+            # caveat: if a cell *vanishes* between cycles, its id leaves a gap
+            # and merge_label_slices' re-baselining (relabel_sequential on the
+            # previous map) shifts the ids of everything above the gap, so
+            # `stimulated` can point at the wrong cells (double FRAP). Benign
+            # for the intended <=2 cycles/FOV; for longer runs, exclude FRAPed
+            # cells by centroid instead of label id (see STATUS.md, TODO #13)
+            _, cur_labels = merge_label_slices(
+                [prev_labels, labels], iou_threshold=iou_threshold
             )
 
         cell = next_stimulatable_cell(

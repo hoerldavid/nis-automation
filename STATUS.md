@@ -317,6 +317,23 @@ colleagues.
   server. Note: saving the **frozen live view** (`ImageSaveAs`, current doc
   `"Frozen"`) silently produces no file — grab a single-frame ND acquisition
   instead (used to acquire `nuclei_20260901_110410.nd2`).
+- **Known limitation — cross-cycle label-id drift (TODO #13)**: the
+  `stimulated` set is expressed in cycle-1 label numbering and relies on
+  `merge_label_slices` keeping that numbering stable. It re-baselines its
+  first input via `relabel_sequential`, so if a cell *vanishes* in an
+  intermediate cycle, the gap it leaves shifts the ids of all objects above
+  it (in scan order) in the next merge — `stimulated` then points at the
+  wrong cells: a previously FRAPed cell can be FRAPed twice, and an
+  un-FRAPed cell can be skipped (id collision). Verified with a synthetic
+  3-cycle trace (A=1, X=2; X vanishes in c2 → new Y gets id 3 and is FRAPed;
+  c3 re-baseline shifts Y 3→2 ∉ `stimulated` → Y FRAPed again, while
+  reappearing X collides with Y's old id and is skipped). **Needs ≥3
+  cycles/FOV** (cycle 1 always FRAPs the smallest id, which can never
+  shift), so it cannot fire in the intended 1–2-cycles/FOV experiments;
+  consequence is bounded (one cell double-bleached at worst). Fix options if
+  longer multi-cycle runs are ever needed: exclude FRAPed cells by centroid
+  (id-independent, preferred) or match without re-baselining (calmutils'
+  private `_correct_next_plane`).
 - **`next_cell()` kept** for backward compatibility; `next_stimulatable_cell()` is the
   preferred function when a stimulation mask is available (integrates the mask check
   into the search loop — cells with zero stim pixels are skipped automatically).
@@ -418,6 +435,12 @@ colleagues.
     what happens if the unsaved document is closed with the save flag;
     `add_polygon_roi` — verify colors other than 'green' render correctly in
     NIS; `set_roi_type` — what does type 2 (reference) do.
+13. **Cross-cycle label-id drift in `autofrap()`** (needs ≥3 cycles/FOV, so
+    not an issue for the intended 1–2 cycles/FOV; see Part 3 note): if a cell
+    vanishes between cycles, `merge_label_slices`' re-baselining shifts the
+    ids of objects above the gap and the `stimulated` set points at the wrong
+    cells (a cell can be FRAPed twice). For longer multi-cycle runs: exclude
+    FRAPed cells by centroid (preferred, id-independent) instead of label id.
 
 ## File map
 
