@@ -480,7 +480,56 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
     return results
 
 
+def _default_out_dir():
+    """repo root (this file lives one level down in autofrap/) +
+    test_acquisitions/autofrap_grid"""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(root, 'test_acquisitions', 'autofrap_grid')
+
+
 if __name__ == '__main__':
-    NIS_EXE = r'C:\Program Files\NIS-Elements\nis_ar.exe'
-    OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'autofrap_out')
-    autofrap(NIS_EXE, OUT_DIR, max_cycles=2)
+    # CLI for autofrap_grid; the arguments mirror its parameters 1:1 so
+    # the same values can be used in a notebook call instead
+    import argparse
+
+    p = argparse.ArgumentParser(
+        description='auto-FRAP over a grid of stage positions '
+                    '(see autofrap_grid)')
+    p.add_argument('--out', '-o', default=_default_out_dir(),
+                   help='output directory (a <run_stamp>/ sub-directory is '
+                        'created in it) [default: %(default)s]')
+    p.add_argument('--nis', default=r'C:\Program Files\NIS-Elements\nis_ar.exe',
+                   help='path to nis_ar.exe [default: %(default)s]')
+    p.add_argument('--nx', type=int, default=2,
+                   help='grid size in x (1 = single FOV) [default: %(default)s]')
+    p.add_argument('--ny', type=int, default=2,
+                   help='grid size in y (1 = single FOV) [default: %(default)s]')
+    p.add_argument('--spacing', type=float, default=1.0,
+                   help='grid spacing in units of FOV (1 = touching) '
+                        '[default: %(default)s]')
+    p.add_argument('--max-cycles', type=int, default=1,
+                   help='max FRAP cycles per FOV [default: %(default)s]')
+    p.add_argument('--until-done', action='store_true',
+                   help='run until all cells of a FOV are stimulated '
+                        '(ignore --max-cycles)')
+    p.add_argument('--settle', type=float, default=2.0,
+                   help='stage settling time [s] after each move '
+                        '[default: %(default)s]')
+    p.add_argument('--no-return', action='store_true',
+                   help="don't move back to the start position after the run")
+    p.add_argument('--detector', choices=['cellpose-remote', 'dummy'],
+                   default='cellpose-remote',
+                   help='detection backend [default: %(default)s]')
+    a = p.parse_args()
+
+    detection_fun = partial(
+        detection.detect,
+        detector=a.detector,
+        server_url=CELLPOSE_SERVER_URL if a.detector == 'cellpose-remote' else None,
+        channel=SURVEY_CHANNEL,
+    )
+
+    autofrap_grid(a.nis, a.out, nx=a.nx, ny=a.ny, spacing=a.spacing,
+                  settle_s=a.settle, return_to_start=not a.no_return,
+                  max_cycles=None if a.until_done else a.max_cycles,
+                  detection_fun=detection_fun)
