@@ -16,6 +16,7 @@ import matplotlib.patches as mpatches
 from IPython import embed # for debugging 
 
 from simple_detection import read_bf
+import grid_utils
 import nis_util
 from annotation import manually_correct_rois
 from simple_detection import scale_bbox
@@ -483,7 +484,7 @@ def _do_detail(bboxes, config: CommonParameters, detail_params: DetailParameters
             fov_y = yres * siz / mag
 
             # generate the coordinates of the tiles
-            grid, tilesX, tilesY, overlap = nis_util.gen_grid(fov, [xmin, ymin], [xmax, ymax], 0.15, True, True, True)
+            grid, tilesX, tilesY, overlap = grid_utils.gen_grid(fov, [xmin, ymin], [xmax, ymax], 0.15, True, True, True)
 
             for g in grid:
                 logger.debug('wing {}: will scan tile at {}'.format(idx - 1, g))

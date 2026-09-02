@@ -249,6 +249,39 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
     return results
 
 
+def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
+    """
+    compute a grid of stage positions centered on the given position
+
+    Parameters
+    ----------
+    position: (x, y)
+        center of the grid (e.g. the current stage position)
+    fov: (fov_x, fov_y)
+        field of view per axis (see nis_util.get_fov_from_res)
+    nx, ny: int
+        number of grid positions in x and y
+    spacing: float
+        distance between neighboring positions in units of FOV size:
+        1 -> touching (non-overlapping) FOVs,
+        <1 -> overlapping FOVs,
+        >1 -> non-overlapping FOVs with a gap
+
+    Returns
+    -------
+    positions: list of 2-tuples
+        (x, y) stage positions, row-major order
+    """
+    fov_x, fov_y = fov
+    x0, y0 = position
+    step_x = spacing * fov_x
+    step_y = spacing * fov_y
+
+    return [(x0 + (i - (nx - 1) / 2) * step_x,
+             y0 + (j - (ny - 1) / 2) * step_y)
+            for j in range(ny) for i in range(nx)]
+
+
 def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                   settle_s=2.0, return_to_start=True, max_cycles=None,
                   detection_fun=None, frap_oc='FRAPPA',
@@ -293,11 +326,11 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
         fov_results is autofrap's per-cycle results, or None if that FOV
         failed (the run continues with the next position)
     """
-    if positions is None:
-        positions = nis_util.grid_positions(nis_exe, nx=nx, ny=ny, spacing=spacing)
-
     os.makedirs(out_dir, exist_ok=True)
     start_xy = nis_util.get_position(nis_exe)[:2]
+    if positions is None:
+        fov = nis_util.get_fov_from_res(nis_util.get_resolution(nis_exe))
+        positions = grid_positions(start_xy, fov, nx=nx, ny=ny, spacing=spacing)
     stamp = time.strftime('%Y%m%d_%H%M%S')
     run_dir = os.path.join(out_dir, stamp)
     os.makedirs(run_dir, exist_ok=True)

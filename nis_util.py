@@ -2,7 +2,6 @@ import subprocess
 import configparser
 from tempfile import NamedTemporaryFile
 import os
-from math import ceil
 from shutil import move
 import logging
 
@@ -27,24 +26,6 @@ EXPORT_DUMMY_PREFIX = '$tiffexport$'
 # placeholder for the temp .ini path in macro bodies; _run_macro
 # substitutes it with the real path (only when ini=True)
 INI_PLACEHOLDER = '__INI_PATH__'
-
-
-#TODO: color camera centercrop
-'''
-InputHWUnit("DS-Ri2 Direct 1.0x", "Ri2_Camera_Color_SN_703130")
-InputHWUnit("DS-Ri2 Direct 1.0x", "Ri2_Camera_Mono_Emulated_SN_703130")
-InputHWUnit("DS-Ri2 Zoom 2.5x", "Ri2_Camera_Mono_Emulated_SN_703130")
-InputHWUnit("DS-Ri2 Zoom 2.5x", "Ri2_Camera_Color_SN_703130")
-CameraFormatSet(1, "3x8_Kaiser_Full_Area_2.5x_1/3");
-CameraFormatSet(1, "3x8_Kaiser_Full_Area_2.5x");
-InputHWUnit("DS-Ri2 Direct 1.0x", "Ri2_Camera_Color_SN_703130");
-CameraFormatSet(1, "3x8_Kaiser_Center_Scan");
-CameraFormatSet(1, "3x8_Kaiser_Center_Scan_1/3");
-'''
-
-#def set_camera(path_to_nis, camera_type='grey'):
-    
-
 
 
 def is_color_camera(path_to_nis):
@@ -81,76 +62,6 @@ def export_nd2_to_tiff(path_to_nis, nd2_file, out_dir=None, combine_t=False, com
     for f in os.listdir(out_dir):
         if f.startswith(EXPORT_DUMMY_PREFIX):
             move(os.path.join(out_dir, f), os.path.join(out_dir, f.replace(EXPORT_DUMMY_PREFIX, '')))
-
-
-def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True):
-    """
-    generate a grid of coordinates at which to do a tiled acquisition
-
-    Parameters
-    ----------
-    fov: array-like
-        field-of-view in units
-    min_: array-like
-        minimum of bbox to scan
-    max_: array-like
-        maximum of bbox to scan
-    overlap: scalar \\in (0,1)
-        percent overlap
-    snake: boolean
-        whether to alternate in x or not
-    half_fov_offset: boolean
-        whether to correct for NIS 'centering' on locations (-> half FOV offset)
-    center: boolean
-        whether to center the grid on the bounding box or not (in this case, the object will be in the upper left corner)
-
-    Returns
-    -------
-    grid: list of 2-tuples
-        (x,y) - coordinates at which to image
-    """
-
-    # whether coordinates are increasing or decreasing in a dimension
-    direction = [1 if max_[0] > min_[0] else -1, 1 if max_[1] > min_[1] else -1]
-
-    # number of tiles
-    tilesX = (abs(max_[0] - min_[0]) - fov[0]) / (fov[0] * (1 - overlap))
-    tilesY = (abs(max_[1] - min_[1]) - fov[1]) / (fov[1] * (1 - overlap))
-    tilesX = max(0, int(ceil(tilesX))) + 1
-    tilesY = max(0, int(ceil(tilesY))) + 1
-
-    # re-center grid on bbox
-    if center:
-        totalX = fov[0] + (tilesX - 1) * (fov[0] * (1 - overlap))
-        totalY = fov[1] + (tilesY - 1) * (fov[1] * (1 - overlap))
-
-        #print('{} {}'.format(totalX, totalY))
-        extraX = totalX - abs(max_[0] - min_[0])
-        extraY = totalY - abs(max_[1] - min_[1])
-
-        #print('{} {}'.format(extraX, extraY))
-        min_ = [min_[0] - 0.5 * extraX * direction[0], min_[1] - 0.5 * extraY * direction[1]]
-
-    # correct for NIS's half FOV offset
-    if half_fov_offset:
-        min_ = [min_[0] + 0.5 * fov[0] * direction[0], min_[1] + 0.5 * fov[1] * direction[1]]
-
-    # steps: increasing or decreasing
-    stepX = fov[0] * (1 - overlap) if direction[0] == 1 else - (fov[0] * (1 - overlap))
-    stepY = fov[1] * (1 - overlap) if direction[1] == 1 else - (fov[1] * (1 - overlap))
-
-    res = []
-    for y in range(tilesY):
-        row = [(min_[0] + x * stepX, min_[1] + y * stepY) for x in range(tilesX)]
-        if snake and (y % 2 != 0):
-            row.reverse()
-        res.extend(row)
-        
-    return res, tilesX, tilesY, overlap
-
-
-def quote(s):
-    return '"{}"'.format(s)
 
 
 def _cleanup(*paths):
@@ -204,7 +115,7 @@ def _run_macro(path_to_nis, body, ini=False):
         # the .mac handle must be closed before nis_ar opens the file,
         # otherwise the GUI reports "Can't open file for reading"
         ntf.close()
-        subprocess.call(' '.join([quote(path_to_nis), '-mw', quote(ntf.name)]))
+        subprocess.call(f'"{path_to_nis}" -mw "{ntf.name}"')
         if ini:
             config = configparser.ConfigParser()
             config.read(ntf2.name)
@@ -455,39 +366,12 @@ def get_position(path_to_nis):
 
 
 def get_fov_from_res(res):
-    return (res[0] * res[2] / res[3], res[1] * res[2] / res[3])
-
-
-def grid_positions(path_to_nis, nx=2, ny=2, spacing=1.0):
     """
-    compute a grid of stage positions centered on the current stage position
-
-    Parameters
-    ----------
-    path_to_nis: str
-        path to the nis_ar.exe executable
-    nx, ny: int
-        number of grid positions in x and y
-    spacing: float
-        distance between neighboring positions in units of FOV size:
-        1 -> touching (non-overlapping) FOVs,
-        <1 -> overlapping FOVs,
-        >1 -> non-overlapping FOVs with a gap
-
-    Returns
-    -------
-    positions: list of 2-tuples
-        (x, y) stage positions, row-major order
+    FOV per axis from the (xres, yres, pixel_size, magnification)
+    tuple of get_resolution: FOV = resolution * pixel_size / magnification
     """
-    fov_x, fov_y = get_fov_from_res(get_resolution(path_to_nis))
-    x0, y0, _, _ = get_position(path_to_nis)
-
-    step_x = spacing * fov_x
-    step_y = spacing * fov_y
-
-    return [(x0 + (i - (nx - 1) / 2) * step_x,
-             y0 + (j - (ny - 1) / 2) * step_y)
-            for j in range(ny) for i in range(nx)]
+    xres, yres, pixel_size, magnification = res
+    return (xres * pixel_size / magnification, yres * pixel_size / magnification)
 
 
 def run_current_nd_experiment(path_to_nis, outfile=None, open_after=True, progress_bar=True):
@@ -535,17 +419,17 @@ def run_stimulation_experiment(path_to_nis):
     _run_macro(path_to_nis, 'ND_RunSequentialStimulationExp();')
 
 
-# predefined NIS ROI colors (RGB values, see CreatePolygonROI docs)
+# predefined NIS ROI colors (BGR values, see CreatePolygonROI docs)
 ROI_COLORS = {
-    'black': 0,
-    'red': 255,
-    'green': 65280,
-    'yellow': 65535,
-    'blue': 16711680,
-    'magenta': 16711935,
-    'cyan': 16776960,
-    'white': 16777215,
-    'default': 2147483647,
+    'black': 0x000000,
+    'red': 0x0000FF,
+    'green': 0x00FF00,
+    'yellow': 0x00FFFF,
+    'blue': 0xFF0000,
+    'magenta': 0xFF00FF,
+    'cyan': 0xFFFF00,
+    'white': 0xFFFFFF,
+    'default': 0x7FFFFFFF,
 }
 
 
@@ -607,6 +491,9 @@ def close_current_document(path_to_nis, save='discard'):
         'discard' - close without saving, no user interaction
         'yes'     - save the changes, then close
     """
+    
+    #TODO: check what happens if unsaved document is closed with 'yes' flag?
+    
     save_flag = {'ask': 0, 'discard': 2, 'yes': 1}[save]
     _run_macro(path_to_nis, f'CloseCurrentDocument({save_flag});')
 
@@ -627,6 +514,9 @@ def add_polygon_roi(path_to_nis, points, color='green'):
     roi_id: int
         >0 on success, <0 on failure
     """
+
+    # TODO: check if other colors aside from 'green' are correctly set in NIS
+
     color = ROI_COLORS.get(color, color)
     n = len(points)
     if n < 3:
@@ -649,6 +539,9 @@ def set_roi_type(path_to_nis, roi_id, roi_type):
     note: type 1 *hides* the ROI — do not use
     (the macro's return value is unreliable; verify with get_roi_count if needed)
     """
+    
+    # TODO: check what roi_type=2 (reference) does (needs NIS)
+    
     _run_macro(path_to_nis, f'ChangeROIType({roi_id}, {roi_type});')
 
 
@@ -773,7 +666,3 @@ class NDAcquisition:
     
     def run(self, path_to_nis):
         _run_macro(path_to_nis, 'ND_RunExperiment(0);')
-
-
-if __name__ == '__main__':
-    print(gen_grid([.6,.6], [1,0], [0,1], 0.0, True, True, True))

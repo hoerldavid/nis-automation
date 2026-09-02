@@ -8,10 +8,14 @@ import os
 import sys
 import time
 
-# repo root (for nis_util) — this script lives two levels down in autofrap/
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# repo root (for nis_util) + autofrap/ (for the autofrap module) —
+# this script lives two levels down in autofrap/
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
 
 import nis_util
+from autofrap import grid_positions
 
 NIS_EXE = r'C:\Program Files\NIS-Elements\nis_ar.exe'
 OUT_DIR = r'C:\Users\David\Desktop\nis-automation\overview'
@@ -41,7 +45,8 @@ def overview_scan(nis_exe, out_dir, nx=2, ny=2, spacing=0.8,
     os.makedirs(out_dir, exist_ok=True)
 
     start_xy = nis_util.get_position(nis_exe)[:2]
-    positions = nis_util.grid_positions(nis_exe, nx=nx, ny=ny, spacing=spacing)
+    fov = nis_util.get_fov_from_res(nis_util.get_resolution(nis_exe))
+    positions = grid_positions(start_xy, fov, nx=nx, ny=ny, spacing=spacing)
     stamp = time.strftime('%Y%m%d_%H%M%S')
 
     print(f'grid: {nx}x{ny}, spacing={spacing} FOV, start=({start_xy[0]:+.2f}, {start_xy[1]:+.2f})')

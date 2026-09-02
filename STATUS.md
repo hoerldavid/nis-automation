@@ -1,6 +1,17 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **multi-FOV grid runner** (`autofrap_grid` in
+_Last updated: **`nis_util.py` TODO cleanup** (no microscope needed): dead
+color-camera-crop macro snippet + commented-out `set_camera` stub removed;
+`gen_grid` moved to `grid_utils.py` (refs in `automation.py` +
+`NIS_Macro_Acquisition.ipynb` updated); `_quote` inlined into `_run_macro`;
+`get_fov_from_res` unpacks its input; `grid_positions` moved to
+`autofrap/autofrap.py` as a pure `grid_positions(position, fov, nx, ny,
+spacing)` (callers `autofrap_grid` + `overview_scan.py` updated, one fewer
+stage read per grid run); `ROI_COLORS` now hex literals. Verified:
+`test_nis_util_refactor.py` still 33/33 byte-identical + all round-trip
+tests pass; moved functions numerically identical to the pre-cleanup code
+on 200 random arg combos each. The three remaining `nis_util.py` TODOs are
+live checks (TODO #12). Before that: **multi-FOV grid runner** (`autofrap_grid` in
 `autofrap/autofrap.py`) — loops the verified single-FOV `autofrap()` over
 stage positions from `grid_positions`, one sub-directory per FOV, settle
 after each move, return to start, per-FOV failure isolation. **Live
@@ -78,6 +89,23 @@ data into `test_acquisitions/` (see File map)._
   - `set_position(pos_piezo=...)`: the piezo branch formatted `pos_z` instead of
     `pos_piezo` → `StgMovePiezoZ(None,0)` (macro compile error) whenever `pos_z` was
     None; now uses `pos_piezo`.
+- **TODO cleanup in `nis_util.py`** (workstation-free part, after the 20260901
+  grid run): removed the dead color-camera-crop macro snippet + commented-out
+  `set_camera` stub (`is_color_camera` kept — still used by the old wing-scanner
+  `automation.py`); `gen_grid` moved to root-level `grid_utils.py` (pure
+  geometry, not NIS-specific; refs updated in `automation.py` +
+  `NIS_Macro_Acquisition.ipynb`); `_quote` removed (its two uses in
+  `_run_macro` inlined as an f-string — the `nis_ar` command line is
+  byte-identical); `get_fov_from_res` unpacks its `(xres, yres, pixel_size,
+  magnification)` input; `grid_positions` moved to `autofrap/autofrap.py` as a
+  pure `grid_positions(position, fov, nx, ny, spacing)` — `autofrap_grid` and
+  `overview_scan.py` now fetch position/FOV themselves (and `autofrap_grid`
+  saves one `nis_ar` round trip: the position is read once, not twice);
+  `ROI_COLORS` uses hex literals (same int values → macro bodies unchanged;
+  comment fixed RGB→BGR, matching the live-verified green read-back).
+  Verified: `test_nis_util_refactor.py` still 33/33 byte-identical macro
+  bodies + all round-trip/behaviour tests pass; the moved functions give
+  identical results to the pre-cleanup code on 200 random arg combos each.
 
 ## Inspection (all `get_*` verified live)
 
@@ -385,6 +413,11 @@ colleagues.
     fix: read the block whose `XYUseN` flag is set / match `XYKeyN` to the
     stage. Calibration target: `test_acquisitions/overview/` part-1 files
     (commanded coords in the filenames).
+12. **Pending live checks in `nis_util.py`** (need the microscope workstation;
+    kept as TODO comments in the code): `close_current_document(save='yes')` —
+    what happens if the unsaved document is closed with the save flag;
+    `add_polygon_roi` — verify colors other than 'green' render correctly in
+    NIS; `set_roi_type` — what does type 2 (reference) do.
 
 ## File map
 
@@ -397,9 +430,10 @@ at the root (`nis_util.py`, `cellpose_server.py`).
 
 | file | purpose |
 |---|---|
-| `nis_util.py` | NIS macro wrappers on top of the shared `_run_macro` helper: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `grid_positions`, `open_image`, `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
+| `nis_util.py` | NIS macro wrappers on top of the shared `_run_macro` helper: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `open_image`, `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
+| `grid_utils.py` | pure grid geometry for tiled acquisitions: `gen_grid` (moved out of `nis_util.py` — not NIS-specific); used by the old wing-scanner `automation.py` + `NIS_Macro_Acquisition.ipynb` |
 | `cellpose_server.py` | cellpose inference server for the GPU machine (runs on 10.163.69.12, V100): FastAPI, `POST /detect` (np.save bytes in/out + `model.eval()` query params), `GET /health` (cuda/device); model loaded once at startup with explicit `device`; setup + run instructions in its docstring |
-| `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (a `partial` of `detection.detect`), defaults to the remote cellpose detector (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL`); `autofrap_grid` runs it over a stage grid (`grid_positions` or a custom `positions` list), one sub-dir per FOV, return to start |
+| `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (a `partial` of `detection.detect`), defaults to the remote cellpose detector (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL`); `grid_positions(position, fov, nx, ny, spacing)` (pure grid math, moved here from `nis_util.py`); `autofrap_grid` runs the loop over that stage grid or a custom `positions` list, one sub-dir per FOV, return to start |
 | `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `read_channel`, `label_to_polygon`, `detect_stim_mask`, `detect_polygon_stim_mask`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
 | `autofrap/autofrap_bitsnpieces/inspect_microscope.ipynb` | notebook walking through the `get_*` functions + FOV |
