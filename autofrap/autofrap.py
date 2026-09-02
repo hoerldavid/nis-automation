@@ -27,6 +27,13 @@ Per cycle:
 
 The loop stops when every detected object has been stimulated, when
 no cell has stimulation-eligible pixels, or when max_cycles is reached.
+
+Error handling: every failure is translated into one of two exception
+classes - RecoverableError (this FOV is lost, a grid run may continue)
+or NonRecoverableError (the microscope/detection state is unknown or
+broken, a grid run should abort). A failed cycle best-effort deletes
+its own ROIs and closes its documents before re-raising, so a grid run
+that continues starts the next FOV from a clean GUI state.
 """
 import os
 import sys
@@ -34,6 +41,7 @@ import time
 from functools import partial
 
 import numpy as np
+import requests
 from calmutils.segmentation import merge_label_slices
 
 # repo root (for nis_util) — this script lives one level down in autofrap/
@@ -50,6 +58,21 @@ IOU_THRESHOLD = 0.3
 # (cellpose_server.py), DAPI channel
 CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'
 SURVEY_CHANNEL = 0
+
+
+class AutofrapError(Exception):
+    """base class for auto-FRAP pipeline errors"""
+
+
+class RecoverableError(AutofrapError):
+    """failure confined to the current FOV (bad survey image, no polygon
+    for the cell, ROI creation failed); a grid run can continue with the
+    next position"""
+
+
+class NonRecoverableError(AutofrapError):
+    """failure that makes further FOVs pointless or unsafe (NIS state
+    unknown, detection server unreachable, disk full); a grid run aborts"""
 
 
 def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
@@ -111,6 +134,16 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
     Returns
     -------
     results: list of (cycle, cell, survey_file, frap_file)
+
+    Raises
+    ------
+    RecoverableError
+        this FOV could not be processed (detection server error on this
+        image, no polygon for the cell, ROI creation failed)
+    NonRecoverableError
+        the state is unknown or broken (survey/FRAP file not saved, NIS
+        macro aborted, detection server unreachable, OS error); further
+        cycles are unlikely to succeed
     """
     if detection_fun is None:
         detection_fun = partial(
@@ -131,91 +164,156 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         cycle += 1
         survey_file = os.path.join(out_dir, f'{stamp}_c{cycle:02d}_survey.nd2')
         frap_file = os.path.join(out_dir, f'{stamp}_c{cycle:02d}_frap.nd2')
+        cell_roi = stim_roi = None
 
-        # 1+2. survey: run the GUI-configured ND experiment, saved
-        t0 = time.time()
-        nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file,
-                                           progress_bar=True)
-        print(f'[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)', flush=True)
+        try:
+            # 1+2. survey: run the GUI-configured ND experiment, saved
+            t0 = time.time()
+            nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file,
+                                               progress_bar=True)
+            print(f'[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)',
+                  flush=True)
+            # NIS can fail to save without saying so (disk full, GUI dialog,
+            # crash) - check instead of trusting
+            if not os.path.isfile(survey_file):
+                raise NonRecoverableError(
+                    f'survey file missing after the ND run: {survey_file} '
+                    '(NIS did not save it - check the GUI / disk)')
 
-        # 3. detect
-        labels, stimulation_mask = detection_fun(survey_file)
-        n_obj = len(np.unique(labels)) - 1
+            # 3. detect (the client already retried once; what survives is
+            # either a per-image error or a dead server)
+            try:
+                labels, stimulation_mask = detection_fun(survey_file)
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout) as e:
+                raise NonRecoverableError(
+                    f'detection server unreachable: {e}') from e
+            except requests.exceptions.HTTPError as e:
+                raise RecoverableError(
+                    f'detection server error on {survey_file}: {e}') from e
+            except Exception as e:
+                raise NonRecoverableError(
+                    f'detection failed on {survey_file}: {e!r}') from e
+            n_obj = len(np.unique(labels)) - 1
 
-        # 4. pick the next unused cell with stimulation-eligible pixels
-        if prev_labels is None:
-            cur_labels = labels
-        else:
-            # relabel the new detection into the previous cycle's numbering
-            # (merge_label_slices adjusts the *new* labels to the old ones; new
-            # objects get fresh IDs above the previous max) so the `stimulated`
-            # set, expressed in cycle-1 numbering, stays valid unchanged
-            # caveat: if a cell *vanishes* between cycles, its id leaves a gap
-            # and merge_label_slices' re-baselining (relabel_sequential on the
-            # previous map) shifts the ids of everything above the gap, so
-            # `stimulated` can point at the wrong cells (double FRAP). Benign
-            # for the intended <=2 cycles/FOV; for longer runs, exclude FRAPed
-            # cells by centroid instead of label id (see STATUS.md, TODO #13)
-            _, cur_labels = merge_label_slices(
-                [prev_labels, labels], iou_threshold=iou_threshold
+            # 4. pick the next unused cell with stimulation-eligible pixels
+            if prev_labels is None:
+                cur_labels = labels
+            else:
+                # relabel the new detection into the previous cycle's
+                # numbering (merge_label_slices adjusts the *new* labels to
+                # the old ones; new objects get fresh IDs above the previous
+                # max) so the `stimulated` set, expressed in cycle-1
+                # numbering, stays valid unchanged
+                # caveat: if a cell *vanishes* between cycles, its id leaves
+                # a gap and merge_label_slices' re-baselining
+                # (relabel_sequential on the previous map) shifts the ids of
+                # everything above the gap, so `stimulated` can point at the
+                # wrong cells (double FRAP). Benign for the intended
+                # <=2 cycles/FOV; for longer runs, exclude FRAPed cells by
+                # centroid instead of label id (see STATUS.md, TODO #13)
+                _, cur_labels = merge_label_slices(
+                    [prev_labels, labels], iou_threshold=iou_threshold
+                )
+
+            cell = next_stimulatable_cell(
+                cur_labels, stimulated, stimulation_mask
             )
 
-        cell = next_stimulatable_cell(
-            cur_labels, stimulated, stimulation_mask
-        )
+            if cell is None:
+                print(
+                    f'[c{cycle:02d}] {n_obj} objects, all stimulated or no '
+                    'stimulation mask -> stop'
+                )
+                break
 
-        if cell is None:
-            print(
-                f'[c{cycle:02d}] {n_obj} objects, all stimulated or no '
-                'stimulation mask -> stop'
+            print(f'[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}')
+
+            # 5. ROIs + stimulation run: whole cell (saved for downstream
+            #    analysis) + stimulation region, the latter set to
+            #    stimulation mode
+            cell_poly = detection.mask_to_polygon(
+                detection.cell_mask(cur_labels, cell)
             )
-            break
+            stim_poly = detection.mask_to_polygon(
+                detection.cell_mask(cur_labels, cell, stimulation_mask)
+            )
+            if not cell_poly or not stim_poly:
+                raise RecoverableError(f'no polygon for cell {cell}')
 
-        print(f'[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}')
-
-        # 5. ROIs + stimulation run: whole cell (saved for downstream
-        #    analysis) + stimulation region, the latter set to
-        #    stimulation mode
-        cell_poly = detection.mask_to_polygon(
-            detection.cell_mask(cur_labels, cell)
-        )
-        stim_poly = detection.mask_to_polygon(
-            detection.cell_mask(cur_labels, cell, stimulation_mask)
-        )
-        if not cell_poly or not stim_poly:
-            raise RuntimeError(f'no polygon for cell {cell}')
-
-        nis_util.open_image(nis_exe, survey_file)
-        cell_roi = nis_util.add_polygon_roi(nis_exe, cell_poly)
-        if cell_roi <= 0:
-            raise RuntimeError(f'cell ROI creation failed (id={cell_roi})')
-        stim_roi = nis_util.add_polygon_roi(nis_exe, stim_poly)
-        if stim_roi <= 0:
-            raise RuntimeError(f'stim ROI creation failed (id={stim_roi})')
-        nis_util.set_roi_type(nis_exe, stim_roi, 3)  # 3 = stimulation
-
-        nis_util.set_optical_configuration(nis_exe, frap_oc)
-        t0 = time.time()
-        nis_util.run_stimulation_experiment(nis_exe)
-        print(f'[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)', flush=True)
-
-        # 6. save the FRAP timeseries (includes the stimulation ROI)
-        nis_util.save_current_document(nis_exe, frap_file)
-
-        # 7. close FRAP document (current), then delete both ROIs on the
-        #    survey document (after saving, so they stay in the saved FRAP
-        #    file but don't linger for the next cycle) and close it
-        nis_util.close_current_document(nis_exe, save='discard')
-        doc = nis_util.get_current_document(nis_exe)
-        if os.path.normcase(doc) != os.path.normcase(survey_file):
             nis_util.open_image(nis_exe, survey_file)
-        nis_util.delete_roi(nis_exe, stim_roi)
-        nis_util.delete_roi(nis_exe, cell_roi)
-        nis_util.close_current_document(nis_exe, save='discard')
+            doc = nis_util.get_current_document(nis_exe)
+            if os.path.normcase(doc) != os.path.normcase(survey_file):
+                raise NonRecoverableError(
+                    f'could not open {survey_file} '
+                    f'(current document: {doc})')
+            cell_roi = nis_util.add_polygon_roi(nis_exe, cell_poly)
+            if cell_roi <= 0:
+                raise RecoverableError(
+                    f'cell ROI creation failed (id={cell_roi})')
+            stim_roi = nis_util.add_polygon_roi(nis_exe, stim_poly)
+            if stim_roi <= 0:
+                raise RecoverableError(
+                    f'stim ROI creation failed (id={stim_roi})')
+            nis_util.set_roi_type(nis_exe, stim_roi, 3)  # 3 = stimulation
 
-        results.append((cycle, cell, survey_file, frap_file))
-        prev_labels = cur_labels
-        stimulated.add(cell)
+            nis_util.set_optical_configuration(nis_exe, frap_oc)
+            t0 = time.time()
+            nis_util.run_stimulation_experiment(nis_exe)
+            print(f'[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)',
+                  flush=True)
+
+            # 6. save the FRAP timeseries (includes the stimulation ROI)
+            nis_util.save_current_document(nis_exe, frap_file)
+            # ImageSaveAs can silently write nothing (frozen live view, disk
+            # full) - check instead of trusting
+            if not os.path.isfile(frap_file):
+                raise NonRecoverableError(
+                    f'FRAP file missing after save_current_document: '
+                    f'{frap_file} (ImageSaveAs wrote nothing)')
+
+            # 7. close FRAP document (current), then delete both ROIs on the
+            #    survey document (after saving, so they stay in the saved
+            #    FRAP file but don't linger for the next cycle) and close it
+            nis_util.close_current_document(nis_exe, save='discard')
+            doc = nis_util.get_current_document(nis_exe)
+            if os.path.normcase(doc) != os.path.normcase(survey_file):
+                nis_util.open_image(nis_exe, survey_file)
+            nis_util.delete_roi(nis_exe, stim_roi)
+            nis_util.delete_roi(nis_exe, cell_roi)
+            nis_util.close_current_document(nis_exe, save='discard')
+            cell_roi = stim_roi = None
+
+            results.append((cycle, cell, survey_file, frap_file))
+            prev_labels = cur_labels
+            stimulated.add(cell)
+        except (RecoverableError, NonRecoverableError):
+            raise
+        except KeyError as e:
+            # an empty ini read-back means the NIS macro aborted partway -
+            # the GUI state is now unknown, so don't queue more FOVs on top
+            raise NonRecoverableError(
+                f'NIS macro failed (no read-back: {e!r}) - '
+                'the NIS state is now unknown') from e
+        except OSError as e:
+            raise NonRecoverableError(f'OS error: {e!r}') from e
+        finally:
+            if cell_roi is not None or stim_roi is not None:
+                # failed mid-cycle: delete this cycle's ROIs and close its
+                # documents again, best effort (NIS may itself be the
+                # problem, in which case just give up quietly)
+                try:
+                    doc = nis_util.get_current_document(nis_exe)
+                    if os.path.normcase(doc) != os.path.normcase(survey_file):
+                        nis_util.close_current_document(nis_exe, save='discard')
+                        nis_util.open_image(nis_exe, survey_file)
+                    if stim_roi is not None:
+                        nis_util.delete_roi(nis_exe, stim_roi)
+                    if cell_roi is not None:
+                        nis_util.delete_roi(nis_exe, cell_roi)
+                    nis_util.close_current_document(nis_exe, save='discard')
+                except Exception:
+                    pass
 
     print(f'\nDone: {len(results)} cell(s) stimulated in {cycle} cycle(s), output in {out_dir}')
     return results
@@ -297,10 +395,22 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
     -------
     results: list of (i, x, y, fov_dir, fov_results)
         fov_results is autofrap's per-cycle results, or None if that FOV
-        failed (the run continues with the next position)
+        failed. A RecoverableError skips the FOV and continues; a
+        NonRecoverableError aborts the run (the remaining positions are
+        not visited and do not appear in results)
+
+    Raises
+    ------
+    NonRecoverableError
+        if the starting stage position cannot be read (passed on from
+        nis_util as KeyError/OSError)
     """
     os.makedirs(out_dir, exist_ok=True)
-    start_xy = nis_util.get_position(nis_exe)[:2]
+    try:
+        start_xy = nis_util.get_position(nis_exe)[:2]
+    except (KeyError, OSError) as e:
+        raise NonRecoverableError(
+            f'could not read the starting stage position: {e!r}') from e
     if positions is None:
         fov = nis_util.get_fov_from_res(nis_util.get_resolution(nis_exe))
         positions = grid_positions(start_xy, fov, nx=nx, ny=ny, spacing=spacing)
@@ -311,34 +421,62 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
     print(f'grid: {len(positions)} position(s), '
           f'start=({start_xy[0]:+.2f}, {start_xy[1]:+.2f}) um')
     results = []
-    for i, (x, y) in enumerate(positions, 1):
-        fov_dir = os.path.join(run_dir, f'fov{i:02d}')
-        print(f'\n=== [{i}/{len(positions)}] ({x:+.1f}, {y:+.1f}) um -> {fov_dir}',
-              flush=True)
-
-        nis_util.set_position(nis_exe, pos_xy=(x, y))
-        time.sleep(settle_s)
-
-        try:
-            fov_results = autofrap(nis_exe, fov_dir, max_cycles=max_cycles,
-                                   detection_fun=detection_fun, frap_oc=frap_oc,
-                                   iou_threshold=iou_threshold)
-        except Exception as e:
-            print(f'!!! FOV {i} failed: {e!r} - moving on to the next position',
+    aborted = None
+    try:
+        for i, (x, y) in enumerate(positions, 1):
+            fov_dir = os.path.join(run_dir, f'fov{i:02d}')
+            print(f'\n=== [{i}/{len(positions)}] ({x:+.1f}, {y:+.1f}) um -> {fov_dir}',
                   flush=True)
-            fov_results = None
 
-        results.append((i, x, y, fov_dir, fov_results))
+            try:
+                nis_util.set_position(nis_exe, pos_xy=(x, y))
+            except (KeyError, OSError) as e:
+                print(f'!!! FOV {i}: stage move failed: {e!r} '
+                      f'- aborting the grid run', flush=True)
+                results.append((i, x, y, fov_dir, None))
+                aborted = i
+                break
+            time.sleep(settle_s)
 
-    if return_to_start:
-        nis_util.set_position(nis_exe, pos_xy=start_xy)
-        time.sleep(settle_s)
-        print(f'moved back to start ({start_xy[0]:+.2f}, {start_xy[1]:+.2f})')
+            try:
+                fov_results = autofrap(nis_exe, fov_dir, max_cycles=max_cycles,
+                                       detection_fun=detection_fun,
+                                       frap_oc=frap_oc,
+                                       iou_threshold=iou_threshold)
+            except NonRecoverableError as e:
+                print(f'!!! FOV {i}: non-recoverable error: {e} '
+                      f'- aborting the grid run', flush=True)
+                results.append((i, x, y, fov_dir, None))
+                aborted = i
+                break
+            except RecoverableError as e:
+                print(f'!!! FOV {i} failed: {e} - moving on to the next '
+                      f'position', flush=True)
+                fov_results = None
+
+            results.append((i, x, y, fov_dir, fov_results))
+    finally:
+        if return_to_start:
+            # best effort: even after an abort or an unexpected error the
+            # stage should end up back where the run started
+            try:
+                nis_util.set_position(nis_exe, pos_xy=start_xy)
+                time.sleep(settle_s)
+                print(f'moved back to start ({start_xy[0]:+.2f}, '
+                      f'{start_xy[1]:+.2f})')
+            except Exception as e:
+                print(f'!!! could not return to start: {e!r}', flush=True)
 
     n_ok = sum(1 for r in results if r[4] is not None)
     n_cells = sum(len(r[4]) for r in results if r[4] is not None)
-    print(f'\nGrid done: {n_ok}/{len(positions)} FOV(s), {n_cells} cell(s) '
-          f'stimulated, output in {run_dir}')
+    if aborted is not None:
+        n_not = len(positions) - aborted + 1
+        print(f'\nGrid ABORTED at FOV {aborted}: {n_ok}/{len(results)} visited '
+              f'FOV(s) ok, {n_cells} cell(s) stimulated, {n_not} FOV(s) not '
+              f'visited, output in {run_dir}')
+    else:
+        print(f'\nGrid done: {n_ok}/{len(positions)} FOV(s), {n_cells} cell(s) '
+              f'stimulated, output in {run_dir}')
     return results
 
 

@@ -1,6 +1,26 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **stage position from nd2 metadata works (TODO #11 closed)** (no
+_Last updated: **error handling: Recoverable/NonRecoverable exceptions +
+TODO #9 (timeout/retry)** (no microscope needed): `autofrap()` now translates
+every failure into one of two new classes in `autofrap.py` —
+`RecoverableError` (per-FOV: detection 5xx on this image, no polygon, ROI
+creation failed) and `NonRecoverableError` (run-level: NIS macro aborted /
+empty ini read-back, survey or FRAP file not saved — NIS fails silently,
+so both are now checked after the fact, document not opened, detection server
+unreachable after one client-side retry, OS error) — and best-effort deletes
+its own ROIs / closes its documents in a `finally` before re-raising (a failed
+cycle no longer leaves type-3 stim ROIs or open documents for the next FOV).
+`autofrap_grid()` switches on the two classes: Recoverable skips the FOV and
+continues (previous behavior), NonRecoverable aborts the run (remaining
+positions unvisited, logged); return-to-start is best-effort in a `finally`
+so it happens even after an abort or unexpected error; a failed stage move
+aborts. `remote_detect_objects`: timeout 1800 s → **60 s** + one retry with
+2 s backoff on connection/timeout/HTTP errors (TODO #9; V100 answers in
+~2 s). Also fixed: the stim-ROI failure message printed the cell-ROI id.
+Verified offline: new `test_autofrap_errors.py` (fake `nis_util`, 14
+scenarios incl. grid continue/abort policy + client retry) 0 failures;
+`test_nis_util_refactor.py` + `test_nd2_stage_position.py` + dummy detect
+round-trip still pass. Before that: **stage position from nd2 metadata works (TODO #11 closed)** (no
 microscope needed, on the copied `test_acquisitions/autofrap_grid/` data):
 `autofrap/nd2_helpers.py` — new module for nd2 reads, `stage_position(nd2_file)`
 returns the (x, y, z) stage position in µm via the public
@@ -184,7 +204,9 @@ colleagues.
   Pipeline: read channel → detector (labels only) → **border discard** →
   **relabel** → stim mask.
 - **Cellpose detector (the real one — TODO #2 done 20260901)**:
-  `remote_detect_objects(image, server_url, timeout=1800, **eval_kwargs)`
+  `remote_detect_objects(image, server_url, timeout=60, retries=1,
+  **eval_kwargs)` (one retry with 2 s backoff for connection/timeout/HTTP
+  errors)
   POSTs the channel as raw `np.save` bytes (`application/x-numpy`,
   `allow_pickle=False` both ends; ~2 MB for 1024² uint16, no compression)
   to `cellpose_server.py` and receives the label map back the same way.
@@ -434,9 +456,14 @@ colleagues.
    approach (no stage move, ROI drawn directly on the survey image) works fine.
 8. Per-cycle QC artifact: save a label-overlay PNG next to each `cNN_survey.nd2`
    (labels + drawn ROIs) so detection can be spot-checked without opening NIS.
-9. Client timeout: `remote_detect_objects` still has `timeout=1800` (CPU-era
+9. ~~Client timeout: `remote_detect_objects` still has `timeout=1800` (CPU-era
    leftover); ~60 s is right for the V100 — also decide the fail-fast behavior
-   when the GPU server is unreachable mid-run.
+   when the GPU server is unreachable mid-run.~~ — **done (20260902)**:
+   timeout 60 s + one retry (2 s backoff) for connection/timeout/HTTP errors;
+   fail-fast decided via the new exception classes: server unreachable
+   (after retry) → `NonRecoverableError` → grid aborts; per-image 5xx →
+   `RecoverableError` → FOV skipped, run continues. See `autofrap.py` +
+   `test_autofrap_errors.py`.
 10. Detector tuning on real samples: try `diameter` / `min_size` per sample
    (e.g. `min_size` to drop dust/debris); consider multi-channel input
    (channel 1 of the survey is currently unused).
@@ -476,7 +503,7 @@ at the root (`nis_util.py`, `cellpose_server.py`).
 | `nis_util.py` | NIS macro wrappers on top of the shared `_run_macro` helper: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `open_image`, `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
 | `grid_utils.py` | pure grid geometry for tiled acquisitions: `gen_grid` (moved out of `nis_util.py` — not NIS-specific); used by the old wing-scanner `automation.py` + `NIS_Macro_Acquisition.ipynb` |
 | `cellpose_server.py` | cellpose inference server for the GPU machine (runs on 10.163.69.12, V100): FastAPI, `POST /detect` (np.save bytes in/out + `model.eval()` query params), `GET /health` (cuda/device); model loaded once at startup with explicit `device`; setup + run instructions in its docstring |
-| `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (a `partial` of `detection.detect`), defaults to the remote cellpose detector (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL`); `grid_positions(position, fov, nx, ny, spacing)` (pure grid math, moved here from `nis_util.py`); `autofrap_grid` runs the loop over that stage grid or a custom `positions` list, one sub-dir per FOV, return to start |
+| `autofrap/autofrap.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (a `partial` of `detection.detect`), defaults to the remote cellpose detector (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL`); `grid_positions(position, fov, nx, ny, spacing)` (pure grid math, moved here from `nis_util.py`); `autofrap_grid` runs the loop over that stage grid or a custom `positions` list, one sub-dir per FOV, return to start. **Error handling**: `AutofrapError` / `RecoverableError` (per-FOV, grid continues) / `NonRecoverableError` (grid aborts); `autofrap()` translates low-level exceptions at the points where their meaning is known (incl. post-save file checks for NIS's silent failures) and cleans up its ROIs/documents best-effort on failure; `autofrap_grid` catches the two classes, best-effort return-to-start in `finally` |
 | `autofrap/nd2_helpers.py` | ND2 read helpers: `read_channel` (moved from `detection.py`), `stage_position` (per-frame `dXPos`/`dYPos`/`dZPos` → public `stagePositionUm`; the raw `pDeviceSetting` XY slots are *not* the stage — see TODO #11) |
 | `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `cell_mask`, `mask_to_polygon`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
@@ -487,6 +514,7 @@ at the root (`nis_util.py`, `cellpose_server.py`).
 | `autofrap/autofrap_bitsnpieces/test_stim_save.py` | one-off test script (save-current-document probe; cleanup candidate) |
 | `autofrap/autofrap_bitsnpieces/test_cellpose.py` | one-off cellpose test: local model or `--server URL` (remote-client A/B), reports objects + saves image/label previews (run: `python autofrap/autofrap_bitsnpieces/test_cellpose.py <nd2> [channel] [--server URL]`) |
 | `autofrap/autofrap_bitsnpieces/test_nd2_stage_position.py` | offline check of `nd2_helpers.stage_position` vs commanded coords: 20260901_160216 grid run (positions parsed from `grid_live_test.log`) + 20260819 overview run (coords in filenames), 5 µm tolerance (run: `python autofrap/autofrap_bitsnpieces/test_nd2_stage_position.py`) |
+| `autofrap/autofrap_bitsnpieces/test_autofrap_errors.py` | offline test of the error handling: fake `nis_util` layer, 14 scenarios — each failure mode checked for its exception class (missing survey/FRAP file, macro abort, server down / 5xx / corrupt file, ROI failure + cleanup, broken open), grid continue/abort policy, best-effort return-to-start, `remote_detect_objects` retry (run: `python autofrap/autofrap_bitsnpieces/test_autofrap_errors.py`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py` | equivalence check for the `_run_macro` refactor: all generated `.mac` bodies byte-identical to the frozen pre-refactor snapshot + round-trip / cleanup tests (run: `python autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_live.py` | live smoke test for the refactored wrappers (run at the microscope): all read-only `get_*` + `set_position` XY/piezo round-trip |
 | `autofrap/autofrap_bitsnpieces/test_autofrap_grid_live.py` | live `autofrap_grid` test (run at the microscope): 2×2 grid, `max_cycles=1`, default cellpose detector; output `test_acquisitions/autofrap_grid/` |

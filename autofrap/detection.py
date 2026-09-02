@@ -230,12 +230,15 @@ def relabel_by_distance(labels, reference=None):
     return fastremap.remap(labels, remap)
 
 
-def remote_detect_objects(image, server_url, timeout=1800, **eval_kwargs):
+def remote_detect_objects(image, server_url, timeout=60, retries=1,
+                          **eval_kwargs):
     """
     run cellpose on a remote server (see cellpose_server.py)
 
     The image is serialized with np.save and POSTed to the server's
     /detect endpoint; the label map comes back in the same format.
+    A failed request (connection error, timeout, or HTTP error) is
+    retried `retries` times with a short backoff before propagating.
 
     Parameters
     ----------
@@ -244,7 +247,10 @@ def remote_detect_objects(image, server_url, timeout=1800, **eval_kwargs):
     server_url: str
         base URL of the cellpose server, e.g. 'http://192.168.1.10:8000'
     timeout: float
-        request timeout in seconds (CPU inference can take minutes)
+        request timeout in seconds; the V100 server answers in ~2 s, so
+        60 s leaves room for connection latency and queued requests
+    retries: int
+        number of retries after a failed request, with a 2 s backoff
     eval_kwargs: dict
         optional cellpose model.eval() parameters, sent as query params:
         diameter, min_size, cellprob_threshold, flow_threshold,
@@ -256,15 +262,26 @@ def remote_detect_objects(image, server_url, timeout=1800, **eval_kwargs):
         0 = background, 1..N = objects
     """
     import io
+    import time
+
     import requests
 
     buf = io.BytesIO()
     np.save(buf, image)
-    r = requests.post(f'{server_url}/detect', data=buf.getvalue(),
-                      headers={'Content-Type': 'application/x-numpy'},
-                      params=eval_kwargs or None,
-                      timeout=timeout)
-    r.raise_for_status()
+    for attempt in range(retries + 1):
+        try:
+            r = requests.post(f'{server_url}/detect', data=buf.getvalue(),
+                              headers={'Content-Type': 'application/x-numpy'},
+                              params=eval_kwargs or None,
+                              timeout=timeout)
+            r.raise_for_status()
+            break
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError) as e:
+            if attempt == retries:
+                raise
+            time.sleep(2.0 * (attempt + 1))
     labels = np.load(io.BytesIO(r.content), allow_pickle=False)
     print(f'remote detection: {r.headers.get("X-Inference-Time-S", "?")} s '
           f'({r.headers.get("X-N-Objects", "?")} objects) on {server_url}')
