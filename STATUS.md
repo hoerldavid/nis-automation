@@ -1,6 +1,13 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **detector contract made explicit: at most one connected
+_Last updated: **TODO list refresh (no microscope needed)**: junk at
+the root (`__pycache__/`, `pi-session-*.html` pi session logs, ...) is
+already covered by `.gitignore` (it was created during the reorg) — TODO
+#6 closed accordingly, the files stay on disk (per user: don't delete).
+Two new TODOs from the design-doc cross-reference: #14 startup check of
+the survey ND template (design goal 1a) and #15 spiral visit ordering
+(design goal 2 — `autofrap_grid` already accepts a custom `positions`
+list, only the spiral generator is missing). Before that: **detector contract made explicit: at most one connected
 FRAP region per cell (design decision, no microscope needed)**: per the
 updated `DESIGN_GOALS_AUTOFRAP.md`, picking *which* FRAP region a cell
 gets (largest / most centered / ...) is the detector's job, not the
@@ -474,12 +481,13 @@ colleagues.
    **Live-verified 20260826** at the microscope: all read-only `get_*` wrappers +
    `set_position` XY round-trip (±2 µm, back within 0.1 µm) + piezo round-trip
    (±1 µm, exact) pass — `autofrap/autofrap_bitsnpieces/test_nis_util_live.py`.
-6. Cleanup: test data is now organized in `test_acquisitions/` and kept (incl.
-   `test_stim.nd2` and the `autofrap_out/` FRAP files, which contain saved
-   stimulation ROIs). Remaining junk at the root: `__pycache__/`,
-   `.ipynb_checkpoints/`, `.virtual_documents/`, `pi-session-*.html` (pi session
-   logs) — the `._*.py` AppleDouble files in `autofrap/autofrap_bitsnpieces/`
-   (leftovers from the macOS move) have been deleted.
+6. ~~Cleanup~~ — **done (20260902)**: test data is organized in
+   `test_acquisitions/` and kept (incl. `test_stim.nd2` and the
+   `autofrap_out/` FRAP files, which contain saved stimulation ROIs); the
+   `._*.py` AppleDouble files (leftovers from the macOS move) have been
+   deleted. The remaining root junk (`__pycache__/`, `pi-session-*.html`
+   pi session logs, ...) is git-ignored (`.gitignore` already covered it)
+   and left on disk.
 7. Pixel ↔ stage coordinate transform for per-tile ROIs (calibration matrix from
    `get_rotation_matrix` + pixel size; `get_roi_info` center as a shortcut) — needed
    to move the stage to a detected object before stimulating. **Low priority**:
@@ -519,6 +527,19 @@ colleagues.
     ids of objects above the gap and the `stimulated` set points at the wrong
     cells (a cell can be FRAPed twice). For longer multi-cycle runs: exclude
     FRAPed cells by centroid (preferred, id-independent) instead of label id.
+14. **Startup check of the survey ND template (design goal 1a)**: when
+    autoFRAP starts, make a reasonable effort to verify the
+    GUI-configured survey ND-Acquisition is sane — single image, one or more
+    channels; Z-stacks may be allowed in the future, but timeseries and
+    multi-position acquisitions don't make sense. Not implemented yet:
+    `autofrap()` currently just runs the template as-is. (First check what
+    the macro API can query about the current experiment — grep
+    `nis_ar_help_html/` for ND experiment getters.)
+15. **Spiral visit ordering (design goal 2)**: the grid is done; a
+    center-out square spiral around the start position is the proposed
+    upgrade. `autofrap_grid` already accepts a precomputed `positions`
+    list, so only a spiral generator is missing (calmutils has no spiral
+    function yet, only `centered_tiles` with `snake_rows` serpentine order).
 
 ## File map
 
