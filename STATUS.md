@@ -1,6 +1,24 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **`autofrap.py` `__main__` is now a CLI for `autofrap_grid`
+_Last updated: **detector contract made explicit: at most one connected
+FRAP region per cell (design decision, no microscope needed)**: per the
+updated `DESIGN_GOALS_AUTOFRAP.md`, picking *which* FRAP region a cell
+gets (largest / most centered / ...) is the detector's job, not the
+microscope side's. The contract (step 6): the stimulation mask holds
+"not more than one connected region per cell"; cells without a region
+are skipped (step 7 — already the behavior of
+`next_stimulatable_cell`'s stim-pixel check). Code: `detect()` now
+**warns** (`_warn_multi_region`; a violation degrades instead of
+aborting the grid, `mask_to_polygon` still returns the largest region)
+when a cell's stimulation mask has >1 connected region — 4-connectivity,
+the same convention `find_contours` uses for boundaries; the half-cell
+default is compliant by construction, but e.g. the left half of a
+C-shaped object can in principle be two pieces, so the warning is
+reachable even with the current detector. `mask_to_polygon` docstring:
+"largest contour" = outer boundary, holes ignored, largest-region
+fallback on contract violation. Module + `detect()` docstrings state
+the contract. No behavior change for compliant detectors; offline tests
+still pass. Before that: **`autofrap.py` `__main__` is now a CLI for `autofrap_grid`
 (TODO #2)** (no microscope needed): argparse, the arguments mirror the
 `autofrap_grid` parameters 1:1 (out, nis, nx, ny, spacing, max-cycles,
 until-done, settle, no-return, detector) so a future notebook "parameters"
@@ -521,7 +539,7 @@ argparse wrapper for `autofrap_grid`, args mirror the function parameters 1:1
 (for a future notebook parameters cell); `--out` →
 `test_acquisitions/autofrap_grid/`, `--detector dummy|cellpose-remote` |
 | `autofrap/nd2_helpers.py` | ND2 read helpers: `read_channel` (moved from `detection.py`), `stage_position` (per-frame `dXPos`/`dYPos`/`dZPos` → public `stagePositionUm`; the raw `pDeviceSetting` XY slots are *not* the stage — see TODO #11) |
-| `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `cell_mask`, `mask_to_polygon`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
+| `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`; detector contract: at most one connected stim region per cell — `detect` warns on violation, `mask_to_polygon` falls back to the largest region), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `cell_mask`, `mask_to_polygon`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
 | `autofrap/autofrap_bitsnpieces/inspect_microscope.ipynb` | notebook walking through the `get_*` functions + FOV |
 | `autofrap/autofrap_bitsnpieces/stimulation_loop.py` | colleague's sketch (source of the label-remapping logic, now ported into `autofrap.py`) |

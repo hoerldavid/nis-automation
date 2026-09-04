@@ -4,7 +4,10 @@ Object detection for the grid survey pipeline.
 Contract: read a saved ND2 file -> 2D label array of the same (y, x)
 shape as the image, where 0 = background and 1, 2, ... label the
 detected objects, plus a binary stimulation mask indicating which
-areas are eligible for photostimulation.
+areas are eligible for photostimulation. The mask holds at most one
+connected region per cell (cells without a region are skipped
+downstream); picking *which* region a cell gets is the detector's job
+(DESIGN_GOALS_AUTOFRAP.md, step 6).
 
 Detectors:
   - 'dummy'          fixed circle + rectangle (testing, no dependencies)
@@ -13,6 +16,8 @@ Detectors:
 Both detectors return a label map; detect() adds the default
 stimulation mask (left half of each object).
 """
+import warnings
+
 import numpy as np
 
 import nd2_helpers
@@ -290,6 +295,34 @@ def remote_detect_objects(image, server_url, timeout=60, retries=1,
     return np.ascontiguousarray(labels, dtype=np.int32)
 
 
+def _warn_multi_region(labels, stimulation_mask):
+    """
+    warn about cells whose stimulation mask has more than one connected
+    region
+
+    Detector contract violation (see the detect docstring). This is a
+    warning, not an error: mask_to_polygon still works and implicitly
+    selects the largest region, so a violating detector degrades the
+    run instead of aborting it.
+
+    Connectivity is 4-neighborhood (cross), the same convention
+    find_contours uses for boundaries: blobs touching only at a corner
+    count as two regions (label's default is full connectivity, which
+    would merge them).
+    """
+    from skimage.measure import label
+    for cell_id in np.unique(labels)[1:]:
+        cell_stim = stimulation_mask & (labels == cell_id)
+        if not cell_stim.any():
+            continue  # no FRAP region: allowed, the cell is skipped
+        n_regions = label(cell_stim, connectivity=1).max()
+        if n_regions > 1:
+            warnings.warn(
+                f'cell {cell_id} has {n_regions} connected FRAP regions '
+                '(detector contract: at most one); the largest region '
+                'will be used', stacklevel=2)
+
+
 def detect(nd2_file, channel=0, detector='dummy', server_url=None,
            relabel='distance', **detector_kwargs):
     """
@@ -298,6 +331,13 @@ def detect(nd2_file, channel=0, detector='dummy', server_url=None,
     Objects touching the image border are discarded before relabelling
     (clear_border removes the whole label, not just the border pixels)
     and the remaining labels are renumbered to a gap-free 1..N.
+
+    Detector contract (DESIGN_GOALS_AUTOFRAP.md, step 6): the returned
+    stimulation mask holds at most one connected region per cell; cells
+    without a region are simply skipped downstream. A cell with more
+    than one region triggers a warning (not an error - the run degrades
+    instead of aborting), and the largest region is implicitly selected
+    by mask_to_polygon.
 
     Parameters
     ----------
@@ -355,7 +395,9 @@ def detect(nd2_file, channel=0, detector='dummy', server_url=None,
     elif relabel is not None:
         raise ValueError(f'unknown relabel mode {relabel!r}')
 
-    return labels, default_stimulation_mask(labels)
+    stim_mask = default_stimulation_mask(labels)
+    _warn_multi_region(labels, stim_mask)
+    return labels, stim_mask
 
 
 def cell_mask(labels, cell_id, stimulation_mask=None):
@@ -391,7 +433,10 @@ def mask_to_polygon(mask, tolerance=2.0):
     convert a binary mask to polygon vertices in pixel coordinates
 
     Uses the largest (outermost) contour of the mask, simplified with
-    Douglas-Peucker (`approximate_polygon`).
+    Douglas-Peucker (`approximate_polygon`). For a single region this
+    is the outer boundary (hole contours are ignored). If the mask
+    contains several disconnected regions (a detector contract
+    violation, see detect), the largest region is selected.
 
     Parameters
     ----------
