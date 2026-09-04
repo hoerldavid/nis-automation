@@ -13,5 +13,10 @@ test_acquisitions/
 autofrap/autofrap_out/
 nis_ar_help_html/
 
+# QC overlay test artifacts (see autofrap/autofrap_bitsnpieces/test_qc_overlay.py)
+0013_ch1.tif
+0013_ch1_cp_masks.tif
+0013_qc_*.png
+
 # macOS
 .DS_Store

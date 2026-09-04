@@ -13,6 +13,7 @@ The envisioned workflow is as follows:
 6) The file path is passed to a detector function that will return:
     - an integer label map of the detected objects (called cells here, as it will likely be the individual cells)
     - (optionally) a binary mask of subregions of the cells in which to perform FRAP. A typical example is half-nucleus FRAP: Here the cell labels will correspond to the nuclei, and the FRAP mask will be halfes of the nuclei. There should not be more than one connected FRAP region per cell.
+    - (optionally) a 2D image (either grayscale or RGB) used for visualization (e.g. the autoFRAP script may use this to create a plot with selected cells highlighted).
     - if no FRAP mask is given, the whole objects / cells are used for FRAP.
   The detector function should be easily interchangable, as this is what will be adjusted for different experiments. E.g. instead of detecting cells and halving them, it might instead detect organelles within the cells as FRAP targets or filter cells from the label map if they do not show expression of a certain marker.
 7) The autoFRAP script pickes a label from the label map and a FRAP/stimulation region within from the results.

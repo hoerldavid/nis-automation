@@ -5,3 +5,4 @@ scikit-image
 calmutils
 fastremap
 requests
+matplotlib

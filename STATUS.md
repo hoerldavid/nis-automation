@@ -1,6 +1,34 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **TODO #12 live checks done + 'type 1 hides ROI' note struck
+_Last updated: **QC overlay renderer `autofrap/qc.py` (TODO #8, part 1 —
+rendering only, not yet hooked into `autofrap()`)** (no microscope
+needed): `save_qc_overlay(image, labels, path, stimulation_mask=None,
+cell_id=None, cell_poly=None, stim_poly=None, caption=None, dpi=100)`
+renders one PNG, layers bottom→top with **explicit zorder**: image →
+orange FRAP-mask fill (30 %) → label + mask contours → solid polygons as
+sent to NIS (cyan = selected cell, magenta = stim ROI) → label IDs (10 pt,
+selected one bold 16 pt cyan matching its ROI; the selected cell gets no
+extra outline — the polygons already mark it) → legend (cells / FRAP mask
+/ selected cell / stim ROI, 12 pt, only for layers that are present) +
+caption. Image: 2D → grayscale with 1–99.5 % percentile clipping, or
+RGB(A) `(y, x, 3/4)` → as-is (a multi-channel visualization assembled by
+the detector is its responsibility to provide). Pixel-center coordinates
+throughout (same convention `find_contours` / `mask_to_polygon` / NIS
+use). Gotcha found while testing: matplotlib by default draws Text
+(zorder 3) above *every* imshow (zorder 0) regardless of call order, so
+the layering was only accidentally right — all zorders are now explicit.
+Style iterated with the user (solid cyan/magenta instead of dashed
+yellow/red, bigger text, legend kept). Tested with the copied
+`0013_ch1.tif` + cellpose masks (43 objects) via
+`autofrap_bitsnpieces/test_qc_overlay.py`: three real-data variants
+(0013_qc_selected/noselect/bigcell.png) + a synthetic 300×300 case with
+per-layer pixel checks (fill color, polygon positions, RGB input;
+geometry sits bottom-right because the fixed-font-size legend is
+proportionally huge on small canvases). Test artifacts + inputs are
+`.gitignore`d. Remaining (TODO #8 part 2): hook into `autofrap()` —
+save `<stamp>_cNN_survey_qc.png` per cycle, warn-and-continue on failure,
+image from `detect()`'s optional third return so `autofrap()` never
+needs to know the channel. Before that: **TODO #12 live checks done + 'type 1 hides ROI' note struck
 (20260904, microscope)**: on an unsaved ND-acquisition document —
 `close_current_document(save='yes')` pops the GUI Save-As dialog and
 **blocks** the macro call until it is answered (cancel keeps the document open)
@@ -514,8 +542,12 @@ colleagues.
    to move the stage to a detected object before stimulating. **Low priority**:
    centering the object before stimulating was considered, but the current
    approach (no stage move, ROI drawn directly on the survey image) works fine.
-8. Per-cycle QC artifact: save a label-overlay PNG next to each `cNN_survey.nd2`
-   (labels + drawn ROIs) so detection can be spot-checked without opening NIS.
+8. Per-cycle QC artifact: **part 1 done** (the renderer:
+   `autofrap/qc.py` `save_qc_overlay`, see top entry). Remaining: hook
+   into `autofrap()` — save `<stamp>_cNN_survey_qc.png` next to each
+   survey, warn-and-continue on failure, image from `detect()`'s
+   optional third return (so `autofrap()` never needs to know which
+   channel the detector used).
 9. ~~Client timeout: `remote_detect_objects` still has `timeout=1800` (CPU-era
    leftover); ~60 s is right for the V100 — also decide the fail-fast behavior
    when the GPU server is unreachable mid-run.~~ — **done (20260902)**:
@@ -594,6 +626,7 @@ argparse wrapper for `autofrap_grid`, args mirror the function parameters 1:1
 `test_acquisitions/autofrap_grid/`, `--detector dummy|cellpose-remote` |
 | `autofrap/nd2_helpers.py` | ND2 read helpers: `read_channel` (moved from `detection.py`), `stage_position` (per-frame `dXPos`/`dYPos`/`dZPos` → public `stagePositionUm`; the raw `pDeviceSetting` XY slots are *not* the stage — see TODO #11) |
 | `autofrap/detection.py` | Part 2: `detect` (`(labels, stimulation_mask)`; params `detector` / `server_url` / `relabel`; border discard via `clear_border` + `relabel_sequential`; detector contract: at most one connected stim region per cell — `detect` warns on violation, `mask_to_polygon` falls back to the largest region), `remote_detect_objects` (cellpose client), `default_stimulation_mask` (left half of each object), `dummy_detect_objects` (labels only), `shuffle_labels`, `relabel_by_distance`, `cell_mask`, `mask_to_polygon`, `split_mask_along_axis_equal_area` (ported from bitsnpieces) |
+| `autofrap/qc.py` | QC overlay renderer (TODO #8): `save_qc_overlay` — image (2D grayscale percentile-clipped, or RGB(A) as-is) + FRAP-mask fill + label contours + NIS polygons (cyan selected cell / magenta stim) + label IDs + legend + caption; explicit zorder, headless Agg (see top entry) |
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
 | `autofrap/autofrap_bitsnpieces/inspect_microscope.ipynb` | notebook walking through the `get_*` functions + FOV |
 | `autofrap/autofrap_bitsnpieces/stimulation_loop.py` | colleague's sketch (source of the label-remapping logic, now ported into `autofrap.py`) |
@@ -602,6 +635,7 @@ argparse wrapper for `autofrap_grid`, args mirror the function parameters 1:1
 | `autofrap/autofrap_bitsnpieces/test_stim_save.py` | one-off test script (save-current-document probe; cleanup candidate) |
 | `autofrap/autofrap_bitsnpieces/test_cellpose.py` | one-off cellpose test: local model or `--server URL` (remote-client A/B), reports objects + saves image/label previews (run: `python autofrap/autofrap_bitsnpieces/test_cellpose.py <nd2> [channel] [--server URL]`) |
 | `autofrap/autofrap_bitsnpieces/test_nd2_stage_position.py` | offline check of `nd2_helpers.stage_position` vs commanded coords: 20260901_160216 grid run (positions parsed from `grid_live_test.log`) + 20260819 overview run (coords in filenames), 5 µm tolerance (run: `python autofrap/autofrap_bitsnpieces/test_nd2_stage_position.py`) |
+| `autofrap/autofrap_bitsnpieces/test_qc_overlay.py` | one-off visual + synthetic pixel test of `qc.save_qc_overlay` (run: `python autofrap/autofrap_bitsnpieces/test_qc_overlay.py`; uses the copied `0013_ch1.tif` + cellpose masks at the repo root, writes git-ignored 0013_qc_*.png) |
 | `autofrap/autofrap_bitsnpieces/test_autofrap_errors.py` | offline test of the error handling: fake `nis_util` layer, 14 scenarios — each failure mode checked for its exception class (missing survey/FRAP file, macro abort, server down / 5xx / corrupt file, ROI failure + cleanup, broken open), grid continue/abort policy, best-effort return-to-start, `remote_detect_objects` retry (run: `python autofrap/autofrap_bitsnpieces/test_autofrap_errors.py`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py` | equivalence check for the `_run_macro` refactor: all generated `.mac` bodies byte-identical to the frozen pre-refactor snapshot + round-trip / cleanup tests (run: `python autofrap/autofrap_bitsnpieces/test_nis_util_refactor.py`) |
 | `autofrap/autofrap_bitsnpieces/test_nis_util_live.py` | live smoke test for the refactored wrappers (run at the microscope): all read-only `get_*` + `set_position` XY/piezo round-trip |
