@@ -1,6 +1,6 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **QC overlay renderer `autofrap/qc.py` (TODO #8, part 1 —
+_Last updated: **ND Acquisition dialog settings are queryable — TODO #14 first step done** (at microscope): the dialog's *current experiment definition* can be queried read-only with **no document open** (settings persist across NIS restarts): tab active states via `ND_IsAcqTabChecked` (names, case sensitive: **Time, XY, Z, Lambda, Large Image** — the multichannel tab displays as λ; verified with all tabs ticked → all TRUE), loop params via `ND_GetTimeLapsePhaseCount` / `ND_GetTimePhaseSchedule` / `ND_MP_GetCount` / `ND_GetZSeriesExp` (params persist even when the tab is unticked — tab state and params are separate questions). `ND_GetExperimentLoopSize` is **not** usable (queries the open *document*; -9 with none open). New in `nis_util.py`: `get_nd_acq_tabs` (verified) + `_nis_running` guard in `_run_macro` — **`nis_ar -mw` spawns a fresh NIS instance when none is running, which closes again after the macro** (an interrupted probe spawned exactly such a throwaway instance); `_run_macro` now refuses to do that and raises instead. **CAUTION**: `ND_GetLambdaChannel(0, ...)` **crashed NIS Elements** (twice; a `done` marker written after the call survived once — cause not identified, user: dialog settings persistent, 2 channels defined); channel count/names stay out of the pre-flight for now. Macro-language gotcha: `sprintf(buf, fmt, args)` is **not** C-variadic — `args` is a comma-separated string of variable names to substitute; literal strings need `strcpy()`. Probe: `autofrap_bitsnpieces/test_nd_exp_getter_live.py`. Next: integrate the tab check into the `autofrap()` pre-flight (TODO #14). Before that: **QC overlay renderer `autofrap/qc.py` (TODO #8, part 1 —
 rendering only, not yet hooked into `autofrap()`)** (no microscope
 needed): `save_qc_overlay(image, labels, path, stimulation_mask=None,
 cell_id=None, cell_poly=None, stim_poly=None, caption=None, dpi=100)`
@@ -229,6 +229,7 @@ data into `test_acquisitions/` (see File map)._
 | `get_rotation_matrix` | (a11, a12, a21, a22) camera→stage "rotation and flip" |
 | `get_cam_rotation` | (rotation, rotation2) deg |
 | `get_optical_confs` | list of 16 names (incl. `FRAPPA`; was 13) |
+| `get_nd_acq_tabs` | {tab: bool} — active ND Acquisition tabs (Time/XY/Z/Lambda/Large Image); queries the current experiment definition, no document needed |
 
 **FOV formula**: `FOV = xres × pixel_size / magnification` (`get_fov_from_res`) —
 e.g. **665.6 µm** at 20x / 13 µm pixels; 20260826 read-out (1024, 1024, 13.0 µm, 100x)
@@ -589,9 +590,31 @@ colleagues.
     GUI-configured survey ND-Acquisition is sane — single image, one or more
     channels; Z-stacks may be allowed in the future, but timeseries and
     multi-position acquisitions don't make sense. Not implemented yet:
-    `autofrap()` currently just runs the template as-is. (First check what
-    the macro API can query about the current experiment — grep
-    `nis_ar_help_html/` for ND experiment getters.)
+    `autofrap()` currently just runs the template as-is.
+    **API found (20260904, doc grep + live probes)**: the ND Acquisition
+    dialog's *current experiment definition* is queryable read-only with no
+    document open — tab *active* state: `ND_IsAcqTabChecked(tab)` (names,
+    case sensitive: Time, XY, Z, Lambda, Large Image), loop params:
+    `ND_GetTimeLapsePhaseCount()` +
+    `ND_GetTimePhaseSchedule(i, &interval, &duration, &loopcnt)`,
+    `ND_MP_GetCount()`, `ND_GetZSeriesExp(...)` (incl. Z count + device).
+    Loop params persist even when a tab is not checked — so both the tab
+    state *and* the params matter for the check. **CAUTION**: probing
+    crashed NIS — a macro with `ND_GetLambdaChannel(0, &name, &oc, &color,
+    &before, &after, &aftype, &afarg1, &afarg2);` followed by
+    `Int_SetKeyValue(...,"done",1)` and `Int_SetKeyString(...,"name",name)`
+    wrote 'done'=1, then crashed NIS Elements (never wrote 'name'); cause
+    not identified (user: dialog settings are persistent and 2 channels
+    were defined, so it is not "no channels") — probe
+    `autofrap_bitsnpieces/test_nd_exp_getter_live.py`; retry the channel
+    query in small steps once NIS is back. Also: NIS `sprintf(buf, fmt,
+    args)` is not C-variadic — `args` is a comma-separated string of
+    variable names to substitute; literal strings go through `strcpy()`.
+    **Done**: tab getter wrapped as `get_nd_acq_tabs` (names verified with
+    all tabs ticked); `_run_macro` gained a `_nis_running` guard (see top
+    entry). Remaining: wire the check into `autofrap()` startup (stop if
+    Time/XY/Large Image active; Lambda must be active — leave channel
+    correctness to the user), and revisit channel count/names separately.
 15. **Spiral visit ordering (design goal 2)**: the grid is done; a
     center-out square spiral around the start position is the proposed
     upgrade. `autofrap_grid` already accepts a precomputed `positions`

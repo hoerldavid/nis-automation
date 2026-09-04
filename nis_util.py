@@ -17,6 +17,11 @@ EXPORT_TIFF_MASK_T = 1
 EXPORT_TIFF_MASK_XY = 16
 EXPORT_TIFF_MASK_Z = 256
 
+# tab names of the ND Acquisition dialog (case sensitive, as shown in the
+# dialog; the multichannel tab is displayed as \lambda but its name is
+# "Lambda")
+ND_ACQ_TABS = ('Time', 'XY', 'Z', 'Lambda', 'Large Image')
+
 # prefix for the named tiles in a multipoint ND-acq.
 TILE_NAME_PREFIX = 'tile'
 
@@ -78,11 +83,25 @@ def _cleanup(*paths):
             pass
 
 
+def _nis_running(path_to_nis):
+    """
+    check the NIS GUI is running (tasklist on the executable name)
+    """
+    exe = os.path.basename(path_to_nis)
+    out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq ' + exe],
+                         capture_output=True, text=True)
+    return exe in out.stdout
+
+
 def _run_macro(path_to_nis, body, ini=False):
     """
     run a NIS macro: write it to a temp .mac file and execute it with
     `nis_ar -mw` (attaches to the running NIS GUI, blocks until the
     macro finishes), then clean up the temp files
+
+    note: if no NIS instance is running, `nis_ar -mw` spawns a new one
+    that closes again after the macro — _run_macro refuses to do that
+    and raises instead (start NIS first)
 
     Parameters
     ----------
@@ -103,6 +122,9 @@ def _run_macro(path_to_nis, body, ini=False):
         like the old per-function code, a missing section/key raises
         KeyError in the caller
     """
+    if not _nis_running(path_to_nis):
+        raise RuntimeError('NIS Elements does not appear to be running '
+                           '(no %s process) - start it first' % os.path.basename(path_to_nis))
     ntf = NamedTemporaryFile(suffix='.mac', delete=False)
     ntf2 = None
     try:
@@ -372,6 +394,35 @@ def get_fov_from_res(res):
     """
     xres, yres, pixel_size, magnification = res
     return (xres * pixel_size / magnification, yres * pixel_size / magnification)
+
+
+def get_nd_acq_tabs(path_to_nis):
+    """
+    query which loops of the currently configured ND experiment are
+    enabled (ND_IsAcqTabChecked per ND Acquisition dialog tab)
+
+    reads the *current experiment definition* — the settings shown in the
+    ND Acquisition dialog and what run_current_nd_experiment would run.
+    Works with no document open; the dialog settings persist in NIS
+    (across restarts). Loop *parameters* of a disabled tab also persist,
+    so the tab state and the parameters are separate questions.
+
+    Parameters
+    ----------
+    path_to_nis: str
+        path to the nis_ar.exe executable
+
+    Returns
+    -------
+    dict {tab name: bool}
+        one entry per ND_ACQ_TABS tab, True if that loop is active
+    """
+    cmd = '\n'.join(
+        'Int_SetKeyValue("%s","tabs","%s",ND_IsAcqTabChecked("%s"));'
+        % (INI_PLACEHOLDER, tab, tab)
+        for tab in ND_ACQ_TABS)
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    return {tab: config['tabs'][tab] == '1' for tab in ND_ACQ_TABS}
 
 
 def run_current_nd_experiment(path_to_nis, outfile=None, open_after=True, progress_bar=True):
