@@ -490,10 +490,10 @@ def close_current_document(path_to_nis, save='discard'):
         'ask'     - show the save/discard/cancel dialog (blocks!)
         'discard' - close without saving, no user interaction
         'yes'     - save the changes, then close
+
+    note: for an unsaved document (no file), 'yes' pops the Save-As dialog and
+    the macro call blocks until it is answered (cancel keeps the document open)
     """
-    
-    #TODO: check what happens if unsaved document is closed with 'yes' flag?
-    
     save_flag = {'ask': 0, 'discard': 2, 'yes': 1}[save]
     _run_macro(path_to_nis, f'CloseCurrentDocument({save_flag});')
 
@@ -507,16 +507,14 @@ def add_polygon_roi(path_to_nis, points, color='green'):
     points: sequence of (x, y)
         polygon vertices in pixel coordinates ((0,0) = top-left)
     color: str or int
-        color name from ROI_COLORS or an RGB value
+        color name from ROI_COLORS or a BGR value (0xBBGGRR — the docs call
+        it ColorRGB, but the constants are BGR-encoded; see ROI_COLORS)
 
     Returns
     -------
     roi_id: int
         >0 on success, <0 on failure
     """
-
-    # TODO: check if other colors aside from 'green' are correctly set in NIS
-
     color = ROI_COLORS.get(color, color)
     n = len(points)
     if n < 3:
@@ -536,12 +534,12 @@ def set_roi_type(path_to_nis, roi_id, roi_type):
     set the type of an ROI (ChangeROIType)
 
     roi_type: 0 standard, 1 background, 2 reference, 3 stimulation
-    note: type 1 *hides* the ROI — do not use
+    note: types 1-3 keep the ROI visible, the label gets a prefix:
+    'B:<n>' (background), 'R:<n>' (reference), 'S1:<n>' (stimulation)
     (the macro's return value is unreliable; verify with get_roi_count if needed)
     """
-    
-    # TODO: check what roi_type=2 (reference) does (needs NIS)
-    
+    # TODO (low priority): stimulation ROIs come in 3 groups (S1-S3);
+    # ChangeROIType(3) lands in group 1 — how to change the group?
     _run_macro(path_to_nis, f'ChangeROIType({roi_id}, {roi_type});')
 
 
@@ -571,6 +569,8 @@ def get_roi_info(path_to_nis, roi_id):
     -------
     dict with keys: bbox_l, bbox_t, bbox_r, bbox_b, center_x, center_y,
                    min_feret, max_feret, rotation, color
+    (color always reads back as 0 — the ROI *is* colored correctly, only the
+    read-back is broken; verify in the GUI)
     """
     cmd = f'''
         int l, t, r, b, cx, cy, minf, maxf;

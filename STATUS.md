@@ -1,6 +1,19 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **TODO list refresh (no microscope needed)**: junk at
+_Last updated: **TODO #12 live checks done + 'type 1 hides ROI' note struck
+(20260904, microscope)**: on an unsaved ND-acquisition document —
+`close_current_document(save='yes')` pops the GUI Save-As dialog and
+**blocks** the macro call until it is answered (cancel keeps the document open)
+→ unattended code keeps using 'discard'; `add_polygon_roi` colors render
+correctly ('red'/'cyan'/'yellow' checked; `GetROIInfo` color read-back still
+always 0); `set_roi_type`: types 1–3 all keep the ROI visible, label prefixed
+'B:<n>' (background) / 'R:<n>' (reference) / 'S1:<n>' (stimulation, group 1 of
+3) — the earlier 'type 1 hides the ROI' claim is **not reproducible** and was
+struck (the disappearing ROIs of an earlier session had another cause, e.g.
+closing a document / switching OC). New low-priority TODO #16: stimulation
+groups S1–S3 — how to change the group (only S1 is needed now). TODO comments
+resolved in `nis_util.py` (docstring notes kept short; details here). Before
+that: **TODO list refresh (no microscope needed)**: junk at
 the root (`__pycache__/`, `pi-session-*.html` pi session logs, ...) is
 already covered by `.gitignore` (it was created during the reorg) — TODO
 #6 closed accordingly, the files stay on disk (per user: don't delete).
@@ -224,6 +237,9 @@ colleagues.
   - Closing documents programmatically: `CloseCurrentDocument(Save)` with
     0 = ask (dialog), 1 = save, **2 = discard without any user interaction**
     (verified live). Wrapped as `close_current_document(nis, save='discard')`.
+    1 = save: on an *unsaved* document (no file) this pops the Save-As dialog
+    and blocks the macro call until answered; cancel keeps the document open
+    (20260904).
 - `overview_scan.py` — per position: `StgMoveXY` (blocking) → settle → capture → next;
   returns to the start position; returns `[(index, x, y, outfile, saved), ...]`.
   - 2×2 test: 4/4 saved (~7.4 s each), recorded metadata positions match commanded within
@@ -316,15 +332,20 @@ colleagues.
 - **Stimulation-relevant finds**:
   - `ChangeROIType(roi_id, type)` — 0 standard, 1 background, 2 reference, **3 stimulation**.
     **Verified live**: type 3 turns the ROI into a visible stimulation ROI;
-    type 1 **hides the ROI** (hidden ROIs can reappear later, e.g. after closing a
-    stimulation document / switching OC) — do not use.
+    types 1–3 all keep the ROI visible, the label gets a prefix: 'B:<n>'
+    (background), 'R:<n>' (reference), 'S1:<n>' (stimulation, group 1 of 3)
+    (20260904). An earlier session claimed type 1 *hides* the ROI — **not
+    reproducible**, note struck (the disappearing ROIs observed then must have
+    had another cause, e.g. closing a document / switching OC).
     Return values are unreliable (1 and 0 both observed for plausible outcomes);
     verify via `GetROICount()` / the GUI instead.
   - `DeleteROI(roi_id)` — removes a *visible* ROI (verified live: count 3 → 1).
-    Always returns 0 (also for unknown/hidden IDs — don't trust it).
+    Always returns 0 (also for unknown IDs — don't trust it).
   - `GetROICount()` / `GetROIIdFromIndex(n)` — enumerate **visible** ROIs only
-    (track IDs at creation time; hidden ROIs are invisible to all of this).
-  - `GetROIInfo` color read-back is always 0 (unreliable). Macro language: has
+    (track IDs at creation time).
+  - `GetROIInfo` color read-back is always 0 (unreliable) — but the colors
+    themselves *are* set correctly (20260904: 'red'/'cyan' ROIs render as
+    requested; only the read-back is broken). Macro language: has
     `dword` but **no `unsigned int`**; `int l1, t1, r1, ...` failed to compile while
     the proven `int l, t, r, b, cx, cy, minf, maxf;` works — keep declarations simple.
   - `MatchCameraROI("CLxStimulationDeviceFrappa")` — match camera FOV to stimulation device extent.
@@ -516,11 +537,15 @@ colleagues.
     (Ti XY piezo, position ~0). Verified against commanded coords: 8/8 grid-run
     files ≤1.5 µm, 4/4 overview files ≤3.1 µm
     (`test_nd2_stage_position.py`).
-12. **Pending live checks in `nis_util.py`** (need the microscope workstation;
-    kept as TODO comments in the code): `close_current_document(save='yes')` —
-    what happens if the unsaved document is closed with the save flag;
-    `add_polygon_roi` — verify colors other than 'green' render correctly in
-    NIS; `set_roi_type` — what does type 2 (reference) do.
+12. ~~**Pending live checks in `nis_util.py`**~~ — **done (20260904, at the
+    microscope, on an unsaved ND-acquisition document)**:
+    `close_current_document(save='yes')` pops the GUI Save-As dialog and blocks
+    the macro call until answered (cancel keeps the document open);
+    `add_polygon_roi` colors render correctly ('red'/'cyan'/'yellow';
+    `GetROIInfo` color read-back still 0); `set_roi_type`: types 1–3 keep the
+    ROI visible, label prefixed 'B:'/'R:'/'S1:' (background/reference/stimulation)
+    — the re-check also struck the 'type 1 hides the ROI' note (not
+    reproducible). TODO comments resolved in `nis_util.py`.
 13. **Cross-cycle label-id drift in `autofrap()`** (needs ≥3 cycles/FOV, so
     not an issue for the intended 1–2 cycles/FOV; see Part 3 note): if a cell
     vanishes between cycles, `merge_label_slices`' re-baselining shifts the
@@ -540,6 +565,14 @@ colleagues.
     upgrade. `autofrap_grid` already accepts a precomputed `positions`
     list, so only a spiral generator is missing (calmutils has no spiral
     function yet, only `centered_tiles` with `snake_rows` serpentine order).
+16. **Stimulation ROI groups S1–S3 (low priority)**: `ChangeROIType(3)` puts
+    the ROI into stimulation group 1 (label 'S1:<n>'); there are 3 groups
+    (S1–S3). How to select/change the group is unknown — no group parameter in
+    the macro API (`ChangeROIType` takes type 0–3 only; a grep of
+    `nis_ar_help_html/` found no group function; `Stimulate(dur, StimMask,
+    StimFinish)`'s `StimMask` selects lasers, not groups). Only S1 is needed
+    now (one stimulation ROI per FOV); investigate if multiple stimulation
+    ROIs per FOV ever become necessary.
 
 ## File map
 
