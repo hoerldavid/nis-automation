@@ -29,7 +29,7 @@ image = tifffile.imread(IMAGE)
 labels = tifffile.imread(LABELS).astype(int)
 n_obj = len(set(labels.ravel().tolist())) - 1
 
-stim = detection.default_stimulation_mask(labels)
+stim = detection.half_object_stim_mask(labels)
 cell = next_stimulatable_cell(labels, set(), stim)
 cell_poly = detection.mask_to_polygon(detection.cell_mask(labels, cell))
 stim_poly = detection.mask_to_polygon(

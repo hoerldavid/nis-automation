@@ -9,8 +9,8 @@ holds at most one connected region per cell (cells without a region
 are skipped downstream); picking *which* region a cell gets is the
 detector's job (DESIGN_GOALS_AUTOFRAP.md, step 6).
 
-detect() composes such a detection_fun from parts and applies the
-stable housekeeping + contract checks (composition contract and
+build_detector() composes such a detection_fun from parts and applies
+the stable housekeeping + contract checks (composition contract and
 examples in its docstring). Parts:
 
   - nd2_helpers.read_channel    read one survey channel (2D)
@@ -19,15 +19,24 @@ examples in its docstring). Parts:
   - remote_detect_objects       cellpose on a separate server
                                 (cellpose_server.py); this machine
                                 only ships the image over HTTP
-  - default_stimulation_mask    left half of each object (pass as
+  - half_object_stim_mask       left half of each object (pass as
                                 stim_mask_fun=lambda labels, image:
-                                default_stimulation_mask(labels))
+                                half_object_stim_mask(labels))
+  - visualization_fun           image -> 2D grayscale or (y, x, 3/4)
+                                RGB(A) for the QC overlay (e.g.
+                                lambda image: image, or a channel
+                                picker for a multi-channel load)
 
-Writing your own detector: pass your own detector_fun (and load_fun
-/ stim_mask_fun) to detect() for anything that fits image -> labels;
-for a fully custom survey_file -> (labels[, mask[, viz]]) callable
-(e.g. one that also returns a visualization), pass it straight to
-autofrap() instead.
+Image convention: multi-channel images are (c, y, x) (scientific
+format); the only (y, x, 3/4) array in the pipeline is the RGB(A)
+visualization (display format).
+
+Writing your own detector: pass your own detector_fun / load_fun /
+stim_mask_fun / visualization_fun to build_detector() for anything
+that fits image -> labels (+ mask / viz as above); for a fully custom
+survey_file -> (labels[, mask[, viz]]) callable (e.g. a visualization
+that depends on the labels, or an input that is not a survey nd2
+file), pass it straight to autofrap() instead.
 """
 import warnings
 
@@ -96,7 +105,7 @@ def split_mask_along_axis_equal_area(mask, axis=0):
     return first, second
 
 
-def default_stimulation_mask(labels):
+def half_object_stim_mask(labels):
     """
     default stimulation mask: the left half of each detected object
 
@@ -130,7 +139,7 @@ def dummy_detect_objects(image):
 
     Parameters
     ----------
-    image: 2D np.ndarray (y, x)
+    image: 2D np.ndarray (y, x) or (c, y, x)
         input image (pixel values are ignored, only the shape is used)
 
     Returns
@@ -138,7 +147,7 @@ def dummy_detect_objects(image):
     labels: 2D np.ndarray (y, x), int
         0 = background, 1 = circle, 2 = rectangle
     """
-    h, w = image.shape
+    h, w = image.shape[-2:]  # works for 2D (y, x) and (c, y, x)
     labels = np.zeros((h, w), dtype=np.int32)
     yy, xx = np.ogrid[:h, :w]
 
@@ -334,19 +343,23 @@ def _warn_multi_region(labels, stimulation_mask):
                 'will be used', stacklevel=2)
 
 
-def detect(load_fun, detector_fun, relabel='distance',
-           clear_border=True, stim_mask_fun=None):
+def build_detector(load_fun, detector_fun, relabel='distance',
+                   clear_border=True, stim_mask_fun=None,
+                   visualization_fun=None):
     """
     compose a detection_fun for autofrap()
 
     The experiment-specific parts - which data to load, which
-    detector to run, which areas are FRAP-eligible - are passed in
-    as callables; detect() applies only the stable housekeeping and
-    the contract checks:
+    detector to run, which areas are FRAP-eligible, how the image is
+    shown in the QC overlay - are passed in as callables;
+    build_detector() applies only the stable housekeeping and the
+    contract checks:
 
-        image  = load_fun(survey_file)        2D (y, x) or (y, x, c)
+        image  = load_fun(survey_file)        2D (y, x) or (c, y, x)
         labels = detector_fun(image)          2D (y, x), int
         mask   = stim_mask_fun(labels, image) 2D (if given)
+        viz    = visualization_fun(image)     2D or (y, x, 3/4)
+                                                 (if given)
 
     Housekeeping on labels, in this order:
       - clear_border=True: discard objects touching the image border
@@ -359,46 +372,50 @@ def detect(load_fun, detector_fun, relabel='distance',
       - labels: 2D, integer, same (y, x) as the image
       - mask: 2D, same shape as labels
     plus a *warning* (not an error): cells with more than one
-    connected FRAP region (see _warn_multi_region).
+    connected FRAP region (see _warn_multi_region), and a failing or
+    malformed visualization (see visualization_fun).
 
     Returns
     -------
     detection_fun: callable
-        survey_file -> (labels, stimulation_mask), or (labels,) if
-        stim_mask_fun is None (whole-cell FRAP downstream). No
-        visualization is produced here: a detector that returns one
-        bypasses detect() and passes its own
-        survey_file -> (labels[, mask[, viz]]) to autofrap() directly.
+        survey_file -> (labels[, stimulation_mask[, viz]]): the
+        positions are fixed (2 = mask, 3 = viz), so with a viz but no
+        mask the result is (labels, None, viz). (labels,) if nothing
+        else is given (whole-cell FRAP downstream).
 
     Examples
     --------
     Built-in parts (channel 0, cellpose on the server, left-half
-    mask) - as used by autofrap():
+    mask, the channel itself as visualization) - as used by
+    autofrap():
 
-        detect(partial(nd2_helpers.read_channel, channel=0),
-               partial(remote_detect_objects, server_url=...),
-               stim_mask_fun=lambda labels, image:
-                   default_stimulation_mask(labels))
+        build_detector(partial(nd2_helpers.read_channel, channel=0),
+                       partial(remote_detect_objects, server_url=...),
+                       stim_mask_fun=lambda labels, image:
+                           half_object_stim_mask(labels),
+                       visualization_fun=lambda image: image)
 
     Multi-channel: detect cells in channel 0, keep only the ones
-    expressing the marker in channel 1, FRAP the whole cell:
+    expressing the marker in channel 1, FRAP the whole cell, show
+    channel 0 in the overlay:
 
         def load(f):
             return np.stack([nd2_helpers.read_channel(f, 0),
                              nd2_helpers.read_channel(f, 1)],
-                            axis=-1)
+                            axis=0)  # (c, y, x)
 
         def detect_expressing(img):
             labels = cellpose(img[..., 0])
             expressing = per-cell means of img[..., 1] above threshold
             return np.where(expressing, labels, 0)
 
-        detect(load, detect_expressing, relabel=None)
+        build_detector(load, detect_expressing, relabel=None,
+                       visualization_fun=lambda image: image[0])
 
     Parameters
     ----------
     load_fun: callable
-        survey_file -> image, 2D (y, x) or (y, x, c) with one plane
+        survey_file -> image, 2D (y, x) or (c, y, x) with one plane
         per channel; which channel(s) to read is the caller's choice
         (e.g. partial(nd2_helpers.read_channel, channel=...))
     detector_fun: callable
@@ -412,9 +429,19 @@ def detect(load_fun, detector_fun, relabel='distance',
         (default: True)
     stim_mask_fun: callable or None
         (labels, image) -> 2D binary mask of areas eligible for
-        photostimulation (see default_stimulation_mask); receives the
+        photostimulation (see half_object_stim_mask); receives the
         labels *after* clear_border/relabelling; None: no mask,
         whole-cell FRAP
+    visualization_fun: callable or None
+        image -> 2D (y, x) or (y, x, 3/4) RGB(A) image for the QC
+        overlay; receives the same loaded image the detector got
+        (2D or (c, y, x)), independent of the detection result.
+        Note the convention: scientific images are (c, y, x), only
+        the visualization is (y, x, 3/4) (display format).
+        None: no visualization (the overlay is drawn on a blank
+        canvas). Best effort: any failure (exception or wrong output
+        shape, e.g. a 2-channel image) only warns and drops the
+        visualization - it is cosmetic and must not break the run.
     """
     if relabel not in ('distance', 'shuffle', None):
         raise ValueError(f'unknown relabel mode {relabel!r}')
@@ -428,7 +455,7 @@ def detect(load_fun, detector_fun, relabel='distance',
                 'expected 2D (y, x)')
         if not np.issubdtype(labels.dtype, np.integer):
             raise ValueError(f'labels must be integer, got {labels.dtype}')
-        if labels.shape != image.shape[:2]:
+        if labels.shape != image.shape[-2:]:  # 2D (y, x) or (c, y, x)
             raise ValueError(f'labels/image shape mismatch: '
                              f'{labels.shape} vs {image.shape}')
 
@@ -443,18 +470,60 @@ def detect(load_fun, detector_fun, relabel='distance',
         elif relabel == 'shuffle':
             labels = shuffle_labels(labels)
 
-        if stim_mask_fun is None:
-            return labels
-        mask = stim_mask_fun(labels, image)
-        if mask.ndim != 2 or mask.shape != labels.shape:
-            raise ValueError(
-                f'stimulation mask must be 2D with the labels shape, '
-                f'got {getattr(mask, "shape", None)}')
-        mask = mask.astype(bool)
-        _warn_multi_region(labels, mask)
-        return labels, mask
+        mask = None
+        if stim_mask_fun is not None:
+            mask = stim_mask_fun(labels, image)
+            if mask.ndim != 2 or mask.shape != labels.shape:
+                raise ValueError(
+                    f'stimulation mask must be 2D with the labels '
+                    f'shape, got {getattr(mask, "shape", None)}')
+            mask = mask.astype(bool)
+            _warn_multi_region(labels, mask)
+
+        viz = None
+        if visualization_fun is not None:
+            viz = _make_viz(visualization_fun, image, labels.shape)
+
+        if mask is None and viz is None:
+            return (labels,)
+        if mask is None:
+            return labels, None, viz
+        if viz is None:
+            return labels, mask
+        return labels, mask, viz
 
     return _detect
+
+
+def _make_viz(visualization_fun, image, shape):
+    """
+    best-effort visualization: run visualization_fun and check the
+    output shape; on failure (exception or wrong shape) warn and
+    return None
+
+    The visualization is cosmetic (QC overlay only) and must not
+    break the run - a bad visualization_fun is a warning, not an
+    error, unlike the labels/mask contract checks.
+    """
+    try:
+        viz = visualization_fun(image)
+    except Exception as e:
+        warnings.warn(
+            f'visualization_fun failed: {e!r}; continuing without a '
+            'visualization', stacklevel=2)
+        return None
+    ok = (isinstance(viz, np.ndarray)
+          and ((viz.ndim == 2 and viz.shape == shape)
+               or (viz.ndim == 3 and viz.shape[:2] == shape
+                   and viz.shape[2] in (3, 4))))
+    if not ok:
+        warnings.warn(
+            f'visualization_fun returned {type(viz).__name__} of '
+            f'shape {getattr(viz, "shape", None)}; expected 2D '
+            f'{shape} or RGB(A) ({shape[0]}, {shape[1]}, 3/4); '
+            'continuing without a visualization', stacklevel=2)
+        return None
+    return viz
 
 
 def cell_mask(labels, cell_id, stimulation_mask=None):
@@ -524,10 +593,18 @@ def mask_to_polygon(mask, tolerance=2.0):
 
 if __name__ == '__main__':
     import sys
+    from functools import partial
+
+    import nd2_helpers
+
     f = sys.argv[1] if len(sys.argv) > 1 else \
         r'C:\Users\David\Desktop\nis-automation\overview\20260819_173530_p01_-0262.4_-0270.0.nd2'
-    lab = detect(f)
-    labels, stim = lab
+    labels, stim = build_detector(
+        partial(nd2_helpers.read_channel, channel=0),
+        dummy_detect_objects,
+        stim_mask_fun=lambda labels, image:
+            half_object_stim_mask(labels),
+        visualization_fun=lambda image: image)(f)
     vals, counts = np.unique(labels, return_counts=True)
     print(f'{f}')
     print(f'label shape: {labels.shape} (y, x), dtype: {labels.dtype}')
