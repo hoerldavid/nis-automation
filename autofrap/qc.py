@@ -58,7 +58,8 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
     otherwise draw Text above every imshow image regardless of call
     order):
       1. image (2D: grayscale, 1-99.5 % percentile-clipped; RGB(A):
-         as-is - a detector-provided visualization is already scaled)
+         as-is - a detector-provided visualization is already scaled;
+         None: blank black canvas)
       2. stimulation mask (orange fill)
       3. contours of all labels + stimulation mask contour
       4. polygons sent to NIS (solid: whole cell cyan, stimulation magenta)
@@ -75,11 +76,13 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
 
     Parameters
     ----------
-    image: 2D np.ndarray (y, x) numeric, or 3D (y, x, 3/4)
+    image: 2D np.ndarray (y, x) numeric, or 3D (y, x, 3/4), or None
         2D: the survey channel the detector ran on, shown grayscale
         with 1-99.5 % percentile clipping; RGB(A): shown as-is, no
         scaling or colormap - e.g. a multi-channel visualization
-        assembled by the detector (its responsibility to provide)
+        assembled by the detector (its responsibility to provide);
+        None: a blank (black) canvas - the palette (white contours and
+        IDs, black-stroked text) is designed for a dark background
     labels: 2D np.ndarray (y, x), int
         label map (0 = background, 1..N = objects)
     path: str
@@ -105,19 +108,24 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
     """
     if labels.ndim != 2:
         raise ValueError(f'labels must be 2D, got {labels.shape}')
-    if image.ndim == 2:
-        if image.shape != labels.shape:
-            raise ValueError(f'image/labels shape mismatch: {image.shape}'
-                             f' vs {labels.shape}')
-    elif image.ndim == 3 and image.shape[2] in (3, 4):
-        if image.shape[:2] != labels.shape:
-            raise ValueError(f'image/labels shape mismatch: {image.shape}'
-                             f' vs {labels.shape}')
-    else:
-        raise ValueError(f'image must be 2D or (y, x, 3/4), '
-                         f'got {image.shape}')
+    if image is not None:
+        if image.ndim == 2:
+            if image.shape != labels.shape:
+                raise ValueError(f'image/labels shape mismatch: '
+                                 f'{image.shape} vs {labels.shape}')
+        elif image.ndim == 3 and image.shape[2] in (3, 4):
+            if image.shape[:2] != labels.shape:
+                raise ValueError(f'image/labels shape mismatch: '
+                                 f'{image.shape} vs {labels.shape}')
+        else:
+            raise ValueError(f'image must be 2D or (y, x, 3/4), '
+                             f'got {image.shape}')
 
     h, w = labels.shape
+    if image is None:
+        # no visualization from the detector: blank black canvas, drawn
+        # through the regular 3D (as-is) path below
+        image = np.zeros((h, w, 3))
     fig, ax = plt.subplots(figsize=(w / dpi, h / dpi), dpi=dpi)
     fig.subplots_adjust(left=0, bottom=0, right=1, top=1)
     ax.set_axis_off()

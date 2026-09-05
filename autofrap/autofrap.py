@@ -8,20 +8,27 @@ just runs them in a loop.
 Per cycle:
   1. run the current ND experiment, saved to <stamp>_c<NN>_survey.nd2
   2. detect objects in the survey image (detection_fun — by default
-     cellpose on the GPU server via cellpose_server.py) — returns a
-     (labels, stimulation_mask) tuple
+     cellpose on the GPU server via cellpose_server.py) — returns
+     (labels[, stimulation_mask[, visualization]]): only the label
+     map is required; without a stimulation mask the whole cell is
+     FRAPed, the visualization is used for the QC overlay only
   3. remap object labels against the previous cycle (IoU matching)
      and pick the smallest not-yet-stimulated label that has at least
-     one pixel in the stimulation mask
-  4. open the survey image in NIS, add two ROIs: the whole cell
+     one pixel in the stimulation mask (or any pixel, without one)
+  4. compute the ROI polygons and save a QC overlay PNG
+     (<stamp>_c<NN>_survey_qc.png: detection, FRAP mask, selected
+     cell, polygons as sent to NIS — on a blank canvas when the
+     detector provides no visualization); warn-and-continue on
+     failure, saved before the stimulation run so it survives it
+  5. open the survey image in NIS, add two ROIs: the whole cell
      (for downstream analysis) and the stimulation region
      ((labels == cell_id) & stimulation_mask), the latter set to
      stimulation mode (type 3)
-  5. switch optical conf to FRAPPA, run the current sequential
+  6. switch optical conf to FRAPPA, run the current sequential
      stimulation experiment
-  6. save the FRAP timeseries to <stamp>_c<NN>_frap.nd2 (the stimulation
+  7. save the FRAP timeseries to <stamp>_c<NN>_frap.nd2 (the stimulation
      ROI is part of the saved file)
-  7. delete both ROIs (so they don't linger for the next cycle) and
+  8. delete both ROIs (so they don't linger for the next cycle) and
      close the FRAP + survey documents
 -> next cycle (the ND experiment definition restores the survey OC)
 
@@ -49,6 +56,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import detection
 import nis_util
+import qc
 
 # IoU threshold for matching object labels between consecutive
 # survey images (see merge_label_slices)
@@ -120,7 +128,13 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
     max_cycles: int, optional
         stop after this many cycles (default: until all cells done)
     detection_fun: callable, optional
-        survey_file -> (labels, stimulation_mask); defaults to
+        survey_file -> (labels[, stimulation_mask[, visualization]]);
+        only the label map is required. stimulation_mask (FRAP
+        sub-regions): None or absent -> the whole cell is FRAPed.
+        visualization (2D or RGB(A), detector-assembled, e.g.
+        multi-channel): used for the QC overlay only; absent -> the
+        overlay is drawn on a blank canvas (autofrap() does not know
+        which channel(s) the detector used). Defaults to
         detection.detect with the cellpose server (CELLPOSE_SERVER_URL)
         on SURVEY_CHANNEL, e.g. partial(detection.detect,
         detector='cellpose-remote', server_url=..., channel=...);
@@ -183,7 +197,7 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             # 3. detect (the client already retried once; what survives is
             # either a per-image error or a dead server)
             try:
-                labels, stimulation_mask = detection_fun(survey_file)
+                det = detection_fun(survey_file)
             except (requests.exceptions.ConnectionError,
                     requests.exceptions.Timeout) as e:
                 raise NonRecoverableError(
@@ -194,6 +208,13 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             except Exception as e:
                 raise NonRecoverableError(
                     f'detection failed on {survey_file}: {e!r}') from e
+            if (not isinstance(det, (tuple, list)) or not 1 <= len(det) <= 3):
+                raise NonRecoverableError(
+                    f'detection_fun returned {type(det).__name__}; expected '
+                    '(labels[, stimulation_mask[, visualization]])')
+            labels = det[0]
+            stimulation_mask = det[1] if len(det) > 1 else None
+            viz_image = det[2] if len(det) > 2 else None
             n_obj = len(np.unique(labels)) - 1
 
             # 4. pick the next unused cell with stimulation-eligible pixels
@@ -240,6 +261,21 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             )
             if not cell_poly or not stim_poly:
                 raise RecoverableError(f'no polygon for cell {cell}')
+
+            # QC artifact before the stimulation run, so it is on disk
+            # even if the NIS part of the cycle fails; a rendering
+            # problem must not abort the run
+            try:
+                qc.save_qc_overlay(
+                    viz_image, cur_labels,
+                    os.path.join(out_dir,
+                                 f'{stamp}_c{cycle:02d}_survey_qc.png'),
+                    stimulation_mask=stimulation_mask, cell_id=cell,
+                    cell_poly=cell_poly, stim_poly=stim_poly,
+                    caption=f'c{cycle:02d} cell {cell}')
+            except Exception as e:
+                print(f'[c{cycle:02d}] WARNING: QC overlay failed: {e!r}',
+                      flush=True)
 
             nis_util.open_image(nis_exe, survey_file)
             doc = nis_util.get_current_document(nis_exe)

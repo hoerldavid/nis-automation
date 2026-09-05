@@ -1,6 +1,6 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **ND Acquisition dialog settings are queryable — TODO #14 first step done** (at microscope): the dialog's *current experiment definition* can be queried read-only with **no document open** (settings persist across NIS restarts): tab active states via `ND_IsAcqTabChecked` (names, case sensitive: **Time, XY, Z, Lambda, Large Image** — the multichannel tab displays as λ; verified with all tabs ticked → all TRUE), loop params via `ND_GetTimeLapsePhaseCount` / `ND_GetTimePhaseSchedule` / `ND_MP_GetCount` / `ND_GetZSeriesExp` (params persist even when the tab is unticked — tab state and params are separate questions). `ND_GetExperimentLoopSize` is **not** usable (queries the open *document*; -9 with none open). New in `nis_util.py`: `get_nd_acq_tabs` (verified) + `_nis_running` guard in `_run_macro` — **`nis_ar -mw` spawns a fresh NIS instance when none is running, which closes again after the macro** (an interrupted probe spawned exactly such a throwaway instance); `_run_macro` now refuses to do that and raises instead. **CAUTION**: `ND_GetLambdaChannel(0, ...)` **crashed NIS Elements** (twice; a `done` marker written after the call survived once — cause not identified, user: dialog settings persistent, 2 channels defined); channel count/names stay out of the pre-flight for now. Macro-language gotcha: `sprintf(buf, fmt, args)` is **not** C-variadic — `args` is a comma-separated string of variable names to substitute; literal strings need `strcpy()`. Probe: `autofrap_bitsnpieces/test_nd_exp_getter_live.py`. Next: integrate the tab check into the `autofrap()` pre-flight (TODO #14). Before that: **QC overlay renderer `autofrap/qc.py` (TODO #8, part 1 —
+_Last updated: **TODO #8 done** (no microscope): per-cycle QC overlay hooked into `autofrap()` — `<stamp>_cNN_survey_qc.png` saved before each stimulation run, warn-and-continue; `detection_fun` return is now a 1–3-tuple `(labels[, stimulation_mask[, viz]])` (no mask → whole-cell FRAP; no viz → blank black canvas in `qc.save_qc_overlay(image=None, ...)`), see TODO #8. **sprintf revert**: `get_optical_confs` back to the documented `"i"` form (TODO #17: live re-check). Previous: **ND Acquisition dialog settings are queryable — TODO #14 first step done** (at microscope): the dialog's *current experiment definition* can be queried read-only with **no document open** (settings persist across NIS restarts): tab active states via `ND_IsAcqTabChecked` (names, case sensitive: **Time, XY, Z, Lambda, Large Image** — the multichannel tab displays as λ; verified with all tabs ticked → all TRUE), loop params via `ND_GetTimeLapsePhaseCount` / `ND_GetTimePhaseSchedule` / `ND_MP_GetCount` / `ND_GetZSeriesExp` (params persist even when the tab is unticked — tab state and params are separate questions). `ND_GetExperimentLoopSize` is **not** usable (queries the open *document*; -9 with none open). New in `nis_util.py`: `get_nd_acq_tabs` (verified) + `_nis_running` guard in `_run_macro` — **`nis_ar -mw` spawns a fresh NIS instance when none is running, which closes again after the macro** (an interrupted probe spawned exactly such a throwaway instance); `_run_macro` now refuses to do that and raises instead. **CAUTION**: `ND_GetLambdaChannel(0, ...)` **crashed NIS Elements** (twice; a `done` marker written after the call survived once — cause not identified, user: dialog settings persistent, 2 channels defined); channel count/names stay out of the pre-flight for now. Macro-language gotcha: `sprintf(buf, fmt, args)` is **not** C-variadic — `args` is a comma-separated string of variable names to substitute; literal strings need `strcpy()`. Probe: `autofrap_bitsnpieces/test_nd_exp_getter_live.py`. Next: integrate the tab check into the `autofrap()` pre-flight (TODO #14). Before that: **QC overlay renderer `autofrap/qc.py` (TODO #8, part 1 —
 rendering only, not yet hooked into `autofrap()`)** (no microscope
 needed): `save_qc_overlay(image, labels, path, stimulation_mask=None,
 cell_id=None, cell_poly=None, stim_poly=None, caption=None, dpi=100)`
@@ -546,12 +546,22 @@ colleagues.
    to move the stage to a detected object before stimulating. **Low priority**:
    centering the object before stimulating was considered, but the current
    approach (no stage move, ROI drawn directly on the survey image) works fine.
-8. Per-cycle QC artifact: **part 1 done** (the renderer:
-   `autofrap/qc.py` `save_qc_overlay`, see top entry). Remaining: hook
-   into `autofrap()` — save `<stamp>_cNN_survey_qc.png` next to each
-   survey, warn-and-continue on failure, image from `detect()`'s
-   optional third return (so `autofrap()` never needs to know which
-   channel the detector used).
+8. ~~Per-cycle QC artifact~~ — **done** (renderer `autofrap/qc.py`
+   `save_qc_overlay` + hook in `autofrap()`): each cycle saves
+   `<stamp>_cNN_survey_qc.png` next to the survey, *before* the
+   stimulation run (so it survives a NIS failure), warn-and-continue
+   on rendering errors. Along the way, the `detection_fun` return
+   contract became a 1–3-tuple: `(labels[, stimulation_mask[, viz]])`
+   — only labels required; `stimulation_mask` absent/None → whole cell
+   is FRAPed (downstream `next_stimulatable_cell` / `cell_mask` were
+   already None-tolerant); `viz` (2D or RGB(A), detector-assembled)
+   feeds the overlay, absent → blank black canvas (`save_qc_overlay`
+   now accepts `image=None`; autofrap() deliberately does *not* fall
+   back to reading a survey channel — it doesn't know which channel(s)
+   the detector used). Position 2 is always the mask, position 3
+   always the viz (no dtype sniffing, no dict). Tested with synthetic
+   label maps (2D / RGB / blank); first live artifacts at the next
+   run.
 9. ~~Client timeout: `remote_detect_objects` still has `timeout=1800` (CPU-era
    leftover); ~60 s is right for the V100 — also decide the fail-fast behavior
    when the GPU server is unreachable mid-run.~~ — **done (20260902)**:
