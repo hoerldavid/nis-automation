@@ -1,26 +1,37 @@
 """
 Object detection for the grid survey pipeline.
 
-Contract: read a saved ND2 file -> 2D label array of the same (y, x)
-shape as the image, where 0 = background and 1, 2, ... label the
-detected objects, plus a binary stimulation mask indicating which
-areas are eligible for photostimulation. The mask holds at most one
-connected region per cell (cells without a region are skipped
-downstream); picking *which* region a cell gets is the detector's job
-(DESIGN_GOALS_AUTOFRAP.md, step 6).
+autofrap() calls a detection_fun: survey_file -> (labels[,
+stimulation_mask[, visualization]]), where labels is a 2D integer
+array of the same (y, x) shape as the image (0 = background,
+1..N = objects); without a mask the whole cell is FRAPed. The mask
+holds at most one connected region per cell (cells without a region
+are skipped downstream); picking *which* region a cell gets is the
+detector's job (DESIGN_GOALS_AUTOFRAP.md, step 6).
 
-Detectors:
-  - 'dummy'          fixed circle + rectangle (testing, no dependencies)
-  - 'cellpose-remote' cellpose on a separate server (cellpose_server.py);
-                      this machine only ships the image over HTTP
-Both detectors return a label map; detect() adds the default
-stimulation mask (left half of each object).
+detect() composes such a detection_fun from parts and applies the
+stable housekeeping + contract checks (composition contract and
+examples in its docstring). Parts:
+
+  - nd2_helpers.read_channel    read one survey channel (2D)
+  - dummy_detect_objects        fixed circle + rectangle (testing,
+                                no dependencies)
+  - remote_detect_objects       cellpose on a separate server
+                                (cellpose_server.py); this machine
+                                only ships the image over HTTP
+  - default_stimulation_mask    left half of each object (pass as
+                                stim_mask_fun=lambda labels, image:
+                                default_stimulation_mask(labels))
+
+Writing your own detector: pass your own detector_fun (and load_fun
+/ stim_mask_fun) to detect() for anything that fits image -> labels;
+for a fully custom survey_file -> (labels[, mask[, viz]]) callable
+(e.g. one that also returns a visualization), pass it straight to
+autofrap() instead.
 """
 import warnings
 
 import numpy as np
-
-import nd2_helpers
 
 
 def split_mask_along_axis_equal_area(mask, axis=0):
@@ -323,81 +334,127 @@ def _warn_multi_region(labels, stimulation_mask):
                 'will be used', stacklevel=2)
 
 
-def detect(nd2_file, channel=0, detector='dummy', server_url=None,
-           relabel='distance', **detector_kwargs):
+def detect(load_fun, detector_fun, relabel='distance',
+           clear_border=True, stim_mask_fun=None):
     """
-    run detection on a saved ND2 file
+    compose a detection_fun for autofrap()
 
-    Objects touching the image border are discarded before relabelling
-    (clear_border removes the whole label, not just the border pixels)
-    and the remaining labels are renumbered to a gap-free 1..N.
+    The experiment-specific parts - which data to load, which
+    detector to run, which areas are FRAP-eligible - are passed in
+    as callables; detect() applies only the stable housekeeping and
+    the contract checks:
 
-    Detector contract (DESIGN_GOALS_AUTOFRAP.md, step 6): the returned
-    stimulation mask holds at most one connected region per cell; cells
-    without a region are simply skipped downstream. A cell with more
-    than one region triggers a warning (not an error - the run degrades
-    instead of aborting), and the largest region is implicitly selected
-    by mask_to_polygon.
+        image  = load_fun(survey_file)        2D (y, x) or (y, x, c)
+        labels = detector_fun(image)          2D (y, x), int
+        mask   = stim_mask_fun(labels, image) 2D (if given)
 
-    Parameters
-    ----------
-    nd2_file: str
-        path to the ND2 file
-    channel: int
-        channel index to detect on
-    detector: str
-        'dummy' (default) or 'cellpose-remote'
-    server_url: str, optional
-        base URL of the cellpose server (required for 'cellpose-remote')
-    relabel: str or None
-        relabelling mode applied to the detector's label map:
-        'distance' (default) - relabel 1..N by increasing centroid
-            distance to the image center (optical axis, process first),
-            via relabel_by_distance
-        'shuffle' - randomly permute 1..N (avoids raster-order bias),
-            via shuffle_labels
-        None - return the detector's labels as-is
-    detector_kwargs: dict
-        detector-specific options; for 'cellpose-remote' these are the
-        cellpose model.eval() parameters (diameter, min_size, ...)
+    Housekeeping on labels, in this order:
+      - clear_border=True: discard objects touching the image border
+        (clear_border removes the whole label, not just the border
+        pixels) and renumber to a gap-free 1..N
+      - relabel: 'distance' (default - relabel 1..N by increasing
+        centroid distance to the image center), 'shuffle', or None
+
+    Contract checks (ValueError):
+      - labels: 2D, integer, same (y, x) as the image
+      - mask: 2D, same shape as labels
+    plus a *warning* (not an error): cells with more than one
+    connected FRAP region (see _warn_multi_region).
 
     Returns
     -------
-    labels: 2D np.ndarray (y, x), int
-        0 = background, 1..N = objects
-    stimulation_mask: 2D np.ndarray (y, x), bool
-        binary mask of areas eligible for photostimulation;
-        default convention (default_stimulation_mask): the left half
-        of each detected object
+    detection_fun: callable
+        survey_file -> (labels, stimulation_mask), or (labels,) if
+        stim_mask_fun is None (whole-cell FRAP downstream). No
+        visualization is produced here: a detector that returns one
+        bypasses detect() and passes its own
+        survey_file -> (labels[, mask[, viz]]) to autofrap() directly.
+
+    Examples
+    --------
+    Built-in parts (channel 0, cellpose on the server, left-half
+    mask) - as used by autofrap():
+
+        detect(partial(nd2_helpers.read_channel, channel=0),
+               partial(remote_detect_objects, server_url=...),
+               stim_mask_fun=lambda labels, image:
+                   default_stimulation_mask(labels))
+
+    Multi-channel: detect cells in channel 0, keep only the ones
+    expressing the marker in channel 1, FRAP the whole cell:
+
+        def load(f):
+            return np.stack([nd2_helpers.read_channel(f, 0),
+                             nd2_helpers.read_channel(f, 1)],
+                            axis=-1)
+
+        def detect_expressing(img):
+            labels = cellpose(img[..., 0])
+            expressing = per-cell means of img[..., 1] above threshold
+            return np.where(expressing, labels, 0)
+
+        detect(load, detect_expressing, relabel=None)
+
+    Parameters
+    ----------
+    load_fun: callable
+        survey_file -> image, 2D (y, x) or (y, x, c) with one plane
+        per channel; which channel(s) to read is the caller's choice
+        (e.g. partial(nd2_helpers.read_channel, channel=...))
+    detector_fun: callable
+        image -> 2D (y, x) int label map (0 = background, 1..N);
+        e.g. dummy_detect_objects, partial(remote_detect_objects,
+        server_url=...), or your own model
+    relabel: str or None
+        'distance' (default), 'shuffle', or None (no relabelling)
+    clear_border: bool
+        discard border-touching objects and renumber gap-free
+        (default: True)
+    stim_mask_fun: callable or None
+        (labels, image) -> 2D binary mask of areas eligible for
+        photostimulation (see default_stimulation_mask); receives the
+        labels *after* clear_border/relabelling; None: no mask,
+        whole-cell FRAP
     """
-    from skimage.segmentation import clear_border, relabel_sequential
-
-    image = nd2_helpers.read_channel(nd2_file, channel)
-    if detector == 'dummy':
-        labels = dummy_detect_objects(image)
-    elif detector == 'cellpose-remote':
-        if server_url is None:
-            raise ValueError('server_url is required for detector="cellpose-remote"')
-        labels = remote_detect_objects(image, server_url, **detector_kwargs)
-    else:
-        raise ValueError(f'unknown detector {detector!r}')
-
-    # discard objects touching the image border (clear_border removes the
-    # whole label, not just the border pixels) and close the gaps this
-    # leaves in the numbering; done before any relabelling
-    labels = clear_border(labels)
-    labels, _, _ = relabel_sequential(labels)  # (labels, forward, inverse)
-
-    if relabel == 'distance':
-        labels = relabel_by_distance(labels)
-    elif relabel == 'shuffle':
-        labels = shuffle_labels(labels)
-    elif relabel is not None:
+    if relabel not in ('distance', 'shuffle', None):
         raise ValueError(f'unknown relabel mode {relabel!r}')
 
-    stim_mask = default_stimulation_mask(labels)
-    _warn_multi_region(labels, stim_mask)
-    return labels, stim_mask
+    def _detect(survey_file):
+        image = load_fun(survey_file)
+        labels = detector_fun(image)
+        if labels.ndim != 2:
+            raise ValueError(
+                f'detector_fun returned {labels.ndim}D labels, '
+                'expected 2D (y, x)')
+        if not np.issubdtype(labels.dtype, np.integer):
+            raise ValueError(f'labels must be integer, got {labels.dtype}')
+        if labels.shape != image.shape[:2]:
+            raise ValueError(f'labels/image shape mismatch: '
+                             f'{labels.shape} vs {image.shape}')
+
+        if clear_border:
+            from skimage.segmentation import (clear_border as _clear,
+                                              relabel_sequential)
+            labels = _clear(labels)
+            labels, _, _ = relabel_sequential(labels)  # (l, fwd, inv)
+
+        if relabel == 'distance':
+            labels = relabel_by_distance(labels)
+        elif relabel == 'shuffle':
+            labels = shuffle_labels(labels)
+
+        if stim_mask_fun is None:
+            return labels
+        mask = stim_mask_fun(labels, image)
+        if mask.ndim != 2 or mask.shape != labels.shape:
+            raise ValueError(
+                f'stimulation mask must be 2D with the labels shape, '
+                f'got {getattr(mask, "shape", None)}')
+        mask = mask.astype(bool)
+        _warn_multi_region(labels, mask)
+        return labels, mask
+
+    return _detect
 
 
 def cell_mask(labels, cell_id, stimulation_mask=None):

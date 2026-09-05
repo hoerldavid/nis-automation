@@ -57,6 +57,7 @@ from calmutils.segmentation import merge_label_slices
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import detection
+import nd2_helpers
 import nis_util
 import qc
 
@@ -72,6 +73,12 @@ SURVEY_CHANNEL = 0
 # cycle-number tag in output file names (<prefix>_cycle01_survey.nd2);
 # spelled out rather than 'c' to avoid the color-channel reading
 CYCLE_PREFIX = 'cycle'
+
+
+def _default_stim_mask(labels, image):
+    """stim_mask_fun adapter: default_stimulation_mask only needs the
+    labels (the detect() contract passes the image as well)"""
+    return detection.default_stimulation_mask(labels)
 
 
 class AutofrapError(Exception):
@@ -141,12 +148,11 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         visualization (2D or RGB(A), detector-assembled, e.g.
         multi-channel): used for the QC overlay only; absent -> the
         overlay is drawn on a blank canvas (autofrap() does not know
-        which channel(s) the detector used). Defaults to
-        detection.detect with the cellpose server (CELLPOSE_SERVER_URL)
-        on SURVEY_CHANNEL, e.g. partial(detection.detect,
-        detector='cellpose-remote', server_url=..., channel=...);
-        pass partial(detection.detect, detector='dummy') for testing
-        without the server
+        which channel(s) the detector used). Default: composed with
+        detection.detect - cellpose on the server (CELLPOSE_SERVER_URL),
+        SURVEY_CHANNEL, left-half stimulation mask; for testing
+        without the server: detection.detect(nd2_helpers.read_channel,
+        detection.dummy_detect_objects)
     frap_oc: str
         optical configuration to activate before each stimulation
     iou_threshold: float
@@ -172,11 +178,12 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         cycles are unlikely to succeed
     """
     if detection_fun is None:
-        detection_fun = partial(
-            detection.detect,
-            detector='cellpose-remote',
-            server_url=CELLPOSE_SERVER_URL,
-            channel=SURVEY_CHANNEL,
+        # cellpose on the server, SURVEY_CHANNEL, left-half mask
+        detection_fun = detection.detect(
+            partial(nd2_helpers.read_channel, channel=SURVEY_CHANNEL),
+            partial(detection.remote_detect_objects,
+                    server_url=CELLPOSE_SERVER_URL),
+            stim_mask_fun=_default_stim_mask,
         )
 
     os.makedirs(out_dir, exist_ok=True)
@@ -587,11 +594,15 @@ if __name__ == '__main__':
                    help='detection backend [default: %(default)s]')
     a = p.parse_args()
 
-    detection_fun = partial(
-        detection.detect,
-        detector=a.detector,
-        server_url=CELLPOSE_SERVER_URL if a.detector == 'cellpose-remote' else None,
-        channel=SURVEY_CHANNEL,
+    if a.detector == 'cellpose-remote':
+        detector_fun = partial(detection.remote_detect_objects,
+                               server_url=CELLPOSE_SERVER_URL)
+    else:
+        detector_fun = detection.dummy_detect_objects
+    detection_fun = detection.detect(
+        partial(nd2_helpers.read_channel, channel=SURVEY_CHANNEL),
+        detector_fun,
+        stim_mask_fun=_default_stim_mask,
     )
 
     autofrap_grid(a.nis, a.out, nx=a.nx, ny=a.ny, spacing=a.spacing,
