@@ -6,7 +6,9 @@ definition carries the survey's optical configuration); this script
 just runs them in a loop.
 
 Per cycle:
-  1. run the current ND experiment, saved to <stamp>_c<NN>_survey.nd2
+  1. run the current ND experiment, saved to
+     <file_prefix>_cycle<NN>_survey.nd2 (file_prefix defaults to a
+     timestamp for standalone runs; autofrap_grid passes 'fov<NN>')
   2. detect objects in the survey image (detection_fun — by default
      cellpose on the GPU server via cellpose_server.py) — returns
      (labels[, stimulation_mask[, visualization]]): only the label
@@ -16,7 +18,7 @@ Per cycle:
      and pick the smallest not-yet-stimulated label that has at least
      one pixel in the stimulation mask (or any pixel, without one)
   4. compute the ROI polygons and save a QC overlay PNG
-     (<stamp>_c<NN>_survey_qc.png: detection, FRAP mask, selected
+     (<file_prefix>_cycle<NN>_survey_qc.png: detection, FRAP mask, selected
      cell, polygons as sent to NIS — on a blank canvas when the
      detector provides no visualization); warn-and-continue on
      failure, saved before the stimulation run so it survives it
@@ -26,8 +28,8 @@ Per cycle:
      stimulation mode (type 3)
   6. switch optical conf to FRAPPA, run the current sequential
      stimulation experiment
-  7. save the FRAP timeseries to <stamp>_c<NN>_frap.nd2 (the stimulation
-     ROI is part of the saved file)
+  7. save the FRAP timeseries to <file_prefix>_cycle<NN>_frap.nd2 (the
+     stimulation ROI is part of the saved file)
   8. delete both ROIs (so they don't linger for the next cycle) and
      close the FRAP + survey documents
 -> next cycle (the ND experiment definition restores the survey OC)
@@ -66,6 +68,10 @@ IOU_THRESHOLD = 0.3
 # (cellpose_server.py), DAPI channel
 CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'
 SURVEY_CHANNEL = 0
+
+# cycle-number tag in output file names (<prefix>_cycle01_survey.nd2);
+# spelled out rather than 'c' to avoid the color-channel reading
+CYCLE_PREFIX = 'cycle'
 
 
 class AutofrapError(Exception):
@@ -115,7 +121,8 @@ def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
 
 
 def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
-             frap_oc='FRAPPA', iou_threshold=IOU_THRESHOLD):
+             frap_oc='FRAPPA', iou_threshold=IOU_THRESHOLD,
+             file_prefix=None):
     """
     run the auto-FRAP loop
 
@@ -144,6 +151,11 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         optical configuration to activate before each stimulation
     iou_threshold: float
         IoU threshold for matching labels between cycles
+    file_prefix: str, optional
+        prefix for the per-cycle file names
+        (<file_prefix>_cycle<NN>_survey.nd2, ...); default: a timestamp
+        (YYYYmmdd_HHMMSS) for standalone runs — autofrap_grid passes
+        'fov<NN>' per position. Set to '' for plain cycle<NN>_... names.
 
     Returns
     -------
@@ -168,7 +180,8 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         )
 
     os.makedirs(out_dir, exist_ok=True)
-    stamp = time.strftime('%Y%m%d_%H%M%S')
+    if file_prefix is None:
+        file_prefix = time.strftime('%Y%m%d_%H%M%S')
     stimulated = set()
     prev_labels = None
     results = []
@@ -176,8 +189,10 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
     cycle = 0
     while max_cycles is None or cycle < max_cycles:
         cycle += 1
-        survey_file = os.path.join(out_dir, f'{stamp}_c{cycle:02d}_survey.nd2')
-        frap_file = os.path.join(out_dir, f'{stamp}_c{cycle:02d}_frap.nd2')
+        survey_file = os.path.join(
+            out_dir, f'{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_survey.nd2')
+        frap_file = os.path.join(
+            out_dir, f'{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_frap.nd2')
         cell_roi = stim_roi = None
 
         try:
@@ -268,11 +283,11 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             try:
                 qc.save_qc_overlay(
                     viz_image, cur_labels,
-                    os.path.join(out_dir,
-                                 f'{stamp}_c{cycle:02d}_survey_qc.png'),
+                    os.path.join(out_dir, f'{file_prefix}_'
+                                 f'{CYCLE_PREFIX}{cycle:02d}_survey_qc.png'),
                     stimulation_mask=stimulation_mask, cell_id=cell,
                     cell_poly=cell_poly, stim_poly=stim_poly,
-                    caption=f'c{cycle:02d} cell {cell}')
+                    caption=f'{CYCLE_PREFIX}{cycle:02d} cell {cell}')
             except Exception as e:
                 print(f'[c{cycle:02d}] WARNING: QC overlay failed: {e!r}',
                       flush=True)
@@ -391,21 +406,26 @@ def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
 def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                   settle_s=2.0, return_to_start=True, max_cycles=None,
                   detection_fun=None, frap_oc='FRAPPA',
-                  iou_threshold=IOU_THRESHOLD):
+                  iou_threshold=IOU_THRESHOLD, fov_subdirs=False):
     """
     run the autofrap() loop on every position of a stage grid, centered
     on the current stage position
 
-    Each FOV gets its own sub-directory, so the per-cycle filenames of
-    autofrap() keep working unchanged:
+    By default all FOVs are written to a single run directory; the
+    'fov<NN>' file prefix (matching the log lines) keeps files
+    self-describing and makes one folder easy to browse (QC PNGs side
+    by side) or to hand to downstream analysis:
 
-        <out_dir>/<run_stamp>/fov<i>/
+        <out_dir>/<run_stamp>/
+            <fovNN>_cycleNN_survey.nd2
+            <fovNN>_cycleNN_frap.nd2
+            <fovNN>_cycleNN_survey_qc.png
+
+    With fov_subdirs=True, each FOV goes into its own sub-directory
+    instead (<run_stamp>/fov<NN>/, same file names).
 
     (the exact stage position of each FOV is in the nd2 metadata of
     the saved files — nd2_helpers.stage_position reads it back)
-
-            <stamp>_cNN_survey.nd2
-            <stamp>_cNN_frap.nd2
 
     Parameters
     ----------
@@ -426,14 +446,20 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
         move back to the starting position after the last FOV
     max_cycles, detection_fun, frap_oc, iou_threshold:
         passed through to autofrap() unchanged
+    fov_subdirs: bool
+        give each FOV its own <run_stamp>/fov<NN>/ sub-directory
+        (default: all FOVs in the single run directory, position
+        encoded in the file names)
 
     Returns
     -------
     results: list of (i, x, y, fov_dir, fov_results)
         fov_results is autofrap's per-cycle results, or None if that FOV
-        failed. A RecoverableError skips the FOV and continues; a
-        NonRecoverableError aborts the run (the remaining positions are
-        not visited and do not appear in results)
+        failed; fov_dir is the per-FOV sub-directory (fov_subdirs=True)
+        or the shared run directory. A RecoverableError skips the FOV
+        and continues; a NonRecoverableError aborts the run (the
+        remaining positions are not visited and do not appear in
+        results)
 
     Raises
     ------
@@ -460,8 +486,10 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
     aborted = None
     try:
         for i, (x, y) in enumerate(positions, 1):
-            fov_dir = os.path.join(run_dir, f'fov{i:02d}')
-            print(f'\n=== [{i}/{len(positions)}] ({x:+.1f}, {y:+.1f}) um -> {fov_dir}',
+            fov_dir = (os.path.join(run_dir, f'fov{i:02d}')
+                       if fov_subdirs else run_dir)
+            print(f'\n=== [{i}/{len(positions)}] ({x:+.1f}, {y:+.1f}) um '
+                  f'-> {fov_dir} (fov{i:02d})',
                   flush=True)
 
             try:
@@ -478,7 +506,8 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                 fov_results = autofrap(nis_exe, fov_dir, max_cycles=max_cycles,
                                        detection_fun=detection_fun,
                                        frap_oc=frap_oc,
-                                       iou_threshold=iou_threshold)
+                                       iou_threshold=iou_threshold,
+                                       file_prefix=f'fov{i:02d}')
             except NonRecoverableError as e:
                 print(f'!!! FOV {i}: non-recoverable error: {e} '
                       f'- aborting the grid run', flush=True)

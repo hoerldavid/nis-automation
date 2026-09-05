@@ -561,7 +561,15 @@ colleagues.
    the detector used). Position 2 is always the mask, position 3
    always the viz (no dtype sniffing, no dict). Tested with synthetic
    label maps (2D / RGB / blank); first live artifacts at the next
-   run.
+   run. **File naming** (along the way): `autofrap()` takes a
+   `file_prefix` (default: timestamp, standalone runs; `autofrap_grid`
+   passes `fov<NN>` per position). Grid default is now **one run
+   directory per grid run** — `<run_stamp>/fov03_cycle01_survey.nd2`
+   (the prefix keeps files self-describing and lets the QC PNGs be
+   browsed side by side); per-FOV sub-directories are opt-in via
+   `autofrap_grid(..., fov_subdirs=True)`. The cycle tag is
+   `_cycle<NN>_` via a `CYCLE_PREFIX` constant instead of `_c<NN>_`
+   (the bare `c` reads like color channel).
 9. ~~Client timeout: `remote_detect_objects` still has `timeout=1800` (CPU-era
    leftover); ~60 s is right for the V100 — also decide the fail-fast behavior
    when the GPU server is unreachable mid-run.~~ — **done (20260902)**:
