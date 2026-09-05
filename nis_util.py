@@ -322,6 +322,10 @@ def get_cam_rotation(path_to_nis):
 
 
 def get_optical_confs(path_to_nis):
+    # Per the sprintf() documentation in the NIS manual, sprintf is not
+    # C-variadic: the third argument is a (comma-separated) string of variable
+    # names to substitute — hence "i" here. (The bare `i` also seemed to work
+    # in a live test on 2026-08-26, but the string form is the documented one.)
     cmd = f'''
         int i;
         char buf[256];
@@ -332,7 +336,7 @@ def get_optical_confs(path_to_nis):
         for(i=0; i < GetOptConfCount(); i=i+1)
         {{
             GetOptConfName(i, &name, 256);
-            sprintf(&buf, "conf%i", i);
+            sprintf(&buf, "conf%i", "i");
             Int_SetKeyString("{INI_PLACEHOLDER}","oc",&buf,&name);
         }}        
 

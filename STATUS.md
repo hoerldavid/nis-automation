@@ -523,11 +523,14 @@ colleagues.
    + `__INI_PATH__` placeholder (see Infrastructure notes). Verified byte-for-byte
    against the pre-refactor code for all 33 macro bodies; also fixed two latent
    bugs found along the way (`get_position` without piezo, `set_position(pos_piezo=)`).
-   Note: `get_optical_confs`'s macro had `sprintf(&buf, "conf%i", "i" )` — a
-   string literal where the loop int was expected (worked only because the NIS
-   macro compiler is permissive about it). Fixed to `i` on 20260826 (snapshot
-   `nis_util_old.py` updated to match, equivalence check still 33/33),
-   re-verified live: all 16 names still returned.
+   Note (corrected after checking the NIS manual): `get_optical_confs`'s
+   macro used `sprintf(&buf, "conf%i", "i" )` — per the sprintf() documentation
+   in the NIS manual this is the *documented* form (the third argument is a
+   comma-separated string of variable names, not C-variadic values). It was
+   briefly "fixed" to bare `i` on 20260826, which also worked live (all 16
+   names returned — the macro compiler is permissive), but has since been
+   reverted to the documentation-conformant `"i"` in both `nis_util.py` and
+   the `nis_util_old.py` snapshot (TODO #17: re-verify at the microscope).
    **Live-verified 20260826** at the microscope: all read-only `get_*` wrappers +
    `set_position` XY round-trip (±2 µm, back within 0.1 µm) + piezo round-trip
    (±1 µm, exact) pass — `autofrap/autofrap_bitsnpieces/test_nis_util_live.py`.
@@ -628,6 +631,11 @@ colleagues.
     StimFinish)`'s `StimMask` selects lasers, not groups). Only S1 is needed
     now (one stimulation ROI per FOV); investigate if multiple stimulation
     ROIs per FOV ever become necessary.
+17. **Re-verify `get_optical_confs()` at the microscope**: the macro was
+    reverted from bare `i` to the documented `sprintf(&buf, "conf%i", "i")`
+    form (see TODO #5 note) — quick check via the read-only `get_*` live test
+    script (`autofrap_bitsnpieces/test_nis_util_live.py`); expect all 16 conf
+    names back.
 
 ## File map
 
