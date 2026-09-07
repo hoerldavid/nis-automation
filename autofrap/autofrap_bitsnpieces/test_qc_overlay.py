@@ -18,6 +18,7 @@ import numpy as np
 import tifffile
 
 import detection
+import mask_utils
 import qc
 from autofrap import next_stimulatable_cell
 
@@ -29,10 +30,10 @@ image = tifffile.imread(IMAGE)
 labels = tifffile.imread(LABELS).astype(int)
 n_obj = len(set(labels.ravel().tolist())) - 1
 
-stim = detection.half_object_stim_mask(labels)
+stim = mask_utils.half_object_stim_mask(labels)
 cell = next_stimulatable_cell(labels, set(), stim)
-cell_poly = detection.mask_to_polygon(detection.cell_mask(labels, cell))
-stim_poly = detection.mask_to_polygon(
+cell_poly = mask_utils.mask_to_polygon(detection.cell_mask(labels, cell))
+stim_poly = mask_utils.mask_to_polygon(
     detection.cell_mask(labels, cell, stim))
 
 print(f'{n_obj} objects, selected cell {cell} '

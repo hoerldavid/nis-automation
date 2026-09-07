@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(HERE))  # autofrap/
 import numpy as np
 
 import detection
+import mask_utils
 
 FAILURES = []
 
@@ -38,7 +39,7 @@ def loadrgb(f):
 
 
 det = detection.dummy_detect_objects
-maskfun = lambda labels, image: detection.half_object_stim_mask(labels)
+maskfun = lambda labels, image: mask_utils.half_object_stim_mask(labels)
 
 # 1. no mask, no viz -> (labels,)  [the 1-tuple autofrap() requires]
 res = detection.build_detector(load2d, det)('x')

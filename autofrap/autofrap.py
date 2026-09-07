@@ -57,6 +57,7 @@ from calmutils.segmentation import merge_label_slices
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import detection
+import mask_utils
 import nd2_helpers
 import nis_util
 import qc
@@ -78,7 +79,7 @@ CYCLE_PREFIX = 'cycle'
 def _half_object_stim_mask(labels, image):
     """stim_mask_fun adapter: half_object_stim_mask only needs the
     labels (the build_detector() contract passes the image as well)"""
-    return detection.half_object_stim_mask(labels)
+    return mask_utils.half_object_stim_mask(labels)
 
 
 class AutofrapError(Exception):
@@ -286,10 +287,10 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             # 5. ROIs + stimulation run: whole cell (saved for downstream
             #    analysis) + stimulation region, the latter set to
             #    stimulation mode
-            cell_poly = detection.mask_to_polygon(
+            cell_poly = mask_utils.mask_to_polygon(
                 detection.cell_mask(cur_labels, cell)
             )
-            stim_poly = detection.mask_to_polygon(
+            stim_poly = mask_utils.mask_to_polygon(
                 detection.cell_mask(cur_labels, cell, stimulation_mask)
             )
 
