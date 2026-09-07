@@ -12,8 +12,9 @@ Per cycle:
   2. detect objects in the survey image (detection_fun — by default
      cellpose on the GPU server via cellpose_server.py) — returns
      (labels[, stimulation_mask[, visualization]]): only the label
-     map is required; without a stimulation mask the whole cell is
-     FRAPed, the visualization is used for the QC overlay only
+     map is required (a bare label map is accepted); without a
+     stimulation mask the whole cell is FRAPed, the visualization is
+     used for the QC overlay only
   3. remap object labels against the previous cycle (IoU matching)
      and pick the smallest not-yet-stimulated label that has at least
      one pixel in the stimulation mask (or any pixel, without one)
@@ -50,7 +51,6 @@ import time
 from functools import partial
 
 import numpy as np
-import requests
 from calmutils.segmentation import merge_label_slices
 
 # repo root (for nis_util) — this script lives one level down in autofrap/
@@ -86,14 +86,14 @@ class AutofrapError(Exception):
 
 
 class RecoverableError(AutofrapError):
-    """failure confined to the current FOV (bad survey image, no polygon
-    for the cell, ROI creation failed); a grid run can continue with the
-    next position"""
+    """failure confined to the current FOV (no polygon for the cell, ROI
+    creation failed); a grid run can continue with the next position"""
 
 
 class NonRecoverableError(AutofrapError):
     """failure that makes further FOVs pointless or unsafe (NIS state
-    unknown, detection server unreachable, disk full); a grid run aborts"""
+    unknown, detection failed - the detector/server state is suspect,
+    disk full); a grid run aborts"""
 
 
 def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
@@ -142,9 +142,10 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
     max_cycles: int, optional
         stop after this many cycles (default: until all cells done)
     detection_fun: callable, optional
-        survey_file -> (labels[, stimulation_mask[, visualization]]);
-        only the label map is required. stimulation_mask (FRAP
-        sub-regions): None or absent -> the whole cell is FRAPed.
+        survey_file -> (labels[, stimulation_mask[, visualization]])
+        or a bare label map; only the label map is required.
+        stimulation_mask (FRAP sub-regions): None or absent -> the
+        whole cell is FRAPed.
         visualization (2D or RGB(A), detector-assembled, e.g.
         multi-channel): used for the QC overlay only; absent -> the
         overlay is drawn on a blank canvas (autofrap() does not know
@@ -171,12 +172,13 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
     Raises
     ------
     RecoverableError
-        this FOV could not be processed (detection server error on this
-        image, no polygon for the cell, ROI creation failed)
+        this FOV could not be processed (no polygon for the cell, ROI
+        creation failed)
     NonRecoverableError
         the state is unknown or broken (survey/FRAP file not saved, NIS
-        macro aborted, detection server unreachable, OS error); further
-        cycles are unlikely to succeed
+        macro aborted, detection failed for any reason - the
+        detector/server state is suspect, OS error); further cycles are
+        unlikely to succeed
     """
 
     # TODO: as single-FOV autofrap usually gets called from the multi-position wrapper
@@ -225,30 +227,20 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                     f'survey file missing after the ND run: {survey_file} '
                     '(NIS did not save it - check the GUI / disk)')
 
-            # 3. detect (the client already retried once; what survives is
-            # either a per-image error or a dead server)
-
-            # TODO: don't try to be super smart here and raise RecoverableError
-            # in the hope that server may respond next time
-            # retry logic is in detection function itself
-            # if that fails, we just consider run failed -> NonRecoverableError
-            # -> remove dependency on requests Error types here
-
+            # 3. detect (the client already retried once; any failure
+            # that survives is run-level: the detector/server state is
+            # suspect, so a grid run aborts - no per-exception
+            # translation here, the detector may be any callable)
             try:
                 det = detection_fun(survey_file)
-            except (requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout) as e:
-                raise NonRecoverableError(
-                    f'detection server unreachable: {e}') from e
-            except requests.exceptions.HTTPError as e:
-                raise RecoverableError(
-                    f'detection server error on {survey_file}: {e}') from e
             except Exception as e:
                 raise NonRecoverableError(
                     f'detection failed on {survey_file}: {e!r}') from e
-            
-            # TODO: allow bare label mask (np-array) as return from detector instead of 1-tuple?
 
+            # a bare label map is accepted (normalized to a 1-tuple);
+            # otherwise: a 1-3 tuple/list (labels[, mask[, viz]])
+            if isinstance(det, np.ndarray):
+                det = (det,)
             if (not isinstance(det, (tuple, list)) or not 1 <= len(det) <= 3):
                 raise NonRecoverableError(
                     f'detection_fun returned {type(det).__name__}; expected '

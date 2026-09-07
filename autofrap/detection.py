@@ -2,9 +2,10 @@
 Object detection for the grid survey pipeline.
 
 autofrap() calls a detection_fun: survey_file -> (labels[,
-stimulation_mask[, visualization]]), where labels is a 2D integer
-array of the same (y, x) shape as the image (0 = background,
-1..N = objects); without a mask the whole cell is FRAPed. The mask
+stimulation_mask[, visualization]]) or a bare label map, where
+labels is a 2D integer array of the same (y, x) shape as the image
+(0 = background, 1..N = objects); without a mask the whole cell is
+FRAPed. The mask
 holds at most one connected region per cell (cells without a region
 are skipped downstream); picking *which* region a cell gets is the
 detector's job (DESIGN_GOALS_AUTOFRAP.md, step 6).
