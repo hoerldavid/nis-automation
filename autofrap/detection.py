@@ -43,6 +43,7 @@ import warnings
 import numpy as np
 
 
+# TODO: general-purpose function, move to extra mask_utils / label_utils file?
 def split_mask_along_axis_equal_area(mask, axis=0):
     """
     Split a binary mask into two halves of (approximately) equal area along a given axis.
@@ -104,7 +105,8 @@ def split_mask_along_axis_equal_area(mask, axis=0):
 
     return first, second
 
-
+# TODO: general-purpose function, move to extra mask_utils / label_utils file?
+# more sensible naming for binary version (split_mask_along_axis_equal_area) and this (multi-label version)?
 def half_object_stim_mask(labels):
     """
     default stimulation mask: the left half of each detected object
@@ -128,9 +130,15 @@ def half_object_stim_mask(labels):
     stim_mask = np.zeros(labels.shape, dtype=np.bool_)
     for lbl in np.unique(labels):
         if lbl > 0:
+            # TODO: only do it in object bbox for speedup (use regionprops?)
             left, _ = split_mask_along_axis_equal_area(labels == lbl, axis=1)
             stim_mask |= left
     return stim_mask
+
+
+# TODO: add helpers for enforcing one-stimulation-area-per-labels?
+# e.g. - only keep largest stimulation area per label - only keep most central per label?
+# would also go in 
 
 
 def dummy_detect_objects(image):
@@ -166,7 +174,7 @@ def dummy_detect_objects(image):
 
     return labels
 
-
+# TODO: general-purpose function, move to extra mask_utils / label_utils file?
 def shuffle_labels(labels, seed=None):
     """
     randomly permute the object labels of a label map
@@ -201,7 +209,7 @@ def shuffle_labels(labels, seed=None):
 
     return fastremap.remap(labels, remap)
 
-
+# TODO: general-purpose function, move to extra mask_utils / label_utils file?
 def relabel_by_distance(labels, reference=None):
     """
     relabel objects by increasing distance from a reference point
@@ -553,7 +561,7 @@ def cell_mask(labels, cell_id, stimulation_mask=None):
         return labels == cell_id
     return (labels == cell_id) & stimulation_mask
 
-
+# TODO: general-purpose function, move to extra mask_utils / label_utils file?
 def mask_to_polygon(mask, tolerance=2.0):
     """
     convert a binary mask to polygon vertices in pixel coordinates

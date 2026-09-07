@@ -178,6 +178,11 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         macro aborted, detection server unreachable, OS error); further
         cycles are unlikely to succeed
     """
+
+    # TODO: as single-FOV autofrap usually gets called from the multi-position wrapper
+    # don't create default detector here but outside
+    # may be fine for testing at the moment, but remove for final version
+
     if detection_fun is None:
         # cellpose on the server, SURVEY_CHANNEL, left-half mask;
         # the channel itself as visualization (2D -> grayscale in
@@ -222,6 +227,13 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
 
             # 3. detect (the client already retried once; what survives is
             # either a per-image error or a dead server)
+
+            # TODO: don't try to be super smart here and raise RecoverableError
+            # in the hope that server may respond next time
+            # retry logic is in detection function itself
+            # if that fails, we just consider run failed -> NonRecoverableError
+            # -> remove dependency on requests Error types here
+
             try:
                 det = detection_fun(survey_file)
             except (requests.exceptions.ConnectionError,
@@ -234,6 +246,9 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             except Exception as e:
                 raise NonRecoverableError(
                     f'detection failed on {survey_file}: {e!r}') from e
+            
+            # TODO: allow bare label mask (np-array) as return from detector instead of 1-tuple?
+
             if (not isinstance(det, (tuple, list)) or not 1 <= len(det) <= 3):
                 raise NonRecoverableError(
                     f'detection_fun returned {type(det).__name__}; expected '
@@ -285,6 +300,10 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             stim_poly = detection.mask_to_polygon(
                 detection.cell_mask(cur_labels, cell, stimulation_mask)
             )
+
+            # TODO: when we can't create cell / stimulation mask, don't error
+            # instead try the next cell in current survey? 
+
             if not cell_poly or not stim_poly:
                 raise RecoverableError(f'no polygon for cell {cell}')
 
@@ -303,7 +322,10 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                 print(f'[c{cycle:02d}] WARNING: QC overlay failed: {e!r}',
                       flush=True)
 
+            # TODO: image should still be open after acquisition, no need to re/open?
+            # check if this gives any timing advantage or is just a no-op?
             nis_util.open_image(nis_exe, survey_file)
+            
             doc = nis_util.get_current_document(nis_exe)
             if os.path.normcase(doc) != os.path.normcase(survey_file):
                 raise NonRecoverableError(
@@ -339,6 +361,8 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             #    FRAP file but don't linger for the next cycle) and close it
             nis_util.close_current_document(nis_exe, save='discard')
             doc = nis_util.get_current_document(nis_exe)
+            
+            # TODO: don't re-open just to close it again
             if os.path.normcase(doc) != os.path.normcase(survey_file):
                 nis_util.open_image(nis_exe, survey_file)
             nis_util.delete_roi(nis_exe, stim_roi)
@@ -511,6 +535,9 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                 results.append((i, x, y, fov_dir, None))
                 aborted = i
                 break
+
+            # TODO: set_position may actually block until target is reached
+            # making this redundent - test on scope and remove if unnecessary?
             time.sleep(settle_s)
 
             try:
