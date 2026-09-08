@@ -98,9 +98,103 @@ def half_object_stim_mask(labels):
     return stim_mask
 
 
-# TODO: add helpers for enforcing one-stimulation-area-per-labels?
-# e.g. - only keep largest stimulation area per label - only keep most central per label?
-# would also go in
+def _mask_per_label(labels, mask):
+    """
+    Yield (label_id, (label == id) & mask) for each foreground label.
+
+    Parameters
+    ----------
+    labels: np.ndarray
+        label map (0 = background, 1..N = objects)
+    mask: np.ndarray, same shape as labels
+        binary mask
+
+    Yields
+    ------
+    (label_id, region_mask)
+        region_mask = (labels == label_id) & mask
+    """
+    for lbl in np.unique(labels):
+        if lbl > 0:
+            yield int(lbl), ((labels == lbl) & mask)
+
+
+def largest_region_per_label(labels, mask):
+    """
+    Keep only the largest connected region per label.
+
+    Each object (label) may have multiple disconnected regions. This
+    function selects the largest region per object and discards the
+    rest. Empty masks and labels with a single region pass through
+    unchanged.
+
+    Parameters
+    ----------
+    labels: np.ndarray
+        label map (0 = background, 1..N = objects)
+    mask: np.ndarray, same shape as labels
+        binary mask (one or more connected regions per label)
+
+    Returns
+    -------
+    reduced_mask: np.ndarray, same shape and dtype as mask
+        binary mask with at most one region per label (the largest)
+    """
+    from skimage.measure import label as _label
+
+    result = np.zeros(labels.shape, dtype=bool)
+    for lbl, region in _mask_per_label(labels, mask):
+        components = _label(region, connectivity=1)
+        if components.max() == 0:
+            continue  # no signal within this label
+        if components.max() == 1:
+            # single region, keep as-is
+            result |= region
+        else:
+            # pick largest component (+1 because areas skips background label 0)
+            areas = np.bincount(components.ravel())[1:]
+            result |= (components == np.argmax(areas) + 1)
+    return result
+
+
+def most_central_region_per_label(labels, mask):
+    """
+    Keep only the most-central connected region per label.
+
+    Each object (label) may have multiple disconnected regions. This
+    function selects the region whose centroid is closest to the
+    centroid of the entire object (label) and discards the rest.
+
+    Parameters
+    ----------
+    labels: np.ndarray
+        label map (0 = background, 1..N = objects)
+    mask: np.ndarray, same shape as labels
+        binary mask (one or more connected regions per label)
+
+    Returns
+    -------
+    reduced_mask: np.ndarray, same shape and dtype as mask
+        binary mask with at most one region per label (the most central)
+    """
+    from skimage.measure import label as _label, regionprops
+
+    result = np.zeros(labels.shape, dtype=bool)
+    for lbl, region in _mask_per_label(labels, mask):
+        components = _label(region, connectivity=1)
+        if components.max() == 0:
+            continue
+        props = regionprops(components)
+        if len(props) == 1:
+            result |= region
+            continue
+        # label centroid (reference point)
+        lp = regionprops(labels)
+        ref = np.array([p.centroid for p in lp if p.label == lbl][0])  # (y, x)
+        # find the component closest to the label centroid
+        best = min(props, key=lambda p: np.sum((p.centroid - ref) ** 2))
+        result |= (components == best.label)
+    return result
 
 
 def shuffle_labels(labels, seed=None):
