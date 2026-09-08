@@ -72,6 +72,54 @@ IOU_THRESHOLD = 0.3
 CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'
 SURVEY_CHANNEL = 0
 
+def default_detector(detector_fun=None):
+    """
+    compose the default detection pipeline
+
+    The default detector loads ``SURVEY_CHANNEL``, runs the given
+    ``detector_fun`` (cellpose on the server by default, ``dummy`` for
+    testing), applies the left-half stimulation mask, and returns the
+    loaded image as visualization.
+
+    Parameters
+    ----------
+    detector_fun: callable, optional
+        image -> labels; defaults to ``remote_detect_objects`` on
+        ``CELLPOSE_SERVER_URL``.
+
+    Returns
+    -------
+    detection_fun: callable
+        survey_file -> (labels[, stimulation_mask[, visualization]]);
+        suitable for passing as ``detection_fun`` to :func:`autofrap`.
+
+    Examples
+    --------
+    Default (cellpose on GPU server):
+
+        detection_fun = default_detector()
+        results = autofrap(nis, out_dir, detection_fun=detection_fun)
+
+    Testing without the server:
+
+        detection_fun = default_detector(detection.dummy_detect_objects)
+        results = autofrap(nis, out_dir, detection_fun=detection_fun)
+
+    Custom detector (e.g. with a local model):
+
+        detection_fun = default_detector(my_local_detector)
+    """
+    if detector_fun is None:
+        detector_fun = partial(detection.remote_detect_objects,
+                               server_url=CELLPOSE_SERVER_URL)
+    return detection.build_detector(
+        partial(nd2_helpers.read_channel, channel=SURVEY_CHANNEL),
+        detector_fun,
+        stim_mask_fun=_half_object_stim_mask,
+        visualization_fun=lambda image: image,
+    )
+
+
 # cycle-number tag in output file names (<prefix>_cycle01_survey.nd2);
 # spelled out rather than 'c' to avoid the color-channel reading
 CYCLE_PREFIX = 'cycle'
@@ -151,12 +199,10 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         visualization (2D or RGB(A), detector-assembled, e.g.
         multi-channel): used for the QC overlay only; absent -> the
         overlay is drawn on a blank canvas (autofrap() does not know
-        which channel(s) the detector used). Default: composed with
-        detection.build_detector - cellpose on the server
-        (CELLPOSE_SERVER_URL), SURVEY_CHANNEL, left-half stimulation
-        mask, the channel itself as visualization; for testing without
-        the server: detection.build_detector(nd2_helpers.read_channel,
-        detection.dummy_detect_objects)
+        which channel(s) the detector used). Default: use
+        :func:`default_detector` (cellpose on the server,
+        ``SURVEY_CHANNEL``, left-half stimulation mask). For testing
+        without the server: ``default_detector(dummy_detect_objects)``.
     frap_oc: str
         optical configuration to activate before each stimulation
     iou_threshold: float
@@ -183,21 +229,8 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         unlikely to succeed
     """
 
-    # TODO: as single-FOV autofrap usually gets called from the multi-position wrapper
-    # don't create default detector here but outside
-    # may be fine for testing at the moment, but remove for final version
-
     if detection_fun is None:
-        # cellpose on the server, SURVEY_CHANNEL, left-half mask;
-        # the channel itself as visualization (2D -> grayscale in
-        # the QC overlay)
-        detection_fun = detection.build_detector(
-            partial(nd2_helpers.read_channel, channel=SURVEY_CHANNEL),
-            partial(detection.remote_detect_objects,
-                    server_url=CELLPOSE_SERVER_URL),
-            stim_mask_fun=_half_object_stim_mask,
-            visualization_fun=lambda image: image,
-        )
+        detection_fun = default_detector()
 
     os.makedirs(out_dir, exist_ok=True)
     if file_prefix is None:
@@ -624,12 +657,7 @@ if __name__ == '__main__':
                                server_url=CELLPOSE_SERVER_URL)
     else:
         detector_fun = detection.dummy_detect_objects
-    detection_fun = detection.build_detector(
-        partial(nd2_helpers.read_channel, channel=SURVEY_CHANNEL),
-        detector_fun,
-        stim_mask_fun=_half_object_stim_mask,
-        visualization_fun=lambda image: image,
-    )
+    detection_fun = default_detector(detector_fun)
 
     autofrap_grid(a.nis, a.out, nx=a.nx, ny=a.ny, spacing=a.spacing,
                   settle_s=a.settle, return_to_start=not a.no_return,
