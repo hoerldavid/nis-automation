@@ -53,14 +53,15 @@ from functools import partial
 import numpy as np
 from calmutils.segmentation import merge_label_slices
 
-# repo root (for nis_util) — this script lives one level down in autofrap/
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Fallback: when run directly as a script (not through the package),
+# the repo root isn't on sys.path. __init__.py handles this when
+# imported as 'import autofrap', but direct execution needs it too.
+_here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _here not in sys.path:
+    sys.path.insert(0, _here)
 
-import detection
-import mask_utils
-import nd2_helpers
-import nis_util
-import qc
+import nis_util  # root-level module
+from autofrap import detection, mask_utils, nd2_helpers, qc
 
 # IoU threshold for matching object labels between consecutive
 # survey images (see merge_label_slices)

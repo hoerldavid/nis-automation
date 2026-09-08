@@ -10,19 +10,15 @@ and the polygons mask_to_polygon sends to NIS.
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))  # autofrap/
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, ROOT)
 
 import matplotlib.pyplot as plt
 import numpy as np
 import tifffile
 
-import detection
-import mask_utils
-import qc
+from autofrap import detection, mask_utils, qc
 from autofrap import next_stimulatable_cell
-
-ROOT = os.path.dirname(os.path.dirname(HERE))
 IMAGE = os.path.join(ROOT, '0013_ch1.tif')
 LABELS = os.path.join(ROOT, '0013_ch1_cp_masks.tif')
 

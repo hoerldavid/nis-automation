@@ -15,11 +15,10 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import nd2_helpers
-
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, ROOT)
+
+from autofrap import nd2_helpers
 TOL_UM = 5.0
 
 failures = 0

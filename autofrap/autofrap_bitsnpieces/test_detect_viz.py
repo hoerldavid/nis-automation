@@ -12,13 +12,12 @@ import os
 import sys
 import warnings
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))  # autofrap/
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, ROOT)
 
 import numpy as np
 
-import detection
-import mask_utils
+from autofrap import detection, mask_utils
 
 FAILURES = []
 

@@ -41,7 +41,7 @@ file), pass it straight to autofrap() instead.
 """
 import warnings
 
-from mask_utils import half_object_stim_mask, relabel_by_distance, shuffle_labels
+from autofrap.mask_utils import half_object_stim_mask, relabel_by_distance, shuffle_labels
 import numpy as np
 
 

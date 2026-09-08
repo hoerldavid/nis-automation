@@ -13,16 +13,15 @@ import shutil
 import sys
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, ROOT)
 
 import numpy as np
 import requests
 
 import autofrap
-import detection
 import nis_util
-
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from autofrap import detection
 REAL_SURVEY = os.path.join(ROOT, 'test_acquisitions',
                            'nuclei_20260901_110410.nd2')
 NIS = 'fake_nis'

@@ -8,11 +8,9 @@ import os
 import sys
 import time
 
-# repo root (for nis_util) + autofrap/ (for the autofrap module) —
-# this script lives two levels down in autofrap/
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
-sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+# repo root (for import autofrap; nis_util accessible via __init__.py sys.path fix)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, ROOT)
 
 import nis_util
 from autofrap import grid_positions

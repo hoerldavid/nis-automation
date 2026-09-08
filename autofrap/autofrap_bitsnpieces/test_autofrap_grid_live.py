@@ -13,11 +13,9 @@ Output: test_acquisitions/autofrap_grid/<stamp>/fovNN/
 import os
 import sys
 
-# repo root (for nis_util) + autofrap/ itself (for autofrap/detection as
-# script-dir siblings) — this script lives two levels down in autofrap/
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
-sys.path.insert(0, os.path.dirname(HERE))
+# repo root (for import autofrap + nis_util via __init__.py sys.path fix)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, ROOT)
 
 import autofrap
 
