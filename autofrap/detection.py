@@ -47,6 +47,13 @@ filter_function is called *after* the detector and *before*
 clear_border/relabelling — it works on the raw detector IDs so the
 caller can use the exact label map from the detector (e.g. reference
 the detector's label IDs when computing per-cell marker intensity).
+
+**Custom detector file** (for ``autofrap_grid --detector FILE``):
+any ``.py`` file that defines ``detection_fun`` — a callable with
+the ``build_detector`` return signature
+(`survey_file -> (labels[, mask[, viz]])`). The runner imports the
+file and uses ``detection_fun`` directly. See
+``autofrap/autofrap_bitsnpieces/example_detector.py``.
 """
 import warnings
 
@@ -430,6 +437,58 @@ def cell_mask(labels, cell_id, stimulation_mask=None):
     if stimulation_mask is None:
         return labels == cell_id
     return (labels == cell_id) & stimulation_mask
+
+
+def load_detector_file(path):
+    """
+    import a user-supplied detector file and return its ``detection_fun``
+
+    The file must define ``detection_fun: survey_file -> (labels[, mask[, viz]])``
+    with the same return signature as :func:`build_detector`.
+
+    Parameters
+    ----------
+    path: str
+        path to a ``.py`` file that defines ``detection_fun``
+
+    Returns
+    -------
+    detection_fun: callable
+        the ``detection_fun`` exported from the file
+
+    Examples
+    --------
+    A simple detector file (see ``example_detector.py``):
+
+        # my_detector.py
+        from autofrap.detection import dummy_detect_objects
+        from autofrap.mask_utils import half_object_stim_mask
+
+        def detection_fun(f):
+            labels = dummy_detect_objects(np.zeros((100, 100)))
+            mask = half_object_stim_mask(labels)
+            return labels, mask
+
+    Usage from the CLI:
+
+        autofrap_grid --detector my_detector.py ...
+    """
+    import importlib.util
+    import os
+
+    name = os.path.splitext(os.path.basename(path))[0]
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f'could not load detector file: {path}')
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    detection_fun = getattr(mod, 'detection_fun', None)
+    if detection_fun is None or not callable(detection_fun):
+        raise ValueError(
+            f'detector file {path} must define a callable "detection_fun"; '
+            f'found {type(detection_fun).__name__}')
+    return detection_fun
 
 
 if __name__ == '__main__':

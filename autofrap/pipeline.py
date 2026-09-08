@@ -725,17 +725,26 @@ if __name__ == '__main__':
                         '[default: %(default)s]')
     p.add_argument('--no-return', action='store_true',
                    help="don't move back to the start position after the run")
-    p.add_argument('--detector', choices=['cellpose-remote', 'dummy'],
-                   default='cellpose-remote',
-                   help='detection backend [default: %(default)s]')
+    p.add_argument('--detector', default='cellpose-remote',
+                   help='detection backend: "cellpose-remote", "dummy", or '
+                        'path to a .py file defining detection_fun '
+                        '[default: %(default)s]')
     a = p.parse_args()
 
-    if a.detector == 'cellpose-remote':
-        detector_fun = partial(detection.remote_detect_objects,
-                               server_url=CELLPOSE_SERVER_URL)
+    # Build detection_fun from the --detector argument
+    detector_path = a.detector
+    if detector_path in ('cellpose-remote', 'dummy'):
+        # Built-in backends: compose with default_detector
+        if detector_path == 'cellpose-remote':
+            detector_fun = partial(detection.remote_detect_objects,
+                                   server_url=CELLPOSE_SERVER_URL)
+        else:
+            detector_fun = detection.dummy_detect_objects
+        detection_fun = default_detector(detector_fun)
     else:
-        detector_fun = detection.dummy_detect_objects
-    detection_fun = default_detector(detector_fun)
+        # User-supplied detector file: import and use directly
+        print(f'loading detector from: {detector_path}', flush=True)
+        detection_fun = detection.load_detector_file(detector_path)
 
     autofrap_grid(a.nis, a.out, nx=a.nx, ny=a.ny, spacing=a.spacing,
                   settle_s=a.settle, return_to_start=not a.no_return,
