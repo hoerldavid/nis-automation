@@ -1,6 +1,6 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **TODO #20 + #23 + #29 + #30** (no microscope): `default_detector()` helper for detection pipeline composition; degenerate cell mask inner re-pick loop added to `autofrap()`; one-region-per-label helpers added to `mask_utils.py`; `autofrap/` restructured as a proper Python package with `__init__.py`.
+_Last updated: **TODO #15** (no microscope): `spiral_positions()` added to `grid_utils.py` — center-out square spiral for stage visit ordering, 12 tests, 4 visual plots. `autofrap_grid()` already accepts a `positions` list, so wiring it in is just `positions=spiral_positions(start, fov, spacing)`.
 needed): `save_qc_overlay(image, labels, path, stimulation_mask=None,
 cell_id=None, cell_poly=None, stim_poly=None, caption=None, dpi=100)`
 renders one PNG, layers bottom→top with **explicit zorder**: image →
@@ -656,11 +656,10 @@ colleagues.
     entry). Remaining: wire the check into `autofrap()` startup (stop if
     Time/XY/Large Image active; Lambda must be active — leave channel
     correctness to the user), and revisit channel count/names separately.
-15. **Spiral visit ordering (design goal 2)**: the grid is done; a
-    center-out square spiral around the start position is the proposed
-    upgrade. `autofrap_grid` already accepts a precomputed `positions`
-    list, so only a spiral generator is missing (calmutils has no spiral
-    function yet, only `centered_tiles` with `snake_rows` serpentine order).
+15. ~~**Spiral visit ordering (design goal 2)**~~ — **done**: `spiral_positions(position,
+    fov, spacing, max_positions=None)` in `grid_utils.py`. Square spiral starting at
+    center, counter-clockwise, spacing in FOV units. `autofrap_grid` already accepts a
+    `positions` list, so wiring it in is just `positions=spiral_positions(start, fov, spacing)`. 12 unit tests + 4 visual plots.
 16. **Stimulation ROI groups S1–S3 (low priority)**: `ChangeROIType(3)` puts
     the ROI into stimulation group 1 (label 'S1:<n>'); there are 3 groups
     (S1–S3). How to select/change the group is unknown — no group parameter in

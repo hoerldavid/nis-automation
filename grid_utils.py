@@ -9,6 +9,98 @@ NIS_Macro_Acquisition.ipynb).
 from math import ceil
 
 
+def spiral_positions(position, fov, spacing, max_positions=None):
+    """
+    Generate stage positions in a square spiral around a center point.
+
+    Positions are spaced by ``spacing`` FOV units, starting at
+    ``position`` and spiraling outward counter-clockwise.  This provides
+    a center-out visit order that visits nearby cells before distant
+    ones — useful for experiments where time matters (e.g. cell
+    viability degrades over time).
+
+    Parameters
+    ----------
+    position : array-like (x, y[, z])
+        Starting position (µm); the spiral center.
+    fov : float
+        Field of view size in µm (assumes square FOV; for rectangular
+        FOV, pass the mean of fov_x and fov_y).
+    spacing : float
+        Distance between adjacent positions in FOV units:
+        1 = touching, <1 = overlapping, >1 = gap.
+    max_positions : int, optional
+        Maximum number of positions to generate.  None = unlimited
+        (spiral grows until the caller stops iterating).
+
+    Returns
+    -------
+    positions : list of 2-tuples (x, y)
+        Stage coordinates in µm.
+
+    Examples
+    --------
+    5×5 FOV grid (spacing=1):
+
+        positions = spiral_positions(start, fov, 1.0, max_positions=25)
+
+    With overlap (spacing=0.8, 13 positions):
+
+        positions = spiral_positions(start, fov, 0.8)
+
+    The first few positions form this pattern (n = layer number):
+
+        n=0   (center)
+        n=1   8 positions around center
+        n=2   16 positions around n=1
+        ...
+    """
+    x0, y0 = position[:2]
+    step = spacing * fov
+
+    positions = []
+    count = 0
+
+    # Layer 0: just the center
+    positions.append((x0, y0))
+    count += 1
+    if max_positions is not None and count >= max_positions:
+        return positions
+
+    # Layers 1, 2, 3, ...
+    n = 1
+    while True:
+        # Right edge, going up: (n, -(n-1)) → (n, n)
+        for y in range(-(n - 1), n + 1):
+            if max_positions is not None and count >= max_positions:
+                return positions
+            positions.append((x0 + n * step, y0 + y * step))
+            count += 1
+
+        # Top edge, going left: (n-1, n) → (-n, n)
+        for x in range(n - 1, -n - 1, -1):
+            if max_positions is not None and count >= max_positions:
+                return positions
+            positions.append((x0 + x * step, y0 + n * step))
+            count += 1
+
+        # Left edge, going down: (-n, n-1) → (-n, -n)
+        for y in range(n - 1, -n - 1, -1):
+            if max_positions is not None and count >= max_positions:
+                return positions
+            positions.append((x0 - n * step, y0 + y * step))
+            count += 1
+
+        # Bottom edge, going right: (-n+1, -n) → (n, -n)
+        for x in range(-n + 1, n + 1):
+            if max_positions is not None and count >= max_positions:
+                return positions
+            positions.append((x0 + x * step, y0 - n * step))
+            count += 1
+
+        n += 1
+
+
 def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True):
     """
     generate a grid of coordinates at which to do a tiled acquisition
