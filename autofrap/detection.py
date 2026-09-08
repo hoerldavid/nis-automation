@@ -27,6 +27,10 @@ examples in its docstring). Parts:
                                 RGB(A) for the QC overlay (e.g.
                                 lambda image: image, or a channel
                                 picker for a multi-channel load)
+  - filter_function             (labels, image) -> set/list of "good"
+                                label IDs; labels not in this set
+                                are zeroed out (e.g. expression
+                                filtering — see below)
 
 Image convention: multi-channel images are (c, y, x) (scientific
 format); the only (y, x, 3/4) array in the pipeline is the RGB(A)
@@ -38,6 +42,11 @@ that fits image -> labels (+ mask / viz as above); for a fully custom
 survey_file -> (labels[, mask[, viz]]) callable (e.g. a visualization
 that depends on the labels, or an input that is not a survey nd2
 file), pass it straight to autofrap() instead.
+
+filter_function is called *after* the detector and *before*
+clear_border/relabelling — it works on the raw detector IDs so the
+caller can use the exact label map from the detector (e.g. reference
+the detector's label IDs when computing per-cell marker intensity).
 """
 import warnings
 
@@ -169,8 +178,8 @@ def _warn_multi_region(labels, stimulation_mask):
 
 
 def build_detector(load_fun, detector_fun, relabel='distance',
-                   clear_border=True, stim_mask_fun=None,
-                   visualization_fun=None):
+                   clear_border=True, filter_function=None,
+                   stim_mask_fun=None, visualization_fun=None):
     """
     compose a detection_fun for autofrap()
 
@@ -180,13 +189,15 @@ def build_detector(load_fun, detector_fun, relabel='distance',
     build_detector() applies only the stable housekeeping and the
     contract checks:
 
-        image  = load_fun(survey_file)        2D (y, x) or (c, y, x)
-        labels = detector_fun(image)          2D (y, x), int
-        mask   = stim_mask_fun(labels, image) 2D (if given)
-        viz    = visualization_fun(image)     2D or (y, x, 3/4)
-                                                 (if given)
+        image   = load_fun(survey_file)         2D (y, x) or (c, y, x)
+        labels  = detector_fun(image)           2D (y, x), int
+        mask    = stim_mask_fun(labels, image)  2D (if given)
+        viz     = visualization_fun(image)      2D or (y, x, 3/4)
+                                                  (if given)
 
     Housekeeping on labels, in this order:
+      - filter_function (if given): keep only the label IDs returned
+        by the callable; labels not in the set are zeroed
       - clear_border=True: discard objects touching the image border
         (clear_border removes the whole label, not just the border
         pixels) and renumber to a gap-free 1..N
@@ -237,6 +248,34 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         build_detector(load, detect_expressing, relabel=None,
                        visualization_fun=lambda image: image[0])
 
+    Expression filter (keep only cells with marker intensity above
+    threshold — filter_function gets the raw detector labels + the
+    loaded image, uses regionprops to check intensity, returns
+    "good" label IDs):
+
+        from skimage.measure import regionprops
+
+        def load(f):
+            return np.stack([
+                nd2_helpers.read_channel(f, 0),  # DAPI
+                nd2_helpers.read_channel(f, 1),  # marker
+            ], axis=0)
+
+        def filter_expressing(labels, image):
+            good = []
+            for rp in regionprops(labels, intensity_image=image[1]):
+                if rp.mean_intensity > 500:
+                    good.append(rp.label)
+            return good
+
+        detection_fun = build_detector(
+            load,
+            partial(remote_detect_objects, server_url=...),
+            filter_function=filter_expressing,
+            stim_mask_fun=lambda labels, image:
+                half_object_stim_mask(labels),
+            visualization_fun=lambda image: image[0])
+
     Parameters
     ----------
     load_fun: callable
@@ -257,6 +296,12 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         photostimulation (see half_object_stim_mask); receives the
         labels *after* clear_border/relabelling; None: no mask,
         whole-cell FRAP
+    filter_function: callable or None
+        (labels, image) -> set or list of "good" label IDs; labels
+        not in this set are zeroed out (relabel_sequential then
+        renumbers the remaining IDs gap-free). Called *after* the
+        detector and *before* clear_border/relabelling — the caller
+        gets the exact raw detector labels. None: no filtering.
     visualization_fun: callable or None
         image -> 2D (y, x) or (y, x, 3/4) RGB(A) image for the QC
         overlay; receives the same loaded image the detector got
@@ -283,6 +328,14 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         if labels.shape != image.shape[-2:]:  # 2D (y, x) or (c, y, x)
             raise ValueError(f'labels/image shape mismatch: '
                              f'{labels.shape} vs {image.shape}')
+
+        # filter: keep only labels in the set returned by
+        # filter_function; labels not in the set are zeroed.
+        # np.isin needs a list (sets produce object-dtype arrays
+        # that don't match integer label maps).
+        if filter_function is not None:
+            good = filter_function(labels, image)
+            labels = np.isin(labels, list(good)) * labels
 
         if clear_border:
             from skimage.segmentation import (clear_border as _clear,

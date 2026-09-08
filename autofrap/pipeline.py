@@ -69,7 +69,7 @@ from skimage.measure import regionprops
 CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'
 SURVEY_CHANNEL = 0
 
-def default_detector(detector_fun=None):
+def default_detector(detector_fun=None, filter_function=None):
     """
     compose the default detection pipeline
 
@@ -83,6 +83,9 @@ def default_detector(detector_fun=None):
     detector_fun: callable, optional
         image -> labels; defaults to ``remote_detect_objects`` on
         ``CELLPOSE_SERVER_URL``.
+    filter_function: callable, optional
+        (labels, image) -> set/list of "good" label IDs; passed through
+        to :func:`~autofrap.detection.build_detector`.
 
     Returns
     -------
@@ -112,6 +115,7 @@ def default_detector(detector_fun=None):
     return detection.build_detector(
         partial(nd2_helpers.read_channel, channel=SURVEY_CHANNEL),
         detector_fun,
+        filter_function=filter_function,
         stim_mask_fun=_half_object_stim_mask,
         visualization_fun=lambda image: image,
     )
