@@ -316,23 +316,46 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                 )
                 break
 
+            # Inner loop: if the picked cell has no polygon, skip it and
+            # try the next one in the same survey (defensive; nearly
+            # unreachable with current mask logic).
+            skipped = set()
+            fovd_done = False
+            while True:
+                cell_poly = mask_utils.mask_to_polygon(
+                    detection.cell_mask(cur_labels, cell)
+                )
+                stim_poly = mask_utils.mask_to_polygon(
+                    detection.cell_mask(cur_labels, cell, stimulation_mask)
+                )
+
+                if cell_poly and stim_poly:
+                    break  # found a viable cell
+
+                # This cell can't be used — skip it and try the next.
+                skipped.add(cell)
+                print(
+                    f'[c{cycle:02d}] cell {cell}: no polygon, skipping'
+                )
+                cell = next_stimulatable_cell(
+                    cur_labels, stimulated | skipped, stimulation_mask
+                )
+                if cell is None:
+                    print(
+                        f'[c{cycle:02d}] all {n_obj} objects have no '
+                        'polygon -> move to next FOV'
+                    )
+                    fovd_done = True
+                    break
+
+            if fovd_done:
+                break  # exit the cycle loop, go to next FOV
+
             print(f'[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}')
 
             # 5. ROIs + stimulation run: whole cell (saved for downstream
             #    analysis) + stimulation region, the latter set to
             #    stimulation mode
-            cell_poly = mask_utils.mask_to_polygon(
-                detection.cell_mask(cur_labels, cell)
-            )
-            stim_poly = mask_utils.mask_to_polygon(
-                detection.cell_mask(cur_labels, cell, stimulation_mask)
-            )
-
-            # TODO: when we can't create cell / stimulation mask, don't error
-            # instead try the next cell in current survey? 
-
-            if not cell_poly or not stim_poly:
-                raise RecoverableError(f'no polygon for cell {cell}')
 
             # QC artifact before the stimulation run, so it is on disk
             # even if the NIS part of the cycle fails; a rendering

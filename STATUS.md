@@ -1,6 +1,6 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **TODO #20 + #29 + #30** (no microscope): `default_detector()` helper extracted to compose the detection pipeline (`autofrap()` default and CLI use it, re-exported as public API); one-region-per-label helpers added to `mask_utils.py`; `autofrap/` restructured as a proper Python package with `__init__.py`.
+_Last updated: **TODO #20 + #23 + #29 + #30** (no microscope): `default_detector()` helper for detection pipeline composition; degenerate cell mask inner re-pick loop added to `autofrap()`; one-region-per-label helpers added to `mask_utils.py`; `autofrap/` restructured as a proper Python package with `__init__.py`.
 needed): `save_qc_overlay(image, labels, path, stimulation_mask=None,
 cell_id=None, cell_poly=None, stim_poly=None, caption=None, dpi=100)`
 renders one PNG, layers bottom→top with **explicit zorder**: image →
@@ -711,14 +711,13 @@ colleagues.
     parameter + Raises, `detection.py` module docstring); the design doc
     left as-is (it already lists the label map as the only non-optional
     item).
-23. **Degenerate cell mask: skip the cell, try the next one in the same
-    survey** instead of `RecoverableError('no polygon')`: inner re-pick loop
-    within the cycle (no re-acquisition), a separate `skipped` set (not
-    `stimulated` — those cells were never FRAPed) passed as
-    `stimulated | skipped` to `next_stimulatable_cell`, warning + stop
-    message updated. Nearly unreachable today (a picked cell has ≥1 pixel
-    in both masks by construction, and `mask_to_polygon` is non-empty even
-    for 1-px masks) — defensive; can't be live-verified until a real case.
+23. ~~**Degenerate cell mask: skip the cell, try the next one in the same
+    survey**~~ — **done**: inner re-pick loop in `autofrap()` — if the picked
+    cell has no polygon, skip it and try the next (`skipped` set passed as
+    `stimulated | skipped` to `next_stimulatable_cell`). When all cells in a
+    FOV lack polygons the cycle loop breaks (`fovd_done`), the next survey
+    cycle is attempted. Nearly unreachable today (cells have ≥1 pixel in both
+    masks by construction); defensive; can't be live-verified until a real case.
 24. **Survey document already open after the ND run**: `ND_RunExperiment(1)`
     ("the resulting file is opened after the experiment finishes") — so the
     `open_image` right after `run_current_nd_experiment` is likely a
