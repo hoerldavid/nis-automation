@@ -439,23 +439,17 @@ colleagues.
   server. Note: saving the **frozen live view** (`ImageSaveAs`, current doc
   `"Frozen"`) silently produces no file — grab a single-frame ND acquisition
   instead (used to acquire `nuclei_20260901_110410.nd2`).
-- **Known limitation — cross-cycle label-id drift (TODO #13)**: the
-  `stimulated` set is expressed in cycle-1 label numbering and relies on
-  `merge_label_slices` keeping that numbering stable. It re-baselines its
-  first input via `relabel_sequential`, so if a cell *vanishes* in an
-  intermediate cycle, the gap it leaves shifts the ids of all objects above
-  it (in scan order) in the next merge — `stimulated` then points at the
-  wrong cells: a previously FRAPed cell can be FRAPed twice, and an
-  un-FRAPed cell can be skipped (id collision). Verified with a synthetic
-  3-cycle trace (A=1, X=2; X vanishes in c2 → new Y gets id 3 and is FRAPed;
-  c3 re-baseline shifts Y 3→2 ∉ `stimulated` → Y FRAPed again, while
-  reappearing X collides with Y's old id and is skipped). **Needs ≥3
-  cycles/FOV** (cycle 1 always FRAPs the smallest id, which can never
-  shift), so it cannot fire in the intended 1–2-cycles/FOV experiments;
-  consequence is bounded (one cell double-bleached at worst). Fix options if
-  longer multi-cycle runs are ever needed: exclude FRAPed cells by centroid
-  (id-independent, preferred) or match without re-baselining (calmutils'
-  private `_correct_next_plane`).
+- **Cross-cycle matching** (TODO #13 resolved): replaced
+  `merge_label_slices` (cycle-1 ID numbering + re-baselining) with
+  centroid-based matching against an accumulated "already-imaged" map
+  (`imaged_centroids`). Each new cycle matches detected objects to the
+  map via `regionprops` centroids (y, x numpy order);
+  ``centroid_threshold`` defaults to ``'auto'`` which uses each cell's
+  ``equivalent_diameter_area`` as the matching radius — objects whose
+  centroid lies within one equivalent-diameter of a previously
+  stimulated cell are considered the same cell. Matched IDs form a
+  skip set passed to `next_stimulatable_cell`. No label remapping, no
+  ID shifts, no re-baselining — id-independent from cycle 1 onward.
 - `next_cell()` merged into `next_stimulatable_cell(labels, stimulated,
   stimulation_mask=None)`: the stimulation mask is optional — the "has
   stimulation-eligible pixels" check is only applied when a mask is given.
@@ -620,12 +614,16 @@ colleagues.
     ROI visible, label prefixed 'B:'/'R:'/'S1:' (background/reference/stimulation)
     — the re-check also struck the 'type 1 hides the ROI' note (not
     reproducible). TODO comments resolved in `nis_util.py`.
-13. **Cross-cycle label-id drift in `autofrap()`** (needs ≥3 cycles/FOV, so
-    not an issue for the intended 1–2 cycles/FOV; see Part 3 note): if a cell
-    vanishes between cycles, `merge_label_slices`' re-baselining shifts the
-    ids of objects above the gap and the `stimulated` set points at the wrong
-    cells (a cell can be FRAPed twice). For longer multi-cycle runs: exclude
-    FRAPed cells by centroid (preferred, id-independent) instead of label id.
+13. ~~**Cross-cycle label-id drift in `autofrap()`**~~ — **done**:
+    replaced `merge_label_slices` + cycle-1 ID numbering with centroid-
+    based matching against an accumulated "already-imaged" map
+    (`imaged_centroids`, y,x numpy order). Each cycle matches detected
+    objects to the map via `regionprops` centroids; `centroid_threshold`
+    defaults to ``'auto'`` (per-cell ``equivalent_diameter_area`` as
+    matching radius). Matched IDs form a skip set passed to
+    `next_stimulatable_cell`. No remapping, no re-baselining, no ID
+    shifts — id-independent from cycle 1. See `test_centroid_matching.py`
+    (12 tests).
 14. ~~**Startup check of the survey ND template (design goal 1a)**~~ — **done**:
     `_check_nd_acq_template(tabs)` pure logic + `_run_nd_acq_check(nis_exe)` wrapper
     in `pipeline.py`; called at the top of `autofrap_grid()` before any acquisition.
@@ -771,7 +769,7 @@ argparse wrapper for `autofrap_grid`, args mirror the function parameters 1:1
 | `autofrap/autofrap_bitsnpieces/overview_scan.py` | Part 1: grid scan script (move + capture per position) |
 | `autofrap/autofrap_bitsnpieces/inspect_microscope.ipynb` | notebook walking through the `get_*` functions + FOV |
 | `autofrap/autofrap_bitsnpieces/stimulation_loop.py` | colleague's sketch (source of the label-remapping logic, now ported into `autofrap.py`) |
-| `autofrap/autofrap_bitsnpieces/test_merge_label_slices.py` | colleague's sketch: `merge_label_slices` test |
+| `autofrap/autofrap_bitsnpieces/test_centroid_matching.py` | unit tests for centroid-based cross-cycle cell matching: `regionprops` centroid extraction (y,x order), `equivalent_diameter_area`-based auto mode, numeric override, matching vs non-matching centroids, `next_stimulatable_cell` integration, roundtrip; 12 tests |
 | `autofrap/autofrap_bitsnpieces/split_mask_along_axis_equal_area.py` | mask utility: split a label mask into two equal-area halves along an axis (skimage); ported into `mask_utils.py` as `split_mask_equal_area` (the pipeline copy is canonical) |
 | `autofrap/autofrap_bitsnpieces/test_stim_save.py` | one-off test script (save-current-document probe; cleanup candidate) |
 | `autofrap/autofrap_bitsnpieces/test_cellpose.py` | one-off cellpose test: local model or `--server URL` (remote-client A/B), reports objects + saves image/label previews (run: `python autofrap/autofrap_bitsnpieces/test_cellpose.py <nd2> [channel] [--server URL]`) |

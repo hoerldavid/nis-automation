@@ -15,9 +15,9 @@ Per cycle:
      map is required (a bare label map is accepted); without a
      stimulation mask the whole cell is FRAPed, the visualization is
      used for the QC overlay only
-  3. remap object labels against the previous cycle (IoU matching)
-     and pick the smallest not-yet-stimulated label that has at least
-     one pixel in the stimulation mask (or any pixel, without one)
+  3. match detected objects to the accumulated "already-imaged" map
+     via centroid distance; pick the smallest unmatched label that
+     has at least one pixel in the stimulation mask
   4. compute the ROI polygons and save a QC overlay PNG
      (<file_prefix>_cycle<NN>_survey_qc.png: detection, FRAP mask, selected
      cell, polygons as sent to NIS — on a blank canvas when the
@@ -33,6 +33,7 @@ Per cycle:
      stimulation ROI is part of the saved file)
   8. delete both ROIs (so they don't linger for the next cycle) and
      close the FRAP + survey documents
+  9. add the stimulated cell's centroid to the "already-imaged" map
 -> next cycle (the ND experiment definition restores the survey OC)
 
 The loop stops when every detected object has been stimulated, when
@@ -51,7 +52,6 @@ import time
 from functools import partial
 
 import numpy as np
-from calmutils.segmentation import merge_label_slices
 
 # Fallback: when run directly as a script (not through the package),
 # the repo root isn't on sys.path. __init__.py handles this when
@@ -62,10 +62,7 @@ if _here not in sys.path:
 
 import nis_util  # root-level module
 from autofrap import detection, mask_utils, nd2_helpers, qc
-
-# IoU threshold for matching object labels between consecutive
-# survey images (see merge_label_slices)
-IOU_THRESHOLD = 0.3
+from skimage.measure import regionprops
 
 # default detector: cellpose (cpdino-vitb) on the GPU server
 # (cellpose_server.py), DAPI channel
@@ -219,7 +216,7 @@ def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
 
 
 def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
-             frap_oc='FRAPPA', iou_threshold=IOU_THRESHOLD,
+             frap_oc='FRAPPA', centroid_threshold='auto',
              file_prefix=None):
     """
     run the auto-FRAP loop
@@ -246,8 +243,13 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         without the server: ``default_detector(dummy_detect_objects)``.
     frap_oc: str
         optical configuration to activate before each stimulation
-    iou_threshold: float
-        IoU threshold for matching labels between cycles
+    centroid_threshold: float or 'auto'
+        centroid distance threshold (px) for matching cells across
+        consecutive cycles.  ``'auto'`` (default): uses each cell's
+        ``equivalent_diameter`` from ``regionprops`` — a matched cell
+        is one whose centroid lies within one equivalent-diameter of
+        a previously stimulated cell's centroid.  A numeric value
+        overrides this heuristic with a fixed radius.
     file_prefix: str, optional
         prefix for the per-cycle file names
         (<file_prefix>_cycle<NN>_survey.nd2, ...); default: a timestamp
@@ -276,8 +278,7 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
     os.makedirs(out_dir, exist_ok=True)
     if file_prefix is None:
         file_prefix = time.strftime('%Y%m%d_%H%M%S')
-    stimulated = set()
-    prev_labels = None
+    imaged_centroids = []  # list of (y, x) tuples — centroids of stimulated cells
     results = []
 
     cycle = 0
@@ -326,29 +327,30 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             viz_image = det[2] if len(det) > 2 else None
             n_obj = len(np.unique(labels)) - 1
 
-            # 4. pick the next unused cell with stimulation-eligible pixels
-            if prev_labels is None:
-                cur_labels = labels
+            # 4. match detected objects to the "already-imaged" map
+            # via centroid distance; pick the smallest unmatched label
+            # that has at least one pixel in the stimulation mask
+            if imaged_centroids:
+                # build a set of current-cycle labels that match an
+                # already-imaged cell (centroid-based, id-independent).
+                # In 'auto' mode the threshold is the cell's own
+                # equivalent_diameter; a numeric value is used as-is.
+                matched = set()
+                for rp in regionprops(labels):
+                    cy, cx = rp.centroid  # (y, x) — numpy order
+                    # determine per-cell matching radius
+                    if centroid_threshold == 'auto':
+                        radius = rp.equivalent_diameter_area
+                    else:
+                        radius = centroid_threshold
+                    for iy, ix in imaged_centroids:
+                        if (cy - iy)**2 + (cx - ix)**2 < radius**2:
+                            matched.add(rp.label)
+                            break
             else:
-                # relabel the new detection into the previous cycle's
-                # numbering (merge_label_slices adjusts the *new* labels to
-                # the old ones; new objects get fresh IDs above the previous
-                # max) so the `stimulated` set, expressed in cycle-1
-                # numbering, stays valid unchanged
-                # caveat: if a cell *vanishes* between cycles, its id leaves
-                # a gap and merge_label_slices' re-baselining
-                # (relabel_sequential on the previous map) shifts the ids of
-                # everything above the gap, so `stimulated` can point at the
-                # wrong cells (double FRAP). Benign for the intended
-                # <=2 cycles/FOV; for longer runs, exclude FRAPed cells by
-                # centroid instead of label id (see STATUS.md, TODO #13)
-                _, cur_labels = merge_label_slices(
-                    [prev_labels, labels], iou_threshold=iou_threshold
-                )
+                matched = set()
 
-            cell = next_stimulatable_cell(
-                cur_labels, stimulated, stimulation_mask
-            )
+            cell = next_stimulatable_cell(labels, matched, stimulation_mask)
 
             if cell is None:
                 print(
@@ -364,10 +366,10 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             fovd_done = False
             while True:
                 cell_poly = mask_utils.mask_to_polygon(
-                    detection.cell_mask(cur_labels, cell)
+                    detection.cell_mask(labels, cell)
                 )
                 stim_poly = mask_utils.mask_to_polygon(
-                    detection.cell_mask(cur_labels, cell, stimulation_mask)
+                    detection.cell_mask(labels, cell, stimulation_mask)
                 )
 
                 if cell_poly and stim_poly:
@@ -379,7 +381,7 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                     f'[c{cycle:02d}] cell {cell}: no polygon, skipping'
                 )
                 cell = next_stimulatable_cell(
-                    cur_labels, stimulated | skipped, stimulation_mask
+                    labels, matched | skipped, stimulation_mask
                 )
                 if cell is None:
                     print(
@@ -403,7 +405,7 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             # problem must not abort the run
             try:
                 qc.save_qc_overlay(
-                    viz_image, cur_labels,
+                    viz_image, labels,
                     os.path.join(out_dir, f'{file_prefix}_'
                                  f'{CYCLE_PREFIX}{cycle:02d}_survey_qc.png'),
                     stimulation_mask=stimulation_mask, cell_id=cell,
@@ -462,8 +464,11 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             cell_roi = stim_roi = None
 
             results.append((cycle, cell, survey_file, frap_file))
-            prev_labels = cur_labels
-            stimulated.add(cell)
+            # add the stimulated cell's centroid to the already-imaged map
+            for rp in regionprops(labels):
+                if rp.label == cell:
+                    imaged_centroids.append(rp.centroid)  # (y, x)
+                    break
         except (RecoverableError, NonRecoverableError):
             raise
         except KeyError as e:
@@ -532,7 +537,8 @@ def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
 def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                   settle_s=2.0, return_to_start=True, max_cycles=None,
                   detection_fun=None, frap_oc='FRAPPA',
-                  iou_threshold=IOU_THRESHOLD, fov_subdirs=False):
+                  centroid_threshold='auto',
+                  fov_subdirs=False):
     """
     run the autofrap() loop on every position of a stage grid, centered
     on the current stage position
@@ -570,7 +576,7 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
         settling time [s] after each stage move
     return_to_start: bool
         move back to the starting position after the last FOV
-    max_cycles, detection_fun, frap_oc, iou_threshold:
+    max_cycles, detection_fun, frap_oc, centroid_threshold:
         passed through to autofrap() unchanged
     fov_subdirs: bool
         give each FOV its own <run_stamp>/fov<NN>/ sub-directory
@@ -639,7 +645,7 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                 fov_results = autofrap(nis_exe, fov_dir, max_cycles=max_cycles,
                                        detection_fun=detection_fun,
                                        frap_oc=frap_oc,
-                                       iou_threshold=iou_threshold,
+                                       centroid_threshold=centroid_threshold,
                                        file_prefix=f'fov{i:02d}')
             except NonRecoverableError as e:
                 print(f'!!! FOV {i}: non-recoverable error: {e} '
