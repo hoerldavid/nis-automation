@@ -49,7 +49,6 @@ that continues starts the next FOV from a clean GUI state.
 import os
 import sys
 import time
-from functools import partial
 
 import numpy as np
 
@@ -61,64 +60,8 @@ if _here not in sys.path:
     sys.path.insert(0, _here)
 
 import nis_util  # root-level module
-from autofrap import detection, mask_utils, nd2_helpers, qc
+from autofrap import detection, mask_utils, qc
 from skimage.measure import regionprops
-
-# default detector: cellpose (cpdino-vitb) on the GPU server
-# (cellpose_server.py), DAPI channel
-CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'
-SURVEY_CHANNEL = 0
-
-def default_detector(detector_fun=None, filter_function=None):
-    """
-    compose the default detection pipeline
-
-    The default detector loads ``SURVEY_CHANNEL``, runs the given
-    ``detector_fun`` (cellpose on the server by default, ``dummy`` for
-    testing), applies the left-half stimulation mask, and returns the
-    loaded image as visualization.
-
-    Parameters
-    ----------
-    detector_fun: callable, optional
-        image -> labels; defaults to ``remote_detect_objects`` on
-        ``CELLPOSE_SERVER_URL``.
-    filter_function: callable, optional
-        (labels, image) -> set/list of "good" label IDs; passed through
-        to :func:`~autofrap.detection.build_detector`.
-
-    Returns
-    -------
-    detection_fun: callable
-        survey_file -> (labels[, stimulation_mask[, visualization]]);
-        suitable for passing as ``detection_fun`` to :func:`autofrap`.
-
-    Examples
-    --------
-    Default (cellpose on GPU server):
-
-        detection_fun = default_detector()
-        results = autofrap(nis, out_dir, detection_fun=detection_fun)
-
-    Testing without the server:
-
-        detection_fun = default_detector(detection.dummy_detect_objects)
-        results = autofrap(nis, out_dir, detection_fun=detection_fun)
-
-    Custom detector (e.g. with a local model):
-
-        detection_fun = default_detector(my_local_detector)
-    """
-    if detector_fun is None:
-        detector_fun = partial(detection.remote_detect_objects,
-                               server_url=CELLPOSE_SERVER_URL)
-    return detection.build_detector(
-        partial(nd2_helpers.read_channel, channel=SURVEY_CHANNEL),
-        detector_fun,
-        filter_function=filter_function,
-        stim_mask_fun=_half_object_stim_mask,
-        visualization_fun=lambda image: image,
-    )
 
 
 # cycle-number tag in output file names (<prefix>_cycle01_survey.nd2);
@@ -165,12 +108,6 @@ def _run_nd_acq_check(nis_exe):
     """Pre-flight wrapper: queries NIS then validates the template."""
     tabs = nis_util.get_nd_acq_tabs(nis_exe)
     return _check_nd_acq_template(tabs)
-
-
-def _half_object_stim_mask(labels, image):
-    """stim_mask_fun adapter: half_object_stim_mask only needs the
-    labels (the build_detector() contract passes the image as well)"""
-    return mask_utils.half_object_stim_mask(labels)
 
 
 class AutofrapError(Exception):
@@ -233,7 +170,7 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         output directory for survey + FRAP files
     max_cycles: int, optional
         stop after this many cycles (default: until all cells done)
-    detection_fun: callable, optional
+    detection_fun: callable, required
         survey_file -> (labels[, stimulation_mask[, visualization]])
         or a bare label map; only the label map is required.
         stimulation_mask (FRAP sub-regions): None or absent -> the
@@ -241,10 +178,8 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         visualization (2D or RGB(A), detector-assembled, e.g.
         multi-channel): used for the QC overlay only; absent -> the
         overlay is drawn on a blank canvas (autofrap() does not know
-        which channel(s) the detector used). Default: use
-        :func:`default_detector` (cellpose on the server,
-        ``SURVEY_CHANNEL``, left-half stimulation mask). For testing
-        without the server: ``default_detector(dummy_detect_objects)``.
+        which channel(s) the detector used). A detector file is
+        loaded via :func:`detection.load_detector_file` for CLI use;
     frap_oc: str
         optical configuration to activate before each stimulation
     centroid_threshold: float or 'auto'
@@ -275,9 +210,6 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         detector/server state is suspect, OS error); further cycles are
         unlikely to succeed
     """
-
-    if detection_fun is None:
-        detection_fun = default_detector()
 
     os.makedirs(out_dir, exist_ok=True)
     if file_prefix is None:
@@ -725,26 +657,19 @@ if __name__ == '__main__':
                         '[default: %(default)s]')
     p.add_argument('--no-return', action='store_true',
                    help="don't move back to the start position after the run")
-    p.add_argument('--detector', default='cellpose-remote',
-                   help='detection backend: "cellpose-remote", "dummy", or '
-                        'path to a .py file defining detection_fun '
+    # Default: shipped cellpose remote detector
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _default_detector = os.path.join(
+        _repo_root, 'autofrap', 'detectors',
+        'cellpose_remote_detector.py')
+
+    p.add_argument('--detector', default=_default_detector,
+                   help='path to a .py file defining detection_fun '
                         '[default: %(default)s]')
     a = p.parse_args()
 
-    # Build detection_fun from the --detector argument
-    detector_path = a.detector
-    if detector_path in ('cellpose-remote', 'dummy'):
-        # Built-in backends: compose with default_detector
-        if detector_path == 'cellpose-remote':
-            detector_fun = partial(detection.remote_detect_objects,
-                                   server_url=CELLPOSE_SERVER_URL)
-        else:
-            detector_fun = detection.dummy_detect_objects
-        detection_fun = default_detector(detector_fun)
-    else:
-        # User-supplied detector file: import and use directly
-        print(f'loading detector from: {detector_path}', flush=True)
-        detection_fun = detection.load_detector_file(detector_path)
+    print(f'loading detector from: {a.detector}', flush=True)
+    detection_fun = detection.load_detector_file(a.detector)
 
     autofrap_grid(a.nis, a.out, nx=a.nx, ny=a.ny, spacing=a.spacing,
                   settle_s=a.settle, return_to_start=not a.no_return,

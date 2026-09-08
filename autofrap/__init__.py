@@ -22,9 +22,6 @@ from autofrap.pipeline import (  # noqa: E402,F401
     NonRecoverableError,
     autofrap,
     autofrap_grid,
-    default_detector,
     grid_positions,
     next_stimulatable_cell,
-    CELLPOSE_SERVER_URL,
-    SURVEY_CHANNEL,
 )

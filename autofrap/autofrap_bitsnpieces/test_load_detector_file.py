@@ -14,7 +14,7 @@ from autofrap.detection import load_detector_file
 
 # Absolute path to the example detector (avoids path doubling issues)
 EXAMPLE_DETECTOR = os.path.join(
-    ROOT, 'autofrap_bitsnpieces', 'example_detector.py')
+    ROOT, 'autofrap', 'detectors', 'example_detector.py')
 
 
 class TestLoadDetectorFile(unittest.TestCase):
@@ -24,6 +24,16 @@ class TestLoadDetectorFile(unittest.TestCase):
         """Can load the example detector file."""
         detection_fun = load_detector_file(EXAMPLE_DETECTOR)
         self.assertTrue(callable(detection_fun))
+
+    def test_load_dummy_detector(self):
+        """Can load the dummy detector file."""
+        from autofrap import detectors
+        path = os.path.join(
+            ROOT, 'autofrap', 'detectors', 'dummy_detector.py')
+        detection_fun = load_detector_file(path)
+        self.assertTrue(callable(detection_fun))
+        labels, stim = detection_fun('/dev/null')
+        self.assertEqual(labels.shape, (512, 512))
 
     def test_load_nonexistent_file(self):
         """Missing file raises an error."""

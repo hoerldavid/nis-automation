@@ -434,7 +434,7 @@ colleagues.
   center is offset to the **left** of the cell center (the default left-half
   convention survives all the way to NIS). `autofrap()` now takes
   `detection_fun` (a `partial` of `detection.detect`) and **defaults to the
-  remote cellpose detector** (`CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL=0`);
+  remote cellpose detector** (`cellpose_remote_detector.py`);
   pass `partial(detection.detect, detector='dummy')` to test without the
   server. Note: saving the **frozen live view** (`ImageSaveAs`, current doc
   `"Frozen"`) silently produces no file — grab a single-frame ND acquisition
@@ -666,11 +666,9 @@ colleagues.
     entry. Survey-only contract: C/Y/X (+Z with `z_projection='max'`),
     everything else (T, P, …) errors; `channel` int → 2D / tuple → (k, y, x);
     axis-order independent via `f.sizes` + `np.transpose` (no xarray).
-20. ~~**Default detector composition in `autofrap()`**~~ — **done**: `default_detector()`
-    helper in `autofrap/pipeline.py` composes the detection pipeline (channel load,
-    detector, half-cell mask, viz). `autofrap()` default uses it; CLI uses it with
-    `detector_fun` parameterized. `__init__.py` re-exports it as a public API —
-    users can call `default_detector(my_detector)` to build a custom pipeline with
+20. ~~**Default detector composition in `autofrap()`**~~ — **struck**: no default
+    detector; all detectors are shipped as `.py` files (`dummy_detector.py`,
+    `cellpose_remote_detector.py`) and loaded via `load_detector_file()`.
     the same housekeeping.
 21. ~~**Detection failure → always `NonRecoverableError`**~~ — **done
     (20260907)**: single `except Exception` → `NonRecoverableError` (retry
@@ -758,7 +756,7 @@ at the root (`nis_util.py`, `cellpose_server.py`).
 | `nis_util.py` | NIS macro wrappers on top of the shared `_run_macro` helper: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `open_image`, `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
 | `grid_utils.py` | pure grid geometry for tiled acquisitions: `gen_grid` (moved out of `nis_util.py` — not NIS-specific); used by the old wing-scanner `automation.py` + `NIS_Macro_Acquisition.ipynb` |
 | `cellpose_server.py` | cellpose inference server for the GPU machine (runs on 10.163.69.12, V100): FastAPI, `POST /detect` (np.save bytes in/out + `model.eval()` query params), `GET /health` (cuda/device); model loaded once at startup with explicit `device`; setup + run instructions in its docstring |
-| `autofrap/pipeline.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (`survey_file -> (labels[, stim_mask[, viz]])` or a bare label map), default composed with `detection.build_detector` (remote cellpose detector, `CELLPOSE_SERVER_URL`, `SURVEY_CHANNEL`, left-half mask, the channel itself as visualization; `_half_object_stim_mask` adapter); `grid_positions(position, fov, nx, ny, spacing)` (pure grid math, moved here from `nis_util.py`); `autofrap_grid` runs the loop over that stage grid or a custom `positions` list, **one flat run dir by default** (`fov<NN>_` file prefix; `fov_subdirs=True` opt-in), return to start. **Error handling**: `AutofrapError` / `RecoverableError` (per-FOV, grid continues) / `NonRecoverableError` (grid aborts); `autofrap()` translates low-level exceptions at the points where their meaning is known: **any detection failure → `NonRecoverableError`** (no per-exception translation, no `requests` import — the detector may be any callable), NIS-side FOV-local failures → `RecoverableError` (incl. post-save file checks for NIS's silent failures); cleans up its ROIs/documents best-effort on failure; `autofrap_grid` catches the two classes, best-effort return-to-start in `finally`. **CLI** (`python autofrap/pipeline.py`):
+| `autofrap/pipeline.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (`survey_file -> (labels[, stim_mask[, viz]])` or a bare label map); detector files shipped under `autofrap/autofrap_bitsnpieces/` (see `build_detector` + `load_detector_file` in `detection.py` for composing custom detectors); `grid_positions(position, fov, nx, ny, spacing)` (pure grid math, moved here from `nis_util.py`); `autofrap_grid` runs the loop over that stage grid or a custom `positions` list, **one flat run dir by default** (`fov<NN>_` file prefix; `fov_subdirs=True` opt-in), return to start. **Error handling**: `AutofrapError` / `RecoverableError` (per-FOV, grid continues) / `NonRecoverableError` (grid aborts); `autofrap()` translates low-level exceptions at the points where their meaning is known: **any detection failure → `NonRecoverableError`** (no per-exception translation, no `requests` import — the detector may be any callable), NIS-side FOV-local failures → `RecoverableError` (incl. post-save file checks for NIS's silent failures); cleans up its ROIs/documents best-effort on failure; `autofrap_grid` catches the two classes, best-effort return-to-start in `finally`. **CLI** (`python autofrap/pipeline.py`):
 argparse wrapper for `autofrap_grid`, args mirror the function parameters 1:1
 (for a future notebook parameters cell); `--out` →
 `test_acquisitions/autofrap_grid/`, `--detector dummy|cellpose-remote` |
