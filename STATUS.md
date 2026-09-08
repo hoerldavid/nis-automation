@@ -1,6 +1,6 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **TODO #15** (no microscope): `spiral_positions()` added to `grid_utils.py` — center-out square spiral for stage visit ordering, 12 tests, 4 visual plots. `autofrap_grid()` already accepts a `positions` list, so wiring it in is just `positions=spiral_positions(start, fov, spacing)`.
+_Last updated: **TODO #14** (no microscope): ND Acquisition template pre-flight check in `autofrap_grid()` — raises `NonRecoverableError` if Time/XY/Large Image tabs are active; allows Lambda (multi-channel), Z (future support), and nothing active (single image with current laser). Pure logic in `_check_nd_acq_template()` (11 tests + 1 wrapper test).
 needed): `save_qc_overlay(image, labels, path, stimulation_mask=None,
 cell_id=None, cell_poly=None, stim_poly=None, caption=None, dpi=100)`
 renders one PNG, layers bottom→top with **explicit zorder**: image →
@@ -626,36 +626,13 @@ colleagues.
     ids of objects above the gap and the `stimulated` set points at the wrong
     cells (a cell can be FRAPed twice). For longer multi-cycle runs: exclude
     FRAPed cells by centroid (preferred, id-independent) instead of label id.
-14. **Startup check of the survey ND template (design goal 1a)**: when
-    autoFRAP starts, make a reasonable effort to verify the
-    GUI-configured survey ND-Acquisition is sane — single image, one or more
-    channels; Z-stacks may be allowed in the future, but timeseries and
-    multi-position acquisitions don't make sense. Not implemented yet:
-    `autofrap()` currently just runs the template as-is.
-    **API found (20260904, doc grep + live probes)**: the ND Acquisition
-    dialog's *current experiment definition* is queryable read-only with no
-    document open — tab *active* state: `ND_IsAcqTabChecked(tab)` (names,
-    case sensitive: Time, XY, Z, Lambda, Large Image), loop params:
-    `ND_GetTimeLapsePhaseCount()` +
-    `ND_GetTimePhaseSchedule(i, &interval, &duration, &loopcnt)`,
-    `ND_MP_GetCount()`, `ND_GetZSeriesExp(...)` (incl. Z count + device).
-    Loop params persist even when a tab is not checked — so both the tab
-    state *and* the params matter for the check. **CAUTION**: probing
-    crashed NIS — a macro with `ND_GetLambdaChannel(0, &name, &oc, &color,
-    &before, &after, &aftype, &afarg1, &afarg2);` followed by
-    `Int_SetKeyValue(...,"done",1)` and `Int_SetKeyString(...,"name",name)`
-    wrote 'done'=1, then crashed NIS Elements (never wrote 'name'); cause
-    not identified (user: dialog settings are persistent and 2 channels
-    were defined, so it is not "no channels") — probe
-    `autofrap_bitsnpieces/test_nd_exp_getter_live.py`; retry the channel
-    query in small steps once NIS is back. Also: NIS `sprintf(buf, fmt,
-    args)` is not C-variadic — `args` is a comma-separated string of
-    variable names to substitute; literal strings go through `strcpy()`.
-    **Done**: tab getter wrapped as `get_nd_acq_tabs` (names verified with
-    all tabs ticked); `_run_macro` gained a `_nis_running` guard (see top
-    entry). Remaining: wire the check into `autofrap()` startup (stop if
-    Time/XY/Large Image active; Lambda must be active — leave channel
-    correctness to the user), and revisit channel count/names separately.
+14. ~~**Startup check of the survey ND template (design goal 1a)**~~ — **done**:
+    `_check_nd_acq_template(tabs)` pure logic + `_run_nd_acq_check(nis_exe)` wrapper
+    in `pipeline.py`; called at the top of `autofrap_grid()` before any acquisition.
+    Raises `NonRecoverableError` if Time, XY, or Large Image tab is active — a survey
+    must be a single image.  Z is allowed (future support), Lambda (multi-channel)
+    is fine, and nothing active is OK (single image with current laser/filter).
+    11 unit tests (pure logic) + 1 wrapper test.
 15. ~~**Spiral visit ordering (design goal 2)**~~ — **done**: `spiral_positions(position,
     fov, spacing, max_positions=None)` in `grid_utils.py`. Square spiral starting at
     center, counter-clockwise, spacing in FOV units. `autofrap_grid` already accepts a

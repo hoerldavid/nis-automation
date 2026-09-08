@@ -125,6 +125,47 @@ def default_detector(detector_fun=None):
 CYCLE_PREFIX = 'cycle'
 
 
+# ND Acquisition tab names that are *not* valid for a survey image
+# (multi-position, time-lapse, or multi-position large-image scans
+# are acquisition pipelines, not single-image surveys)
+_SURVEY_TABS_FORBIDDEN = frozenset({'Time', 'XY', 'Large Image'})
+
+
+def _check_nd_acq_template(tabs):
+    """
+    Validate an ND Acquisition tab configuration for survey use.
+
+    Parameters
+    ----------
+    tabs: dict {tab_name: bool}
+        result of ``nis_util.get_nd_acq_tabs()``
+
+    Returns
+    -------
+    tabs: dict
+        the input dict unchanged (for convenient use as a passthrough)
+
+    Raises
+    ------
+    NonRecoverableError
+        survey template is misconfigured (Time/XY/Large Image active)
+    """
+    forbidden = {tab for tab, active in tabs.items()
+                 if active and tab in _SURVEY_TABS_FORBIDDEN}
+    if forbidden:
+        raise NonRecoverableError(
+            'survey ND template is misconfigured: '
+            f'{", ".join(sorted(forbidden))} tab(s) active — '
+            'a survey must be a single image with no loop')
+    return tabs
+
+
+def _run_nd_acq_check(nis_exe):
+    """Pre-flight wrapper: queries NIS then validates the template."""
+    tabs = nis_util.get_nd_acq_tabs(nis_exe)
+    return _check_nd_acq_template(tabs)
+
+
 def _half_object_stim_mask(labels, image):
     """stim_mask_fun adapter: half_object_stim_mask only needs the
     labels (the build_detector() contract passes the image as well)"""
@@ -549,10 +590,14 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
     Raises
     ------
     NonRecoverableError
-        if the starting stage position cannot be read (passed on from
-        nis_util as KeyError/OSError)
+        if the starting stage position cannot be read, the ND
+        Acquisition template is misconfigured, or the detection
+        server is unreachable (passed on from autofrap())
     """
     os.makedirs(out_dir, exist_ok=True)
+    # Pre-flight check: verify the ND Acquisition template is sane
+    # (single image survey, no loops)
+    _run_nd_acq_check(nis_exe)
     try:
         start_xy = nis_util.get_position(nis_exe)[:2]
     except (KeyError, OSError) as e:
