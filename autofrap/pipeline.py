@@ -508,7 +508,7 @@ def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
 
 
 def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
-                  settle_s=2.0, return_to_start=True, max_cycles=None,
+                  return_to_start=True, max_cycles=None,
                   detection_fun=None, frap_oc='FRAPPA',
                   centroid_threshold='auto',
                   fov_subdirs=False):
@@ -545,8 +545,6 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
         precomputed stage positions in visit order; if given, nx/ny/spacing
         are ignored. Any visit order works (grid is row-major; a
         center-out spiral order could be passed in later)
-    settle_s: float
-        settling time [s] after each stage move
     return_to_start: bool
         move back to the starting position after the last FOV
     max_cycles, detection_fun, frap_oc, centroid_threshold:
@@ -610,9 +608,8 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                 aborted = i
                 break
 
-            # TODO: set_position may actually block until target is reached
-            # making this redundent - test on scope and remove if unnecessary?
-            time.sleep(settle_s)
+            # set_position blocks until the stage has arrived (verified
+            # on scope 20260909) - no settling wait needed
 
             try:
                 fov_results = autofrap(nis_exe, fov_dir, max_cycles=max_cycles,
@@ -638,7 +635,6 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
             # stage should end up back where the run started
             try:
                 nis_util.set_position(nis_exe, pos_xy=start_xy)
-                time.sleep(settle_s)
                 print(f'moved back to start ({start_xy[0]:+.2f}, '
                       f'{start_xy[1]:+.2f})')
             except Exception as e:
@@ -689,9 +685,6 @@ if __name__ == '__main__':
     p.add_argument('--until-done', action='store_true',
                    help='run until all cells of a FOV are stimulated '
                         '(ignore --max-cycles)')
-    p.add_argument('--settle', type=float, default=2.0,
-                   help='stage settling time [s] after each move '
-                        '[default: %(default)s]')
     p.add_argument('--no-return', action='store_true',
                    help="don't move back to the start position after the run")
     # Default: shipped cellpose remote detector
@@ -709,6 +702,6 @@ if __name__ == '__main__':
     detection_fun = detection.load_detector_file(a.detector)
 
     autofrap_grid(a.nis, a.out, nx=a.nx, ny=a.ny, spacing=a.spacing,
-                  settle_s=a.settle, return_to_start=not a.no_return,
+                  return_to_start=not a.no_return,
                   max_cycles=None if a.until_done else a.max_cycles,
                   detection_fun=detection_fun)
