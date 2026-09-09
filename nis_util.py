@@ -515,6 +515,114 @@ def get_current_document(path_to_nis):
     return config.get('doc', 'path')
 
 
+def get_opened_documents(path_to_nis, max_items=24, max_path=260):
+    """
+    list the documents currently open in the GUI (GetOpenedDocumentList)
+
+    the macro buffer is a packed array of fixed-width (max_path) name
+    slots; the documented example uses 24 * MAX_FILE_NAME (260)
+
+    Parameters
+    ----------
+    max_items: int
+        buffer capacity (number of documents)
+    max_path: int
+        width of each name slot in the buffer
+
+    Returns
+    -------
+    names: list of str
+        the document names as NIS knows them (full path for saved
+        files; the form for unsaved documents is a live check)
+
+    Raises
+    ------
+    RuntimeError
+        if more documents are open than the buffer holds (the macro
+        reports the required count as a negative)
+    """
+    cmd = f'''
+        char docs[{max_items * max_path}];
+        int num, i;
+        char key[32];
+        num = GetOpenedDocumentList(docs, {max_items}, {max_path});
+        Int_SetKeyValue("{INI_PLACEHOLDER}","docs","count",num);
+        for(i=0; i < num; i=i+1)
+        {{
+            sprintf(&key, "doc%i", "i");
+            Int_SetKeyString("{INI_PLACEHOLDER}","docs", &key, docs + i * {max_path});
+        }}
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    count = int(config.get('docs', 'count'))
+    if count < 0:
+        raise RuntimeError(
+            f'GetOpenedDocumentList: more documents open than the buffer '
+            f'holds ({-count} > {max_items})')
+    return [config.get('docs', f'doc{i}') for i in range(count)]
+
+
+def activate_document(path_to_nis, name):
+    """
+    make an already-open document the current one (ActivateDocument) —
+    no disk re-load, unlike open_image; the name should be the exact
+    NIS spelling as returned by get_opened_documents
+    """
+    _run_macro(path_to_nis, f'ActivateDocument("{name}");')
+
+
+def _match_opened_document(name, docs):
+    """
+    match a document name (path or title) against GetOpenedDocumentList
+    entries; returns the matching entry (exact NIS spelling) or None
+
+    first a case-insensitive full-name match, then a base-name match
+    (only when it is unambiguous)
+    """
+    target = os.path.normcase(name)
+    for doc in docs:
+        if os.path.normcase(doc) == target:
+            return doc
+    base = os.path.basename(target)
+    hits = [doc for doc in docs
+            if os.path.basename(os.path.normcase(doc)) == base]
+    if len(hits) == 1:
+        return hits[0]
+    return None
+
+
+def activate_opened_document(path_to_nis, name):
+    """
+    activate an already-open document given a path or title: list the
+    open documents, match (full name or unique base name), then
+    ActivateDocument with the exact NIS spelling — this sidesteps the
+    full-path-vs-title question of ActivateDocument
+
+    Returns
+    -------
+    doc: str
+        the matched open document (exact NIS spelling)
+
+    Raises
+    ------
+    FileNotFoundError
+        if no open document matches
+    RuntimeError
+        if the base-name match is ambiguous
+    """
+    docs = get_opened_documents(path_to_nis)
+    doc = _match_opened_document(name, docs)
+    if doc is not None:
+        activate_document(path_to_nis, doc)
+        return doc
+    base = os.path.basename(os.path.normcase(name))
+    hits = [d for d in docs
+            if os.path.basename(os.path.normcase(d)) == base]
+    if hits:
+        raise RuntimeError(f'ambiguous match for {name!r}: {hits}')
+    raise FileNotFoundError(f'{name!r} is not among the open documents: {docs}')
+
+
 def save_current_document(path_to_nis, outfile):
     """
     save the current GUI document to outfile (ImageSaveAs)
