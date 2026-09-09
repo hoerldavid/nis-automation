@@ -1,6 +1,6 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **TODO #14** (no microscope): ND Acquisition template pre-flight check in `autofrap_grid()` — raises `NonRecoverableError` if Time/XY/Large Image tabs are active; allows Lambda (multi-channel), Z (future support), and nothing active (single image with current laser). Pure logic in `_check_nd_acq_template()` (11 tests + 1 wrapper test).
+_Last updated: **TODO #17** (20260909, at the microscope): `get_optical_confs()` re-verified — the documented `sprintf(&buf, "conf%i", "i")` form works; all names read back, list now 17 (new `405 CSU-W1 FRAP`; `FRAPPA` index 0). Before that: **TODO #14** (no microscope): ND Acquisition template pre-flight check in `autofrap_grid()` — raises `NonRecoverableError` if Time/XY/Large Image tabs are active; allows Lambda (multi-channel), Z (future support), and nothing active (single image with current laser). Pure logic in `_check_nd_acq_template()` (11 tests + 1 wrapper test).
 needed): `save_qc_overlay(image, labels, path, stimulation_mask=None,
 cell_id=None, cell_poly=None, stim_poly=None, caption=None, dpi=100)`
 renders one PNG, layers bottom→top with **explicit zorder**: image →
@@ -227,7 +227,7 @@ data into `test_acquisitions/` (see File map)._
 | `get_camera_roi` | (enabled: bool, (left, top, right, bottom) px) camera ROI rectangle |
 | `get_rotation_matrix` | (a11, a12, a21, a22) camera→stage "rotation and flip" |
 | `get_cam_rotation` | (rotation, rotation2) deg |
-| `get_optical_confs` | list of 16 names (incl. `FRAPPA`; was 13) |
+| `get_optical_confs` | list of 17 names (incl. `FRAPPA`; was 16, before 13) |
 | `get_nd_acq_tabs` | {tab: bool} — active ND Acquisition tabs (Time/XY/Z/Lambda/Large Image); queries the current experiment definition, no document needed |
 
 **FOV formula**: `FOV = xres × pixel_size / magnification` (`get_fov_from_res`) —
@@ -643,11 +643,11 @@ colleagues.
     StimFinish)`'s `StimMask` selects lasers, not groups). Only S1 is needed
     now (one stimulation ROI per FOV); investigate if multiple stimulation
     ROIs per FOV ever become necessary.
-17. **Re-verify `get_optical_confs()` at the microscope**: the macro was
-    reverted from bare `i` to the documented `sprintf(&buf, "conf%i", "i")`
-    form (see TODO #5 note) — quick check via the read-only `get_*` live test
-    script (`autofrap_bitsnpieces/test_nis_util_live.py`); expect all 16 conf
-    names back.
+17. ~~**Re-verify `get_optical_confs()` at the microscope**~~ — **done
+    (20260909, at the microscope)**: the documented `sprintf(&buf, "conf%i",
+    "i")` form works — direct call (read-only, no full live-script run) read
+    back all conf names; the list has since grown to **17** (new
+    `405 CSU-W1 FRAP` appended at index 16; `FRAPPA` still index 0).
 18. **Flexible detectors / bring-your-own (BYOD)** — **WIP (20260905)**:
     `detect()` refactored into a minimal composer (see top entry):
     `detect(load_fun, detector_fun, relabel='distance', clear_border=True,
