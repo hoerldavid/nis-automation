@@ -37,7 +37,12 @@ Per cycle:
 -> next cycle (the ND experiment definition restores the survey OC)
 
 The loop stops when every detected object has been stimulated, when
-no cell has stimulation-eligible pixels, or when max_cycles is reached.
+no cell has stimulation-eligible pixels, when max_cycles is reached, or
+when the user requests a clean stop (stop_check, e.g. Ctrl-C via the
+CLI): the run then ends at the next safe boundary (end of a cycle,
+or after survey + detection with allow_interrupt_after_survey) with
+the usual finally-cleanup, and a grid run reports 'stopped by user'
+instead of aborting.
 
 Error handling: every failure is translated into one of two exception
 classes - RecoverableError (this FOV is lost, a grid run may continue)
@@ -45,6 +50,8 @@ or NonRecoverableError (the microscope/detection state is unknown or
 broken, a grid run should abort). A failed cycle best-effort deletes
 its own ROIs and closes its documents before re-raising, so a grid run
 that continues starts the next FOV from a clean GUI state.
+AutofrapInterruptedException is not a failure - it only carries a
+requested stop to the point that can act on it.
 """
 import os
 import sys
@@ -125,6 +132,13 @@ class NonRecoverableError(AutofrapError):
     disk full); a grid run aborts"""
 
 
+class AutofrapInterruptedException(AutofrapError):
+    """the user requested a clean stop (Ctrl-C); raised at the next safe
+    boundary (end of a cycle, or after survey + detection when
+    ``allow_interrupt_after_survey`` is set), so the ``finally`` cleanup
+    runs from a known state; the grid stops (it is not a failure)"""
+
+
 def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
     """
     Find the next unstimulated cell (smallest label first).
@@ -158,7 +172,8 @@ def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
 
 def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
              frap_oc='FRAPPA', centroid_threshold='auto',
-             file_prefix=None, **detector_kwargs):
+             file_prefix=None, stop_check=None,
+             allow_interrupt_after_survey=False, **detector_kwargs):
     """
     run the auto-FRAP loop
 
@@ -194,6 +209,18 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         (<file_prefix>_cycle<NN>_survey.nd2, ...); default: a timestamp
         (YYYYmmdd_HHMMSS) for standalone runs — autofrap_grid passes
         'fov<NN>' per position. Set to '' for plain cycle<NN>_... names.
+    stop_check: callable, optional
+        zero-arg callable returning True when a clean stop was requested
+        (e.g. by Ctrl-C); checked at the start of each cycle (after the
+        previous cycle fully completed — ROIs deleted, documents
+        closed) and, when allow_interrupt_after_survey is True, right
+        after survey + detection (before any ROI is created). A stop
+        raises AutofrapInterruptedException so the finally-cleanup runs
+        from a known state.
+    allow_interrupt_after_survey: bool
+        allow the stop between detection and ROI creation (default
+        False — the stop always waits for the end of the current cycle,
+        which is the cleanest exit state).
     detector_kwargs: dict, optional
         extra keyword arguments forwarded to ``detection_fun`` at each
         call, e.g. ``{'diameter': 30, 'channel': 0}``.  From the CLI
@@ -213,6 +240,9 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         macro aborted, detection failed for any reason - the
         detector/server state is suspect, OS error); further cycles are
         unlikely to succeed
+    AutofrapInterruptedException
+        a clean stop was requested (stop_check) and the next safe
+        boundary was reached; the grid run stops, this is not a failure
     """
 
     os.makedirs(out_dir, exist_ok=True)
@@ -223,6 +253,11 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
 
     cycle = 0
     while max_cycles is None or cycle < max_cycles:
+        # safe stop point P1: the previous cycle fully completed (ROIs
+        # deleted, documents closed) — nothing is left to clean up
+        if stop_check is not None and stop_check():
+            raise AutofrapInterruptedException(
+                f'stop requested by user after {cycle} completed cycle(s)')
         cycle += 1
         survey_file = os.path.join(
             out_dir, f'{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_survey.nd2')
@@ -266,6 +301,15 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             stimulation_mask = det[1] if len(det) > 1 else None
             viz_image = det[2] if len(det) > 2 else None
             n_obj = len(np.unique(labels)) - 1
+
+            # safe stop point P2: survey acquired + detected, no ROIs
+            # created yet (the finally-cleanup just closes the survey
+            # document) — opt-in, end-of-cycle is the default
+            if (allow_interrupt_after_survey and stop_check is not None
+                    and stop_check()):
+                raise AutofrapInterruptedException(
+                    f'stop requested by user after survey + detection '
+                    f'of cycle {cycle}')
 
             # 4. match detected objects to the "already-imaged" map
             # via centroid distance; pick the smallest unmatched label
@@ -516,6 +560,7 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                   detection_fun=None, frap_oc='FRAPPA',
                   centroid_threshold='auto',
                   fov_subdirs=False, name=None, use_timestamp=True,
+                  stop_check=None, allow_interrupt_after_survey=False,
                   **detector_kwargs):
     """
     run the autofrap() loop on every position of a stage grid, centered
@@ -569,6 +614,12 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
     use_timestamp: bool
         prefix the run directory name with a timestamp (default True);
         only meaningful together with name
+    stop_check, allow_interrupt_after_survey:
+        passed through to autofrap() unchanged; additionally the grid
+        checks stop_check between FOVs. A requested stop stops the run
+        at the next safe boundary (AutofrapInterruptedException from
+        autofrap()) — this is not a failure: the remaining positions
+        are simply not visited and the partial results are returned
     detector_kwargs: dict, optional
         extra keyword arguments forwarded to ``autofrap`` →
         ``detection_fun`` (see :func:`autofrap` for details); from the
@@ -626,6 +677,7 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
           f'start=({start_xy[0]:+.2f}, {start_xy[1]:+.2f}) um')
     results = []
     aborted = None
+    stopped = False
     try:
         for i, (x, y) in enumerate(positions, 1):
             fov_dir = (os.path.join(run_dir, f'fov{i:02d}')
@@ -652,12 +704,21 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                     detection_fun=detection_fun,
                     frap_oc=frap_oc,
                     centroid_threshold=centroid_threshold,
-                    file_prefix=f'fov{i:02d}', **detector_kwargs)
+                    file_prefix=f'fov{i:02d}', stop_check=stop_check,
+                    allow_interrupt_after_survey=allow_interrupt_after_survey,
+                    **detector_kwargs)
             except NonRecoverableError as e:
                 print(f'!!! FOV {i}: non-recoverable error: {e} '
                       f'- aborting the grid run', flush=True)
                 results.append((i, x, y, fov_dir, None))
                 aborted = i
+                break
+            except AutofrapInterruptedException:
+                # user stop: not a failure, the FOV's state is clean (its
+                # finally-cleanup already ran); just stop the grid — the
+                # unvisited positions (incl. this one) are simply not
+                # in results
+                stopped = True
                 break
             except RecoverableError as e:
                 print(f'!!! FOV {i} failed: {e} - moving on to the next '
@@ -678,7 +739,12 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
 
     n_ok = sum(1 for r in results if r[4] is not None)
     n_cells = sum(len(r[4]) for r in results if r[4] is not None)
-    if aborted is not None:
+    if stopped:
+        n_not = len(positions) - len(results)
+        print(f'\nGrid stopped by user: {n_ok}/{len(positions)} FOV(s) done, '
+              f'{n_cells} cell(s) stimulated, {n_not} FOV(s) not visited, '
+              f'output in {run_dir}')
+    elif aborted is not None:
         n_not = len(positions) - aborted + 1
         print(f'\nGrid ABORTED at FOV {aborted}: {n_ok}/{len(results)} visited '
               f'FOV(s) ok, {n_cells} cell(s) stimulated, {n_not} FOV(s) not '
@@ -700,6 +766,24 @@ if __name__ == '__main__':
     # CLI for autofrap_grid; the arguments mirror its parameters 1:1 so
     # the same values can be used in a notebook call instead
     import argparse
+    import signal
+
+    # Ctrl-C: first press requests a clean stop at the next safe
+    # boundary (end of cycle / between FOVs - the current macro call
+    # runs to completion, we never kill it); a second press raises
+    # KeyboardInterrupt immediately (the finally-cleanup still runs)
+    _stop = {'requested': False, 'count': 0}
+
+    def _on_sigint(signum, frame):
+        _stop['count'] += 1
+        if _stop['count'] == 1:
+            _stop['requested'] = True
+            print('\nCtrl-C: stopping after the current cycle '
+                  '(press again to interrupt immediately)', flush=True)
+        else:
+            raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _on_sigint)
 
     p = argparse.ArgumentParser(
         description='auto-FRAP over a grid of stage positions '
@@ -771,7 +855,11 @@ if __name__ == '__main__':
                       max_cycles=None if a.until_done else a.max_cycles,
                       detection_fun=detection_fun,
                       name=a.name, use_timestamp=not a.no_timestamp,
+                      stop_check=lambda: _stop['requested'],
                       **detector_kwargs)
+    except AutofrapInterruptedException:
+        # a clean user stop is not an error
+        sys.exit(130)
     except NonRecoverableError as e:
         print(f'\nERROR: {e}')
         sys.exit(1)
