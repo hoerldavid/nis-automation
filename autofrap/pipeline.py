@@ -515,7 +515,8 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                   return_to_start=True, max_cycles=None,
                   detection_fun=None, frap_oc='FRAPPA',
                   centroid_threshold='auto',
-                  fov_subdirs=False, **detector_kwargs):
+                  fov_subdirs=False, name=None, use_timestamp=True,
+                  **detector_kwargs):
     """
     run the autofrap() loop on every position of a stage grid, centered
     on the current stage position
@@ -525,10 +526,15 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
     self-describing and makes one folder easy to browse (QC PNGs side
     by side) or to hand to downstream analysis:
 
-        <out_dir>/<run_stamp>/
+        <out_dir>/<run_name>/
             <fovNN>_cycleNN_survey.nd2
             <fovNN>_cycleNN_frap.nd2
             <fovNN>_cycleNN_survey_qc.png
+
+    run_name is a timestamp (<YYYYmmdd_HHMMSS>) by default, or
+    <timestamp>_<name> when name is given (and <name> alone when
+    use_timestamp=False). An existing non-empty run directory aborts
+    the run before any acquisition (an empty one is reused).
 
     With fov_subdirs=True, each FOV goes into its own sub-directory
     instead (<run_stamp>/fov<NN>/, same file names).
@@ -554,9 +560,15 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
     max_cycles, detection_fun, frap_oc, centroid_threshold:
         passed through to autofrap() unchanged
     fov_subdirs: bool
-        give each FOV its own <run_stamp>/fov<NN>/ sub-directory
+        give each FOV its own <run_name>/fov<NN>/ sub-directory
         (default: all FOVs in the single run directory, position
         encoded in the file names)
+    name: str, optional
+        experiment name appended to the run directory name (see
+        above); restricted to [A-Za-z0-9._-]
+    use_timestamp: bool
+        prefix the run directory name with a timestamp (default True);
+        only meaningful together with name
     detector_kwargs: dict, optional
         extra keyword arguments forwarded to ``autofrap`` →
         ``detection_fun`` (see :func:`autofrap` for details); from the
@@ -576,9 +588,16 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
     ------
     NonRecoverableError
         if the starting stage position cannot be read, the ND
-        Acquisition template is misconfigured, or the detection
-        server is unreachable (passed on from autofrap())
+        Acquisition template is misconfigured, the detector name is
+        invalid, the run directory already exists and is non-empty, or
+        the detection server is unreachable (passed on from
+        autofrap())
     """
+    if name is not None and not all(c.isalnum() or c in '._-'
+                                    for c in name):
+        raise NonRecoverableError(
+            f'invalid experiment name {name!r}: only letters, digits, "_", "." '
+            'and "-" are allowed')
     os.makedirs(out_dir, exist_ok=True)
     # Pre-flight check: verify the ND Acquisition template is sane
     # (single image survey, no loops)
@@ -592,7 +611,15 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
         fov = nis_util.get_fov_from_res(nis_util.get_resolution(nis_exe))
         positions = grid_positions(start_xy, fov, nx=nx, ny=ny, spacing=spacing)
     stamp = time.strftime('%Y%m%d_%H%M%S')
-    run_dir = os.path.join(out_dir, stamp)
+    if name is None:
+        run_name = stamp
+    else:
+        run_name = f'{stamp}_{name}' if use_timestamp else name
+    run_dir = os.path.join(out_dir, run_name)
+    if os.path.isdir(run_dir) and os.listdir(run_dir):
+        raise NonRecoverableError(
+            f'run directory {run_dir} already exists and is non-empty - '
+            'choose a different name or move the old run')
     os.makedirs(run_dir, exist_ok=True)
 
     print(f'grid: {len(positions)} position(s), '
@@ -710,7 +737,17 @@ if __name__ == '__main__':
                    help='extra parameter to pass to the detector, '
                         'e.g. --detector-arg diameter=30 '
                         '(repeatable)')
+    p.add_argument('--name',
+                   help='experiment name: the run directory is named '
+                        '<timestamp>_<name> (or <name> with --no-timestamp) '
+                        '[default: <timestamp>]')
+    p.add_argument('--no-timestamp', action='store_true',
+                   help='name the run directory exactly --name (requires '
+                        '--name)')
     a = p.parse_args()
+
+    if a.no_timestamp and not a.name:
+        p.error('--no-timestamp requires --name')
 
     print(f'loading detector from: {a.detector}', flush=True)
     detection_fun = detection.load_detector_file(a.detector)
@@ -728,7 +765,13 @@ if __name__ == '__main__':
             pass
         detector_kwargs[key] = val
 
-    autofrap_grid(a.nis, a.out, nx=a.nx, ny=a.ny, spacing=a.spacing,
-                  return_to_start=not a.no_return,
-                  max_cycles=None if a.until_done else a.max_cycles,
-                  detection_fun=detection_fun, **detector_kwargs)
+    try:
+        autofrap_grid(a.nis, a.out, nx=a.nx, ny=a.ny, spacing=a.spacing,
+                      return_to_start=not a.no_return,
+                      max_cycles=None if a.until_done else a.max_cycles,
+                      detection_fun=detection_fun,
+                      name=a.name, use_timestamp=not a.no_timestamp,
+                      **detector_kwargs)
+    except NonRecoverableError as e:
+        print(f'\nERROR: {e}')
+        sys.exit(1)
