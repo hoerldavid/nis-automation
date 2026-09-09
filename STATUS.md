@@ -1,6 +1,6 @@
 # Status: NIS-Elements Automation Pipeline
 
-_Last updated: **TODO #24 closed (20260909, at the microscope)**: the proactive `open_image` after the ND run is gone — the survey document is already current (`open_after=True`, live-verified), the `get_current_document` check is now a real verification, and `open_image` survives only as a fallback on mismatch (re-verify → abort if it still fails; same verify/fallback pattern as planned for #25). Confirmed with a 1×1 dummy run (full cycle, no fallback needed, clean GUI state). Before that: **smoke runs after the offline reorg + cleanup-gap fix (20260909, at the microscope, no sample)**: (a) dummy-detector 2×2 grid (`--detector autofrap/detectors/dummy_detector.py`, 1 cycle/FOV) — 4/4 FOVs, survey ~10 s (first 23 s, one-off), stim 12.1–12.7 s, returned to start; output verified: 12 files (4 survey + 4 FRAP + 4 QC PNG, flat `fovNN_cycleNN_` naming), every FRAP file carries `StandardROI` + `StimulationROI`, stage position within ≤0.5 µm of commanded; (b) cellpose-detector run with the server **down** (error-logic check): survey acquired, detection failed after the client retry → `NonRecoverableError` → grid aborted at FOV 1, remaining FOVs unvisited, return-to-start in `finally` — exactly the designed behavior. **Found + fixed a cleanup gap along the way**: `autofrap()`'s `finally` only cleaned up when ROIs existed — on a detection failure the survey document left open by the ND run (`open_after=True`) lingered (confirmed live: it was the current document after the aborted run). The `finally` now also closes the survey document when no ROIs were created (best effort). Re-ran the server-down case: no leftover documents, GUI back to pre-run state. **This is also live evidence for TODO #24**: right after the ND run the survey is the current document, so the post-run `open_image` is a no-op. (Also fixed a stale docstring path in `dummy_detector.py`.) Before that: **opened-document wrappers + live verification (20260909, at the microscope)**: new `nis_util` wrappers from the ImageDocument→Activate help pages — `get_opened_documents` (`GetOpenedDocumentList(docs, 24, MAX_FILE_NAME=260)`: packed fixed-width name slots; returns the count, or a **negative** = required capacity when the buffer is too small), `activate_document` (`ActivateDocument(name)` — makes an already-open document current, no disk re-load), `activate_opened_document` (matches a path/title against the list — full-name then unique base name, pure logic in `_match_opened_document` — and activates the **exact NIS spelling** of the matched entry, sidestepping the full-path-vs-title question of `ActivateDocument`). **Live-verified**: the list returns full paths for saved files and GUI titles for non-file documents (the frozen live view appears as `Frozen`); `ActivateDocument` works for both and `get_current_document` follows the switch (incl. to `Frozen`); base-name matching works; switch/restore round-trip clean. Follow-up probe (the test's base-name step had only verified the *Python-side* match, since the survey was already current): `ActivateDocument` also accepts a **unique base name** — switching Frozen → survey with just the `.nd2` filename worked and `get_current_document` confirmed it; so raw `activate_document` is safe even without the list round-trip (ambiguity with two same-named docs is still guarded in `activate_opened_document`). One-off: one `nis_ar -mw` call then blocked for minutes with no error and recovered on retry (transient GUI busy state) — note: `_run_macro` has **no subprocess timeout** on `nis_ar -mw`, so such a hang would block an unattended run indefinitely (watch for recurrence; a timeout + retry is the fix if it ever does). Tests: `test_opened_documents_match.py` (8 offline cases) + `test_opened_documents_live.py` (all passed at the scope). This is the building block for TODO #24/#25 (wiring into `autofrap()` is the remaining step). Before that: **TODO #17** (20260909, at the microscope): `get_optical_confs()` re-verified — the documented `sprintf(&buf, "conf%i", "i")` form works; all names read back, list now 17 (new `405 CSU-W1 FRAP`; `FRAPPA` index 0). Before that: **TODO #14** (no microscope): ND Acquisition template pre-flight check in `autofrap_grid()` — raises `NonRecoverableError` if Time/XY/Large Image tabs are active; allows Lambda (multi-channel), Z (future support), and nothing active (single image with current laser). Pure logic in `_check_nd_acq_template()` (11 tests + 1 wrapper test).
+_Last updated: **TODO #25 done + session-global ROIs discovery (20260909, at the microscope)**: `autofrap()` step 7 now makes the still-open survey document current with `activate_opened_document` (no disk re-load; `get_current_document` verify, `open_image` only as fallback on mismatch) instead of re-opening it from disk; the `finally` cleanup uses the same pattern. **Major ROI gotcha found while verifying**: ROIs made with `CreatePolygonROI` are `ScopeType.Global` — they are **session-global, not per-document and not stage-position-keyed**: closing the document (even with discard) does *not* remove them, and **any** new acquisition at **any** position picks them up again (probe: the same 4 stale ROIs, same ids, at the same position *and* 100 µm away). The end-of-cycle `delete_roi` calls are therefore mandatory — dropping them (closing alone) made a 2-cycle run pollute cycle 2's survey *and* FRAP file with cycle 1's ROIs (4 ROIs in the c2 FRAP). Misleading probe along the way: close + re-open of the *saved* file shows 0 ROIs (re-attachment only happens for **new acquisitions**), so close-only cleanup looked fine until the multi-cycle run. Contaminated session cleaned via new wrapper `get_roi_ids` (`GetROICount` + `GetROIIdFromIndex`) → delete all → fresh acquisition shows 0. Verified: 2-cycle dummy run → each FRAP exactly 2 ROIs (Standard + Stimulation), surveys 0, GUI and session clean afterwards. Follow-up probes (cross-document ROI deletion) were **inconclusive** and surfaced further odd GUI behavior — consolidated in new **TODO #32 (Understand ROI persistence)**: `DeleteROI` from a *non-attached* document did *not* remove the global ROIs (a fresh acquisition afterwards still showed the same ids) — deletion only works with the attached document current, which is exactly what the pipeline does, so it is unaffected; additionally two one-off `nis_ar -mw` hangs (no pattern, recovered on retry) and one unexplained save dialog on `CloseCurrentDocument(QUERYSAVE_NO)` (user cancelled; repro unknown). Per user: no further ROI-handling changes until #32 is understood; NIS GUI state left as found. Second probe gotcha: file paths in macro calls must be **absolute** — relative paths resolve against the temp `.mac`'s directory, and `ImageOpen` then fails *silently* (current document unchanged). Before that: **TODO #24 closed (20260909, at the microscope)**: the proactive `open_image` after the ND run is gone — the survey document is already current (`open_after=True`, live-verified), the `get_current_document` check is now a real verification, and `open_image` survives only as a fallback on mismatch (re-verify → abort if it still fails; same verify/fallback pattern as planned for #25). Confirmed with a 1×1 dummy run (full cycle, no fallback needed, clean GUI state). Before that: **smoke runs after the offline reorg + cleanup-gap fix (20260909, at the microscope, no sample)**: (a) dummy-detector 2×2 grid (`--detector autofrap/detectors/dummy_detector.py`, 1 cycle/FOV) — 4/4 FOVs, survey ~10 s (first 23 s, one-off), stim 12.1–12.7 s, returned to start; output verified: 12 files (4 survey + 4 FRAP + 4 QC PNG, flat `fovNN_cycleNN_` naming), every FRAP file carries `StandardROI` + `StimulationROI`, stage position within ≤0.5 µm of commanded; (b) cellpose-detector run with the server **down** (error-logic check): survey acquired, detection failed after the client retry → `NonRecoverableError` → grid aborted at FOV 1, remaining FOVs unvisited, return-to-start in `finally` — exactly the designed behavior. **Found + fixed a cleanup gap along the way**: `autofrap()`'s `finally` only cleaned up when ROIs existed — on a detection failure the survey document left open by the ND run (`open_after=True`) lingered (confirmed live: it was the current document after the aborted run). The `finally` now also closes the survey document when no ROIs were created (best effort). Re-ran the server-down case: no leftover documents, GUI back to pre-run state. **This is also live evidence for TODO #24**: right after the ND run the survey is the current document, so the post-run `open_image` is a no-op. (Also fixed a stale docstring path in `dummy_detector.py`.) Before that: **opened-document wrappers + live verification (20260909, at the microscope)**: new `nis_util` wrappers from the ImageDocument→Activate help pages — `get_opened_documents` (`GetOpenedDocumentList(docs, 24, MAX_FILE_NAME=260)`: packed fixed-width name slots; returns the count, or a **negative** = required capacity when the buffer is too small), `activate_document` (`ActivateDocument(name)` — makes an already-open document current, no disk re-load), `activate_opened_document` (matches a path/title against the list — full-name then unique base name, pure logic in `_match_opened_document` — and activates the **exact NIS spelling** of the matched entry, sidestepping the full-path-vs-title question of `ActivateDocument`). **Live-verified**: the list returns full paths for saved files and GUI titles for non-file documents (the frozen live view appears as `Frozen`); `ActivateDocument` works for both and `get_current_document` follows the switch (incl. to `Frozen`); base-name matching works; switch/restore round-trip clean. Follow-up probe (the test's base-name step had only verified the *Python-side* match, since the survey was already current): `ActivateDocument` also accepts a **unique base name** — switching Frozen → survey with just the `.nd2` filename worked and `get_current_document` confirmed it; so raw `activate_document` is safe even without the list round-trip (ambiguity with two same-named docs is still guarded in `activate_opened_document`). One-off: one `nis_ar -mw` call then blocked for minutes with no error and recovered on retry (transient GUI busy state) — note: `_run_macro` has **no subprocess timeout** on `nis_ar -mw`, so such a hang would block an unattended run indefinitely (watch for recurrence; a timeout + retry is the fix if it ever does). Tests: `test_opened_documents_match.py` (8 offline cases) + `test_opened_documents_live.py` (all passed at the scope). This is the building block for TODO #24/#25 (wiring into `autofrap()` is the remaining step). Before that: **TODO #17** (20260909, at the microscope): `get_optical_confs()` re-verified — the documented `sprintf(&buf, "conf%i", "i")` form works; all names read back, list now 17 (new `405 CSU-W1 FRAP`; `FRAPPA` index 0). Before that: **TODO #14** (no microscope): ND Acquisition template pre-flight check in `autofrap_grid()` — raises `NonRecoverableError` if Time/XY/Large Image tabs are active; allows Lambda (multi-channel), Z (future support), and nothing active (single image with current laser). Pure logic in `_check_nd_acq_template()` (11 tests + 1 wrapper test).
 needed): `save_qc_overlay(image, labels, path, stimulation_mask=None,
 cell_id=None, cell_poly=None, stim_poly=None, caption=None, dpi=100)`
 renders one PNG, layers bottom→top with **explicit zorder**: image →
@@ -160,6 +160,10 @@ data into `test_acquisitions/` (see File map)._
   - Gotcha: `Int_SetKeyValue(file, sec, key, value)` only takes a **numeric** value
     (despite the help page claiming `char *`) — passing a string literal aborts the
     macro in the GUI. Use `Int_SetKeyString(file, sec, key, buf)` for strings.
+  - Gotcha: file paths in macro calls must be **absolute** (20260909) — a
+    relative path resolves against the temp `.mac`'s directory (OS temp dir),
+    not the Python CWD; `ImageOpen` with a relative path then fails
+    *silently* (macro "succeeds", current document unchanged).
   - `Get_Filename(5, buf)` → full path of the currently opened image; for unsaved
     documents it returns the document title (e.g. `"ND Acquisition"`).
 - **Help extracted**: `nis_ar_help_html/` — 3,701 HTML pages from the NIS macro CHM.
@@ -231,6 +235,7 @@ data into `test_acquisitions/` (see File map)._
 | `get_nd_acq_tabs` | {tab: bool} — active ND Acquisition tabs (Time/XY/Z/Lambda/Large Image); queries the current experiment definition, no document needed |
 | `get_opened_documents` | list of open document names — full path for saved files, GUI title otherwise (e.g. `Frozen` for the frozen live view) |
 | `activate_document` / `activate_opened_document` | make an already-open document current (`ActivateDocument`, no disk re-load); the latter matches a path/title against the list and activates the exact NIS spelling |
+| `get_roi_ids` | list of IDs of all visible ROIs on the current image (`GetROICount` + `GetROIIdFromIndex`) |
 
 **FOV formula**: `FOV = xres × pixel_size / magnification` (`get_fov_from_res`) —
 e.g. **665.6 µm** at 20x / 13 µm pixels; 20260826 read-out (1024, 1024, 13.0 µm, 100x)
@@ -372,7 +377,17 @@ colleagues.
   - `DeleteROI(roi_id)` — removes a *visible* ROI (verified live: count 3 → 1).
     Always returns 0 (also for unknown IDs — don't trust it).
   - `GetROICount()` / `GetROIIdFromIndex(n)` — enumerate **visible** ROIs only
-    (track IDs at creation time).
+    (track IDs at creation time); wrapped as `get_roi_ids` (20260909).
+  - **ROIs are session-global (20260909, `ScopeType.Global`)**: ROIs created
+    with `CreatePolygonROI` are not per-document and not stage-position-
+    keyed — closing the document (even with discard) does not remove them,
+    and *any* new acquisition at *any* position picks them up again
+    (same ids at the same position and 100 µm away); `DeleteROI` removes
+    them from the session. Re-opening a *saved* file does not re-attach
+    them (re-attachment only happens for new acquisitions) — so a
+    close/reopen probe under-tests this; a multi-cycle run exposes it
+    (stale ROIs land in the next cycle's survey *and* FRAP files).
+    End-of-cycle `delete_roi` calls are mandatory for this reason.
   - `GetROIInfo` color read-back is always 0 (unreliable) — but the colors
     themselves *are* set correctly (20260904: 'red'/'cyan' ROIs render as
     requested; only the read-back is broken). Macro language: has
@@ -467,6 +482,27 @@ colleagues.
   old-style `%` formatting (no logic changes).
 
 ## TODO (next days)
+
+32. **Understand ROI persistence** — *no wiring changes before this is
+    understood* (probes 20260909, at the microscope). Established:
+    ROIs from `CreatePolygonROI` are `ScopeType.Global`; closing a
+    document (even with discard) does not remove them; **any** new
+    acquisition (any stage position) picks them up again (same ids);
+    they do *not* show on documents opened via `ImageOpen` (count 0
+    there) — only on new acquisitions; `DeleteROI` from a
+    *non-attached* document does **not** remove them (fresh acquisition
+    afterwards still showed them) — deletion only works with the
+    attached document current (which is exactly what the pipeline does;
+    all verified runs ended session-clean). Open questions: what
+    "attached" means exactly (position? channel? something else?),
+    whether other creation paths (GUI, `CreateRectangleROI`, …) behave
+    the same, whether the ROIs ever expire on their own, and one
+    unexplained save dialog on `CloseCurrentDocument(QUERYSAVE_NO)`
+    (user cancelled; repro unknown). Also observed: two one-off
+    `nis_ar -mw` hangs with no pattern (both recovered on retry —
+    `_run_macro` still has no subprocess timeout). The pipeline works
+    correctly with the current 'activate attached document → delete →
+    close' pattern; do not change ROI handling until this is understood.
 
 31. **Module/package structure (TODO #30)** — **done** (20260908): `autofrap/` is now
     a proper Python package with `__init__.py`. `autofrap/autofrap.py` renamed to
@@ -701,19 +737,19 @@ colleagues.
     mismatch (re-verify → `NonRecoverableError` if it still fails) — the
     same verify/fallback pattern planned for #25. Confirmed live with a
     1×1 dummy run (full cycle, fallback never triggered, GUI left clean).
-25. **Don't re-open the survey just to close it again**: after closing the
-    FRAP document, use **`ActivateDocument(name)`** (makes an already-open
-    document current, no disk re-load; `GetOpenedDocumentList` lists open
-    docs) instead of `open_image`. Add `nis_util.activate_document`
-    (+ `get_opened_documents`), activate → verify via `get_current_document`
-    → delete ROIs → close; keep `open_image` as the fallback on mismatch.
-    Live check: full path vs document title as `DocumentName`.
-    **Wrappers done + live-verified (20260909, see top entry)**: the list
-    returns full paths for saved files, so path matching works; activating
-    the exact list entry sidesteps the path-vs-title question and
-    `get_current_document` follows the switch. Remaining: wire into
-    `autofrap()` (activate → verify → delete ROIs → close; `open_image`
-    fallback on mismatch).
+25. ~~**Don't re-open the survey just to close it again**~~ — **done
+    (20260909, at the microscope)**: step 7 now activates the still-open
+    survey document (`activate_opened_document`, no disk re-load; the list
+    returns full paths, so path matching works and `get_current_document`
+    follows the switch — the full-path-vs-title question is moot when the
+    exact list spelling is used), verifies via `get_current_document`,
+    deletes both ROIs, closes; `open_image` kept as fallback on mismatch
+    (same verify/fallback pattern as #24); the `finally` cleanup uses the
+    same pattern. Verified with a 2-cycle dummy run (each FRAP exactly
+    2 ROIs, surveys 0, GUI + session clean). Along the way: the
+    `delete_roi` calls proved **mandatory** — see the session-global ROIs
+    discovery in the top entry — and new `nis_util.get_roi_ids` wrapper
+    (used to clean a contaminated session).
 26. **`settle_s` after `set_position` may be redundant**: `StgMoveXY` is
     documented blocking-style (DR_OK "XY device moved to specified
     position", no async marker; earlier live evidence in this file: "StgMoveXY
@@ -763,7 +799,7 @@ at the root (`nis_util.py`, `cellpose_server.py`).
 
 | file | purpose |
 |---|---|
-| `nis_util.py` | NIS macro wrappers on top of the shared `_run_macro` helper: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `open_image`, `get_opened_documents`/`activate_document`/`activate_opened_document` (ImageDocument→Activate: list/activate open documents, no disk re-load), `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
+| `nis_util.py` | NIS macro wrappers on top of the shared `_run_macro` helper: `get_*`, `get_current_document`, `save_current_document`, `close_current_document`, `set_position`, `run_current_nd_experiment`, `run_stimulation_experiment`, `open_image`, `get_opened_documents`/`activate_document`/`activate_opened_document` (ImageDocument→Activate: list/activate open documents, no disk re-load), `add_polygon_roi`, `set_roi_type`, `delete_roi`, `get_roi_count`, `get_roi_ids`, `get_roi_info`, `NDAcquisition` (from-scratch builder), `export_nd2_to_tiff`, ... |
 | `grid_utils.py` | pure grid geometry for tiled acquisitions: `gen_grid` (moved out of `nis_util.py` — not NIS-specific); used by the old wing-scanner `automation.py` + `NIS_Macro_Acquisition.ipynb` |
 | `cellpose_server.py` | cellpose inference server for the GPU machine (runs on 10.163.69.12, V100): FastAPI, `POST /detect` (np.save bytes in/out + `model.eval()` query params), `GET /health` (cuda/device); model loaded once at startup with explicit `device`; setup + run instructions in its docstring |
 | `autofrap/pipeline.py` | Part 3: auto-FRAP loop (survey → detect → stimulate next unused cell → repeat); takes `detection_fun` (`survey_file -> (labels[, stim_mask[, viz]])` or a bare label map); detector files shipped under `autofrap/detectors/` (see `build_detector` + `load_detector_file` in `detection.py` for composing custom detectors); `grid_positions(position, fov, nx, ny, spacing)` (pure grid math, moved here from `nis_util.py`); `autofrap_grid` runs the loop over that stage grid or a custom `positions` list, **one flat run dir by default** (`fov<NN>_` file prefix; `fov_subdirs=True` opt-in), return to start. **Error handling**: `AutofrapError` / `RecoverableError` (per-FOV, grid continues) / `NonRecoverableError` (grid aborts); `autofrap()` translates low-level exceptions at the points where their meaning is known: **any detection failure → `NonRecoverableError`** (no per-exception translation, no `requests` import — the detector may be any callable), NIS-side FOV-local failures → `RecoverableError` (incl. post-save file checks for NIS's silent failures); cleans up its ROIs/documents best-effort on failure; `autofrap_grid` catches the two classes, best-effort return-to-start in `finally`. **CLI** (`python autofrap/pipeline.py`):

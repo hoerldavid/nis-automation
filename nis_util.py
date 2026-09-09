@@ -724,6 +724,30 @@ def get_roi_count(path_to_nis):
     return int(config['roi']['count'])
 
 
+def get_roi_ids(path_to_nis):
+    """
+    IDs of all visible ROIs on the current image (GetROICount +
+    GetROIIdFromIndex; the latter returns -1 for unknown indices,
+    which are skipped)
+    """
+    cmd = f'''
+        int i, count, id;
+        char key[32];
+        count = GetROICount();
+        Int_SetKeyValue("{INI_PLACEHOLDER}","roi","count",count);
+        for(i=0; i < count; i=i+1)
+        {{
+            id = GetROIIdFromIndex(i);
+            sprintf(&key, "id%i", "i");
+            Int_SetKeyValue("{INI_PLACEHOLDER}","roi", &key, id);
+        }}
+        '''
+    config = _run_macro(path_to_nis, cmd, ini=True)
+    count = int(config['roi']['count'])
+    ids = [int(config['roi'][f'id{i}']) for i in range(count)]
+    return [roi_id for roi_id in ids if roi_id >= 0]
+
+
 def get_roi_info(path_to_nis, roi_id):
     """
     read back parameters of an ROI (see GetROIInfo in the NIS manual)

@@ -389,15 +389,32 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                     f'FRAP file missing after save_current_document: '
                     f'{frap_file} (ImageSaveAs wrote nothing)')
 
-            # 7. close FRAP document (current), then delete both ROIs on the
-            #    survey document (after saving, so they stay in the saved
-            #    FRAP file but don't linger for the next cycle) and close it
+            # 7. close the FRAP document (current), make the still-open
+            #    survey document current (no disk re-load), delete both
+            #    ROIs and close it. The ROIs are already saved in the FRAP
+            #    file; the deletes are NOT optional - the ROIs are
+            #    ScopeType.Global, i.e. session-global (not per-document,
+            #    not stage-position keyed): closing the document does not
+            #    remove them, and any new acquisition picks them up again
+            #    (live-verified 20260909: without the deletes, cycle 2's
+            #    survey + FRAP files of a 2-cycle run contained cycle 1's
+            #    ROIs; reopening a *saved* file shows none, which made a
+            #    close/reopen probe misleading)
             nis_util.close_current_document(nis_exe, save='discard')
             doc = nis_util.get_current_document(nis_exe)
-            
-            # TODO: don't re-open just to close it again
             if os.path.normcase(doc) != os.path.normcase(survey_file):
-                nis_util.open_image(nis_exe, survey_file)
+                # the survey document is still open, just not current -
+                # make it current without a disk re-load; open_image only
+                # as a fallback in case it really is gone
+                try:
+                    nis_util.activate_opened_document(nis_exe, survey_file)
+                except (FileNotFoundError, RuntimeError):
+                    nis_util.open_image(nis_exe, survey_file)
+                doc = nis_util.get_current_document(nis_exe)
+            if os.path.normcase(doc) != os.path.normcase(survey_file):
+                raise NonRecoverableError(
+                    f'could not make {survey_file} current '
+                    f'(current document: {doc})')
             nis_util.delete_roi(nis_exe, stim_roi)
             nis_util.delete_roi(nis_exe, cell_roi)
             nis_util.close_current_document(nis_exe, save='discard')
@@ -434,9 +451,17 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                     if os.path.normcase(doc) == os.path.normcase(survey_file):
                         nis_util.close_current_document(nis_exe, save='discard')
                 else:
+                    # close both of this cycle's documents and delete its
+                    # ROIs (see step 7: they are session-global and survive
+                    # closing the document)
                     if os.path.normcase(doc) != os.path.normcase(survey_file):
                         nis_util.close_current_document(nis_exe, save='discard')
-                        nis_util.open_image(nis_exe, survey_file)
+                        try:
+                            nis_util.activate_opened_document(nis_exe, survey_file)
+                        except Exception:
+                            nis_util.open_image(nis_exe, survey_file)
+                    # global-scope ROIs survive closing the document -
+                    # delete them explicitly (no-ops for ids that are gone)
                     if stim_roi is not None:
                         nis_util.delete_roi(nis_exe, stim_roi)
                     if cell_roi is not None:
