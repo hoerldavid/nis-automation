@@ -158,7 +158,7 @@ def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
 
 def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
              frap_oc='FRAPPA', centroid_threshold='auto',
-             file_prefix=None):
+             file_prefix=None, **detector_kwargs):
     """
     run the auto-FRAP loop
 
@@ -194,6 +194,10 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         (<file_prefix>_cycle<NN>_survey.nd2, ...); default: a timestamp
         (YYYYmmdd_HHMMSS) for standalone runs — autofrap_grid passes
         'fov<NN>' per position. Set to '' for plain cycle<NN>_... names.
+    detector_kwargs: dict, optional
+        extra keyword arguments forwarded to ``detection_fun`` at each
+        call, e.g. ``{'diameter': 30, 'channel': 0}``.  From the CLI
+        these come from ``--detector-arg key=value`` (repeatable).
 
     Returns
     -------
@@ -245,7 +249,7 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             # suspect, so a grid run aborts - no per-exception
             # translation here, the detector may be any callable)
             try:
-                det = detection_fun(survey_file)
+                det = detection_fun(survey_file, **detector_kwargs)
             except Exception as e:
                 raise NonRecoverableError(
                     f'detection failed on {survey_file}: {e!r}') from e
@@ -511,7 +515,7 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
                   return_to_start=True, max_cycles=None,
                   detection_fun=None, frap_oc='FRAPPA',
                   centroid_threshold='auto',
-                  fov_subdirs=False):
+                  fov_subdirs=False, **detector_kwargs):
     """
     run the autofrap() loop on every position of a stage grid, centered
     on the current stage position
@@ -553,6 +557,10 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
         give each FOV its own <run_stamp>/fov<NN>/ sub-directory
         (default: all FOVs in the single run directory, position
         encoded in the file names)
+    detector_kwargs: dict, optional
+        extra keyword arguments forwarded to ``autofrap`` →
+        ``detection_fun`` (see :func:`autofrap` for details); from the
+        CLI these come from ``--detector-arg key=value`` (repeatable)
 
     Returns
     -------
@@ -612,11 +620,12 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
             # on scope 20260909) - no settling wait needed
 
             try:
-                fov_results = autofrap(nis_exe, fov_dir, max_cycles=max_cycles,
-                                       detection_fun=detection_fun,
-                                       frap_oc=frap_oc,
-                                       centroid_threshold=centroid_threshold,
-                                       file_prefix=f'fov{i:02d}')
+                fov_results = autofrap(
+                    nis_exe, fov_dir, max_cycles=max_cycles,
+                    detection_fun=detection_fun,
+                    frap_oc=frap_oc,
+                    centroid_threshold=centroid_threshold,
+                    file_prefix=f'fov{i:02d}', **detector_kwargs)
             except NonRecoverableError as e:
                 print(f'!!! FOV {i}: non-recoverable error: {e} '
                       f'- aborting the grid run', flush=True)
@@ -696,12 +705,30 @@ if __name__ == '__main__':
     p.add_argument('--detector', default=_default_detector,
                    help='path to a .py file defining detection_fun '
                         '[default: %(default)s]')
+    p.add_argument('--detector-arg', action='append', default=[],
+                   metavar='KEY=VALUE',
+                   help='extra parameter to pass to the detector, '
+                        'e.g. --detector-arg diameter=30 '
+                        '(repeatable)')
     a = p.parse_args()
 
     print(f'loading detector from: {a.detector}', flush=True)
     detection_fun = detection.load_detector_file(a.detector)
 
+    detector_kwargs = {}
+    for arg in a.detector_arg:
+        if '=' not in arg:
+            print(f'ERROR: --detector-arg expects KEY=VALUE, got: {arg!r}')
+            sys.exit(1)
+        key, val = arg.split('=', 1)
+        # try to convert to int/float, fall back to string
+        try:
+            val = float(val) if '.' in val else int(val)
+        except ValueError:
+            pass
+        detector_kwargs[key] = val
+
     autofrap_grid(a.nis, a.out, nx=a.nx, ny=a.ny, spacing=a.spacing,
                   return_to_start=not a.no_return,
                   max_cycles=None if a.until_done else a.max_cycles,
-                  detection_fun=detection_fun)
+                  detection_fun=detection_fun, **detector_kwargs)
