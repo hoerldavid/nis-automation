@@ -351,11 +351,15 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                 print(f'[c{cycle:02d}] WARNING: QC overlay failed: {e!r}',
                       flush=True)
 
-            # TODO: image should still be open after acquisition, no need to re/open?
-            # check if this gives any timing advantage or is just a no-op?
-            nis_util.open_image(nis_exe, survey_file)
-            
+            # The survey document is already the current one after the ND
+            # run (open_after=True; live-verified 20260909) - verify that,
+            # with open_image only as a fallback in case it ever doesn't
+            # hold (a mismatch then means the NIS state is unexpected, and
+            # one cheap ImageOpen recovers it before the ROIs are drawn)
             doc = nis_util.get_current_document(nis_exe)
+            if os.path.normcase(doc) != os.path.normcase(survey_file):
+                nis_util.open_image(nis_exe, survey_file)
+                doc = nis_util.get_current_document(nis_exe)
             if os.path.normcase(doc) != os.path.normcase(survey_file):
                 raise NonRecoverableError(
                     f'could not open {survey_file} '
@@ -416,12 +420,20 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         except OSError as e:
             raise NonRecoverableError(f'OS error: {e!r}') from e
         finally:
-            if cell_roi is not None or stim_roi is not None:
-                # failed mid-cycle: delete this cycle's ROIs and close its
-                # documents again, best effort (NIS may itself be the
-                # problem, in which case just give up quietly)
-                try:
-                    doc = nis_util.get_current_document(nis_exe)
+            # failed mid-cycle: delete this cycle's ROIs and close its
+            # documents, best effort (NIS may itself be the problem, in
+            # which case just give up quietly). Also covers failures
+            # before ROI creation (e.g. detection): the ND run leaves
+            # the survey document open (open_after=True) and nothing
+            # else closes it then
+            try:
+                doc = nis_util.get_current_document(nis_exe)
+                if cell_roi is None and stim_roi is None:
+                    # no ROIs to delete; just close the survey document
+                    # if the ND run left it open
+                    if os.path.normcase(doc) == os.path.normcase(survey_file):
+                        nis_util.close_current_document(nis_exe, save='discard')
+                else:
                     if os.path.normcase(doc) != os.path.normcase(survey_file):
                         nis_util.close_current_document(nis_exe, save='discard')
                         nis_util.open_image(nis_exe, survey_file)
@@ -430,8 +442,8 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                     if cell_roi is not None:
                         nis_util.delete_roi(nis_exe, cell_roi)
                     nis_util.close_current_document(nis_exe, save='discard')
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
     print(f'\nDone: {len(results)} cell(s) stimulated in {cycle} cycle(s), output in {out_dir}')
     return results
