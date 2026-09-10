@@ -23,10 +23,17 @@ if _here not in sys.path:
 import autofrap
 from autofrap import fake_nis
 from autofrap.detection import load_detector_file
+from grid_utils import spiral_positions
 
 SURVEY_GLOB = 'test_acquisitions/autofrap_grid/20260901_160216/fov*/*survey.nd2'
 OUT_DIR = 'test_acquisitions/dry_run'
 
+# Spiral traversal settings
+SPIRAL = True  # set False to use default grid
+SPIRAL_MAX_POS = 5  # number of positions to generate
+SPIRAL_FOV = 133.1  # µm, approximate FOV size for this sample
+SPIRAL_SPACING = 1.0  # FOV units between spiral layers
+START_XY = (0.0, 0.0)  # current stage position (µm) – FakeNIS centre
 
 def main():
     import argparse
@@ -41,20 +48,30 @@ def main():
     print(f'{len(sources)} sources: {[os.path.basename(s) for s in sources]}')
     os.makedirs(OUT_DIR, exist_ok=True)
 
+    # -----------------------------------------------------------------
+    # Generate the position list (grid or spiral) before the FakeNIS context.
+    # -----------------------------------------------------------------
+    if SPIRAL:
+        positions = spiral_positions(START_XY, fov=SPIRAL_FOV, spacing=SPIRAL_SPACING,
+                                    max_positions=SPIRAL_MAX_POS)
+    else:
+        positions = None
+
     with fake_nis.FakeNIS(sources) as fake:
         det = load_detector_file(args.detector)
-        results = autofrap.autofrap_grid(
+        results = autofrap.autofrap_multiposition(
             'fake', OUT_DIR,
-            nx=2, ny=2, max_cycles=3,
+            positions=positions, max_cycles=3,
             detection_fun=det,
             name='mps_dryrun',
             diameter=70)  # forwarded to the server (20260901: 26 cells here)
 
-    # autofrap_grid results: (i, x, y, fov_dir, fov_results | None)
+    # autofrap_multiposition results: (i, x, y, fov_dir, fov_results | None)
     n_fov = sum(1 for r in results if r[4] is not None)
     n_cycles = sum(len(r[4]) for r in results if r[4] is not None)
     print(f'{n_cycles} cycles over {n_fov} FOVs')
     for i, x, y, fov_dir, fov_results in results:
+
         if fov_results is None:
             print(f'fov {i}: no results')
             continue

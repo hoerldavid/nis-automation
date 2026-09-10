@@ -555,7 +555,7 @@ def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
             for j in range(ny) for i in range(nx)]
 
 
-def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
+def autofrap_multiposition(nis_exe, out_dir, positions=None,
                   return_to_start=True, max_cycles=None,
                   detection_fun=None, frap_oc='FRAPPA',
                   centroid_threshold='auto',
@@ -592,14 +592,12 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
     nis_exe, out_dir: str
         as in autofrap(); a <run_stamp> sub-directory is created in
         out_dir for this grid run
-    nx, ny: int
-        number of grid positions in x and y
-    spacing: float
-        neighbor distance in units of FOV (1 = touching, <1 = overlap)
-    positions: list of (x, y), optional
-        precomputed stage positions in visit order; if given, nx/ny/spacing
-        are ignored. Any visit order works (grid is row-major; a
-        center-out spiral order could be passed in later)
+    positions: list of (x, y)
+        precomputed stage positions in visit order; the list is generated
+        outside (e.g. via :func:`grid_positions` for a plain NxM grid or
+        :func:`spiral_positions` for a centre‑out spiral).  The function
+        does not use ``nx``, ``ny``, or ``spacing`` when ``positions`` is
+        supplied.
     return_to_start: bool
         move back to the starting position after the last FOV
     max_cycles, detection_fun, frap_oc, centroid_threshold:
@@ -660,7 +658,7 @@ def autofrap_grid(nis_exe, out_dir, nx=2, ny=2, spacing=1.0, positions=None,
             f'could not read the starting stage position: {e!r}') from e
     if positions is None:
         fov = nis_util.get_fov_from_res(nis_util.get_resolution(nis_exe))
-        positions = grid_positions(start_xy, fov, nx=nx, ny=ny, spacing=spacing)
+        positions = grid_positions(start_xy, fov, nx=2, ny=2, spacing=1.0)
     stamp = time.strftime('%Y%m%d_%H%M%S')
     if name is None:
         run_name = stamp
@@ -807,6 +805,10 @@ if __name__ == '__main__':
                         '(ignore --max-cycles)')
     p.add_argument('--no-return', action='store_true',
                    help="don't move back to the start position after the run")
+    p.add_argument('--spiral', action='store_true',
+                   help='use a centre-out square spiral instead of a plain NxM grid; '
+                        '--nx and --ny determine the maximum number of positions (nx*ny) '
+                        'if --max-positions is not given')
     # Default: shipped cellpose remote detector
     _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     _default_detector = os.path.join(
@@ -849,8 +851,23 @@ if __name__ == '__main__':
             pass
         detector_kwargs[key] = val
 
+    if a.spiral:
+        from grid_utils import spiral_positions
+        start_xy = nis_util.get_position(a.nis)[:2]
+        res = nis_util.get_resolution(a.nis)
+        fov = nis_util.get_fov_from_res(res)
+        max_pos = (a.nx or 2) * (a.ny or 2)
+        positions = spiral_positions(start_xy, fov=fov, spacing=a.spacing,
+                                    max_positions=max_pos)
+    else:
+        # generate a plain NxM grid (used when --spiral is not set)
+        start_xy = nis_util.get_position(a.nis)[:2]
+        res = nis_util.get_resolution(a.nis)
+        fov = nis_util.get_fov_from_res(res)
+        positions = grid_positions(start_xy, fov=fov, nx=a.nx, ny=a.ny, spacing=a.spacing)
+
     try:
-        autofrap_grid(a.nis, a.out, nx=a.nx, ny=a.ny, spacing=a.spacing,
+        autofrap_multiposition(a.nis, a.out, positions=positions,
                       return_to_start=not a.no_return,
                       max_cycles=None if a.until_done else a.max_cycles,
                       detection_fun=detection_fun,

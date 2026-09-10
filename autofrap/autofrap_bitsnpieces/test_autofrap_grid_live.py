@@ -23,8 +23,7 @@ NIS_EXE = r'C:\Program Files\NIS-Elements\nis_ar.exe'
 OUT_DIR = r'C:\Users\David\Desktop\nis-automation\test_acquisitions\autofrap_grid'
 
 if __name__ == '__main__':
-    results = autofrap.autofrap_grid(NIS_EXE, OUT_DIR, nx=2, ny=2,
-                                     spacing=1.0, max_cycles=1)
+    results = autofrap.autofrap_multiposition(NIS_EXE, OUT_DIR, positions=None, max_cycles=1)
 
     print('\nSummary:')
     for i, x, y, fov_dir, fov_results in results:

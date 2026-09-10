@@ -73,10 +73,9 @@ with tempfile.TemporaryDirectory() as tmp:
     #    fov01 -> src1, fov02 -> src2, fov03 -> src1, fov04 -> src2
     out2 = os.path.join(tmp, 'run2')
     with FakeNIS([src1, src2]) as fake:
-        results = autofrap.autofrap_grid('fake', out2, nx=2, ny=2,
-                                         max_cycles=1,
-                                         detection_fun=detection_fun,
-                                         name='dry', use_timestamp=False)
+        results = autofrap.autofrap_multiposition('fake', out2, positions=None, max_cycles=1,
+                                                 detection_fun=detection_fun,
+                                                 name='dry', use_timestamp=False)
     run_dir = os.path.join(out2, 'dry')
     survey_of = lambda i, r: r[4][0][2]
     ok = (len(results) == 4
@@ -94,10 +93,9 @@ with tempfile.TemporaryDirectory() as tmp:
     # 3. fov_subdirs layout: the fov tag is still in the file basename
     out3 = os.path.join(tmp, 'run3')
     with FakeNIS([src1, src2]):
-        results = autofrap.autofrap_grid('fake', out3, nx=1, ny=2,
-                                         max_cycles=1, fov_subdirs=True,
-                                         detection_fun=detection_fun,
-                                         name='sub', use_timestamp=False)
+        results = autofrap.autofrap_multiposition('fake', out3, positions=None, max_cycles=1, fov_subdirs=True,
+                                                 detection_fun=detection_fun,
+                                                 name='sub', use_timestamp=False)
     ok = (all(r[4] is not None for r in results)
           and all(filecmp.cmp(r[4][0][2],
                               src1 if r[0] == 1 else src2, shallow=False)
@@ -131,8 +129,7 @@ with tempfile.TemporaryDirectory() as tmp:
     with FakeNIS([src1], fail_move=True):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            results = autofrap.autofrap_grid('fake', out6, nx=1, ny=1,
-                                             max_cycles=1,
+            results = autofrap.autofrap_multiposition('fake', out6, positions=None, max_cycles=1,
                                              detection_fun=detection_fun,
                                              name='mv', use_timestamp=False)
         log = out.getvalue()

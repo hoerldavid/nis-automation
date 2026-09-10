@@ -21,7 +21,10 @@ from autofrap.pipeline import (  # noqa: E402,F401
     RecoverableError,
     NonRecoverableError,
     autofrap,
-    autofrap_grid,
+    autofrap_multiposition,
     grid_positions,
     next_stimulatable_cell,
 )
+
+# Backwards‑compatible alias (the old name still works)
+autofrap_grid = autofrap_multiposition

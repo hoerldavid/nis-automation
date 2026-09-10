@@ -12,8 +12,8 @@ can be driven offline:
     from autofrap.fake_nis import FakeNIS
 
     with FakeNIS(['a.nd2', 'b.nd2', 'c.nd2']):
-        autofrap.autofrap_grid('fake', 'test_acquisitions/dry_run',
-                               nx=2, ny=2, max_cycles=3,
+        autofrap.autofrap_multiposition('fake', 'test_acquisitions/dry_run',
+                               positions=None, max_cycles=3,
                                detection_fun=my_detection_fun)
 
 `nis_exe` is ignored — any placeholder string works.
