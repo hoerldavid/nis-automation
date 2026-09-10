@@ -59,6 +59,7 @@ def detection_fun(survey_file, **detector_kwargs):
 if __name__ == '__main__':
     # Standalone test: run on a provided nd2 file
     import argparse
+    import numpy as np
     parser = argparse.ArgumentParser()
     parser.add_argument('file', help='survey nd2 file')
     parser.add_argument('--diameter', type=float, default=None,
