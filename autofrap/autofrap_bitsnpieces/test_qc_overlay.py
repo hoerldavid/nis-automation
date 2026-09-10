@@ -1,6 +1,6 @@
 """
 one-off visual test for qc.save_qc_overlay, on the copied
-0013_ch1.tif image + 0013_ch1_cp_masks.tif cellpose labels
+test_data/0013_ch1.tif image + test_data/0013_ch1_cp_masks.tif labels
 (run: python autofrap/autofrap_bitsnpieces/test_qc_overlay.py)
 
 Feeds the overlay exactly what autofrap() would produce:
@@ -19,8 +19,9 @@ import tifffile
 
 from autofrap import detection, mask_utils, qc
 from autofrap import next_stimulatable_cell
-IMAGE = os.path.join(ROOT, '0013_ch1.tif')
-LABELS = os.path.join(ROOT, '0013_ch1_cp_masks.tif')
+TEST_DATA = os.path.join(ROOT, 'test_data')
+IMAGE = os.path.join(TEST_DATA, '0013_ch1.tif')
+LABELS = os.path.join(TEST_DATA, '0013_ch1_cp_masks.tif')
 
 image = tifffile.imread(IMAGE)
 labels = tifffile.imread(LABELS).astype(int)
@@ -37,14 +38,14 @@ print(f'{n_obj} objects, selected cell {cell} '
 
 # full artifact, as autofrap() would save it
 qc.save_qc_overlay(
-    image, labels, os.path.join(ROOT, '0013_qc_selected.png'),
+    image, labels, os.path.join(TEST_DATA, '0013_qc_selected.png'),
     stimulation_mask=stim, cell_id=cell,
     cell_poly=cell_poly, stim_poly=stim_poly,
     caption=f'test  cell {cell} of {n_obj}')
 
 # no selection: just image + labels + stim mask
 qc.save_qc_overlay(
-    image, labels, os.path.join(ROOT, '0013_qc_noselect.png'),
+    image, labels, os.path.join(TEST_DATA, '0013_qc_noselect.png'),
     stimulation_mask=stim,
     caption=f'test  no selection ({n_obj} objects)')
 
@@ -52,12 +53,12 @@ qc.save_qc_overlay(
 big = max((l for l in np.unique(labels) if l > 0),
           key=lambda l: (labels == l).sum())
 qc.save_qc_overlay(
-    image, labels, os.path.join(ROOT, '0013_qc_bigcell.png'),
+    image, labels, os.path.join(TEST_DATA, '0013_qc_bigcell.png'),
     stimulation_mask=stim, cell_id=big,
     caption=f'test  largest cell {big}')
 
-print('wrote 0013_qc_selected.png, 0013_qc_noselect.png, '
-      '0013_qc_bigcell.png')
+print('wrote test_data/0013_qc_selected.png, test_data/0013_qc_noselect.png, '
+      'test_data/0013_qc_bigcell.png')
 
 # --- coordinate check on a synthetic case (known expected pixels) ---
 # 300x300; the fixed-font-size legend (top-left, ~rows 10-150, cols
@@ -71,7 +72,7 @@ slbl = np.zeros((300, 300), int)
 slbl[150:280, 150:280] = 1
 sstim = np.zeros((300, 300), bool)
 sstim[220:280, 220:280] = True
-syn_path = os.path.join(ROOT, '0013_qc_synthetic.png')
+syn_path = os.path.join(TEST_DATA, '0013_qc_synthetic.png')
 qc.save_qc_overlay(
     simg, slbl, syn_path, stimulation_mask=sstim, cell_id=1,
     cell_poly=[(150, 150), (280, 150), (280, 280), (150, 280)],
@@ -111,7 +112,7 @@ if out[5, 5].max() > 30:
 # RGB(A) input (y, x, 3) is shown as-is, no grayscale/clipping
 rgb = np.zeros((300, 300, 3), np.uint8)
 rgb[200:280, 200:280] = (255, 0, 0)
-rgb_path = os.path.join(ROOT, '0013_qc_rgb.png')
+rgb_path = os.path.join(TEST_DATA, '0013_qc_rgb.png')
 qc.save_qc_overlay(rgb, slbl, rgb_path)
 outr = (plt.imread(rgb_path)[..., :3] * 255).round().astype(int)
 # (240,240) is inside the red square, clear of label contour/text/legend

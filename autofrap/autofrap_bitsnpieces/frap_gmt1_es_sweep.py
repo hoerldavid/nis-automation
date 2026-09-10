@@ -1,6 +1,7 @@
 """
 one-off: cellpose (remote server, diameter=70) on the t=0 frame of every
-time series in FRAP_GMT1_ESC/ (GFP-tagged nuclear protein; files are
+time series in test_data/FRAP_GMT1_ESC/ (GFP-tagged nuclear protein;
+files are
 single-channel (T, Y, X)).
 
 Runs detection on all 21 files, prints per-file object counts, and saves
@@ -31,9 +32,9 @@ from skimage.measure import find_contours
 
 from autofrap.detection import remote_detect_objects
 
-DATA_DIR = 'FRAP_GMT1_ESC'
+DATA_DIR = 'test_data/FRAP_GMT1_ESC'
 DIAMETER = 70
-OUT = 'FRAP_GMT1_ESC_t0_cellpose_contact_sheet.png'
+OUT = 'test_data/FRAP_GMT1_ESC_t0_cellpose_contact_sheet.png'
 
 
 def clip(img):

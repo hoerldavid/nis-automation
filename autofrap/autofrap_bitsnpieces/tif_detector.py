@@ -12,7 +12,7 @@ run:
     python - <<'EOF'
     from autofrap.detection import load_detector_file
     fun = load_detector_file('autofrap/autofrap_bitsnpieces/tif_detector.py')
-    labels, stim = fun('0013_ch1.tif', diameter=70)
+    labels, stim = fun('test_data/0013_ch1.tif', diameter=70)
     print(labels.max(), 'objects')
     EOF
 """
