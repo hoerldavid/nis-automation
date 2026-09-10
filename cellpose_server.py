@@ -32,6 +32,10 @@ Setup on the server machine:
 
 Run:
     python cellpose_server.py --model cpdino-vitb --host 0.0.0.0 --port 8000
+    # device: 'auto' (default) picks cuda, then mps (Apple Silicon),
+    # then cpu; override with --device cuda / mps / cpu
+    # (mps support depends on the installed cellpose version - if a
+    # model errors on mps, retry with --device cpu or a newer cellpose)
 
 Wire format: raw np.save bytes (magic + shape/dtype header + data).
 A 1024x1024 uint16 image is ~2 MB - no compression needed on a LAN.
@@ -50,22 +54,35 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import Response
 
 
-def create_app(model_name: str) -> FastAPI:
+def _resolve_device(device):
+    """resolve 'auto' to the best available torch device"""
+    if device == 'auto':
+        if torch.cuda.is_available():
+            device = 'cuda'
+        elif torch.backends.mps.is_available():
+            device = 'mps'
+        else:
+            device = 'cpu'
+    return torch.device(device)
+
+
+def create_app(model_name: str, device: str = 'auto') -> FastAPI:
     import cellpose.models as models
 
-    # explicit device: GPU if available, CPU otherwise
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # explicit device: 'auto' = cuda if available, then mps (Apple
+    # Silicon), then cpu
+    device = _resolve_device(device)
 
     app = FastAPI(title='cellpose inference server')
     model = models.CellposeModel(pretrained_model=model_name, device=device)  # once, at startup
-    lock = threading.Lock()  # serialize inference (single GPU)
+    lock = threading.Lock()  # serialize inference (single device)
 
     @app.get('/health')
     def health():
-        cuda = torch.cuda.is_available()
         return {'status': 'ok', 'model': model_name,
-                'cuda': cuda,
-                'device': torch.cuda.get_device_name(0) if cuda else 'cpu'}
+                'cuda': device.type == 'cuda',
+                'device': (torch.cuda.get_device_name(0)
+                           if device.type == 'cuda' else device.type)}
 
     @app.post('/detect')
     def detect(image: bytes = Body(..., description='np.save-serialized 2-D array'),
@@ -121,9 +138,13 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('--model', default='cpdino-vitb',
                    help='cellpose pretrained model name')
+    p.add_argument('--device', default='auto',
+                   choices=('auto', 'cuda', 'mps', 'cpu'),
+                   help="torch device; 'auto' = cuda if available, then "
+                        "mps (Apple Silicon), then cpu [default: %(default)s]")
     p.add_argument('--host', default='0.0.0.0')
     p.add_argument('--port', type=int, default=8000)
     a = p.parse_args()
 
     import uvicorn
-    uvicorn.run(create_app(a.model), host=a.host, port=a.port)
+    uvicorn.run(create_app(a.model, a.device), host=a.host, port=a.port)
