@@ -4,7 +4,7 @@ one-off visual test for qc.save_qc_overlay, on the copied
 (run: python autofrap/autofrap_bitsnpieces/test_qc_overlay.py)
 
 Feeds the overlay exactly what autofrap() would produce:
-default half-cell stimulation mask, next_stimulatable_cell selection,
+random-circle stimulation mask, next_stimulatable_cell selection,
 and the polygons mask_to_polygon sends to NIS.
 """
 import os
@@ -26,7 +26,7 @@ image = tifffile.imread(IMAGE)
 labels = tifffile.imread(LABELS).astype(int)
 n_obj = len(set(labels.ravel().tolist())) - 1
 
-stim = mask_utils.half_object_stim_mask(labels)
+stim = mask_utils.random_circle_stim_mask(labels, seed=0)
 cell = next_stimulatable_cell(labels, set(), stim)
 cell_poly = mask_utils.mask_to_polygon(detection.cell_mask(labels, cell))
 stim_poly = mask_utils.mask_to_polygon(

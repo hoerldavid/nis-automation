@@ -23,6 +23,10 @@ examples in its docstring). Parts:
   - mask_utils.half_object_stim_mask  left half of each object (pass as
                                 stim_mask_fun=lambda labels, image:
                                 half_object_stim_mask(labels))
+  - mask_utils.random_circle_stim_mask  one random circle per object,
+                                covering a fixed area fraction (pass as
+                                stim_mask_fun=lambda labels, image:
+                                random_circle_stim_mask(labels))
   - visualization_fun           image -> 2D grayscale or (y, x, 3/4)
                                 RGB(A) for the QC overlay (e.g.
                                 lambda image: image, or a channel

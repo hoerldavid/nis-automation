@@ -98,6 +98,91 @@ def half_object_stim_mask(labels):
     return stim_mask
 
 
+def _disk(radius):
+    """
+    filled disk of `radius` pixel offsets (integer offsets with Euclidean
+    norm <= radius), centered in a (2*radius+1) x (2*radius+1) bool array
+    """
+    yy, xx = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+    return (xx * xx + yy * yy) <= radius * radius
+
+
+def random_circle_stim_mask(labels, area_fraction=0.25, seed=None):
+    """
+    stimulation mask: one randomly placed circle fully inside each object
+
+    Alternative to half_object_stim_mask: instead of a fixed left half,
+    each object gets a single circular stimulation region at a random
+    position. The circle covers a fixed fraction of the object's area,
+    so the relative bleach size is comparable across objects of
+    different sizes.
+
+    The circle is placed fully inside the object: a center is sampled
+    uniformly from the erosion of the object with a disk of the target
+    radius (i.e. the set of all valid centers). Objects too small for
+    the requested radius instead get their largest inscribed circle;
+    objects smaller than a 3-px-wide disk are left without a
+    stimulation region (the pipeline skips cells without
+    stimulation-eligible pixels).
+
+    At most one connected region per cell holds by construction.
+
+    Parameters
+    ----------
+    labels: 2D np.ndarray (y, x), int
+        label map (0 = background, 1..N = objects)
+    area_fraction: float, optional
+        circle area as a fraction of the object's area (default 0.25)
+    seed: int, optional
+        seed for the random center placement (for reproducibility)
+
+    Returns
+    -------
+    stimulation_mask: 2D np.ndarray (y, x), bool
+        binary mask of areas eligible for photostimulation
+    """
+    from scipy import ndimage
+
+    rng = np.random.default_rng(seed)
+    stim_mask = np.zeros(labels.shape, dtype=np.bool_)
+
+    for lbl in np.unique(labels):
+        if lbl == 0:
+            continue
+        obj = labels == lbl
+
+        # target radius: circle covering the requested fraction of the
+        # object's area (pi * r^2 = area_fraction * area)
+        r = max(1, int(round(np.sqrt(area_fraction * obj.sum() / np.pi))))
+
+        # valid centers: erosion of the object with the target disk
+        centers = ndimage.binary_erosion(obj, structure=_disk(r))
+        if not centers.any():
+            # object too small for the target radius: largest inscribed
+            # circle (shrink the radius until a disk of it fits)
+            dist = ndimage.distance_transform_edt(obj)
+            r = int(dist.max())
+            while r > 0:
+                centers = ndimage.binary_erosion(obj, structure=_disk(r))
+                if centers.any():
+                    break
+                r -= 1
+            if r < 1:
+                continue  # too small for a meaningful stimulation region
+            # center with the largest clearance among the valid ones
+            cy, cx = np.unravel_index(int(np.argmax(dist * centers)), obj.shape)
+        else:
+            ys, xs = np.nonzero(centers)
+            i = int(rng.integers(len(ys)))
+            cy, cx = int(ys[i]), int(xs[i])
+
+        # the disk is fully inside `obj` (that's what the erosion
+        # checked), so the slice is in bounds
+        stim_mask[cy - r:cy + r + 1, cx - r:cx + r + 1] |= _disk(r)
+
+    return stim_mask
+
+
 def _mask_per_label(labels, mask):
     """
     Yield (label_id, (label == id) & mask) for each foreground label.
