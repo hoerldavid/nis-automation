@@ -27,6 +27,11 @@ examples in its docstring). Parts:
                                 covering a fixed area fraction (pass as
                                 stim_mask_fun=lambda labels, image:
                                 random_circle_stim_mask(labels))
+  - mask_utils.cluster_stim_mask  small bright clusters within each
+                                object (Otsu per object + size/contrast
+                                filters); uniform / diffuse objects get
+                                no pixels (pass as
+                                stim_mask_fun=cluster_stim_mask)
   - visualization_fun           image -> 2D grayscale or (y, x, 3/4)
                                 RGB(A) for the QC overlay (e.g.
                                 lambda image: image, or a channel

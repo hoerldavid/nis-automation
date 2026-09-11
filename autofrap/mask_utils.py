@@ -282,6 +282,125 @@ def most_central_region_per_label(labels, mask):
     return result
 
 
+def clusters_in_object(image, obj_mask, min_cluster_area=15, contrast=1.5,
+                       max_cluster_frac=0.2):
+    """
+    mask of small bright clusters within one labeled object
+
+    The object's own pixel values are Otsu-thresholded (per object, so
+    the threshold adapts to its overall brightness), and the resulting
+    connected components (4-connectivity) are the candidate clusters. A
+    candidate is kept when its area is at least `min_cluster_area` and
+    its mean intensity is at least `contrast` times the object median.
+    If the TOTAL kept area exceeds `max_cluster_frac` of the object
+    area, the object is considered diffuse (e.g. a coarse-diffuse
+    protein distribution) and the returned mask is empty.
+
+    Example: a punctate GFP-tagged nuclear protein (GFP-DNMT1) — the
+    clusters are the bright puncta inside the nuclei.
+
+    Parameters
+    ----------
+    image: 2D np.ndarray (y, x)
+        intensity image
+    obj_mask: 2D np.ndarray (y, x), bool, same shape as image
+        one object (e.g. a single cell / nucleus)
+    min_cluster_area: int
+        minimum cluster area in px (below this is noise)
+    contrast: float
+        a cluster's mean must be at least `contrast` times the object
+        median intensity
+    max_cluster_frac: float
+        total cluster area as a fraction of the object area; above this
+        the object is discarded (empty mask)
+
+    Returns
+    -------
+    cluster_mask: 2D np.ndarray (y, x), bool, same shape as image
+        True on the kept cluster pixels (empty for uniform / diffuse
+        objects)
+    """
+    from skimage.filters import threshold_otsu
+    from skimage.measure import label as _label
+
+    obj_mask = obj_mask.astype(bool)
+    cluster = np.zeros(image.shape, dtype=bool)
+    vals = image[obj_mask]
+    if vals.size == 0 or vals.max() == vals.min():
+        return cluster  # empty object or perfectly flat -> nothing
+
+    median = float(np.median(vals))
+    thr = float(threshold_otsu(vals))
+    lab = _label((image > thr) & obj_mask)
+    total = 0
+    for i in range(1, int(lab.max()) + 1):
+        comp = lab == i
+        area = int(comp.sum())
+        if area >= min_cluster_area and image[comp].mean() >= contrast * median:
+            cluster |= comp
+            total += area
+    if total > max_cluster_frac * vals.size:
+        return np.zeros(image.shape, dtype=bool)
+    return cluster
+
+
+def cluster_stim_mask(labels, image, min_cluster_area=15, contrast=1.5,
+                      max_cluster_frac=0.2, pick='largest'):
+    """
+    stimulation mask from small bright clusters within the objects
+
+    Per object, clusters_in_object() finds the bright clusters; the
+    results are unioned over all objects. Objects with a uniform
+    distribution — or a diffuse one (total cluster area above
+    `max_cluster_frac`) — get no mask pixels, so the pipeline's
+    next_stimulatable_cell() skips them automatically.
+
+    Example: a punctate GFP-tagged nuclear protein (GFP-DNMT1) — bleach
+    one cluster per nucleus and watch whether it recovers (diffusion
+    from the other clusters) or stays bleached (tight binding).
+
+    The raw mask can carry one region per cluster, i.e. more than one
+    region per object; `pick` enforces the one-region-per-object
+    pipeline contract:
+      'largest'  -> largest_region_per_label
+      'central'  -> most_central_region_per_label
+      None       -> keep all clusters (the pipeline will warn)
+
+    Parameters
+    ----------
+    labels: 2D np.ndarray (y, x), int
+        label map (0 = background, 1..N = objects)
+    image: 2D np.ndarray (y, x)
+        intensity image (same shape as labels)
+    min_cluster_area: int
+        see clusters_in_object
+    contrast: float
+        see clusters_in_object
+    max_cluster_frac: float
+        see clusters_in_object
+    pick: str or None
+        'largest' / 'central' / None (see above)
+
+    Returns
+    -------
+    stimulation_mask: 2D np.ndarray (y, x), bool
+        binary mask of areas eligible for photostimulation
+    """
+    mask = np.zeros(labels.shape, dtype=bool)
+    for lbl in np.unique(labels):
+        if lbl > 0:
+            mask |= clusters_in_object(image, labels == lbl,
+                                       min_cluster_area, contrast,
+                                       max_cluster_frac)
+    if pick == 'largest':
+        return largest_region_per_label(labels, mask)
+    if pick == 'central':
+        return most_central_region_per_label(labels, mask)
+    if pick is None:
+        return mask
+    raise ValueError(f'unknown pick={pick!r} (use "largest", "central" or None)')
+
+
 def shuffle_labels(labels, seed=None):
     """
     randomly permute the object labels of a label map
