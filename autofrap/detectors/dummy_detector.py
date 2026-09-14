@@ -6,18 +6,10 @@ Usage::
     autofrap_grid --detector autofrap/detectors/dummy_detector.py \
         --nis C:\\Program Files\\NIS-Elements\\nis_ar.exe --nx 2 --ny 2
 """
-import os
-import sys
-
-# Ensure the repo root is on sys.path (needed when run as __main__)
-_here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if _here not in sys.path:
-    sys.path.insert(0, _here)
-
 import numpy as np
 
-from autofrap.detection import dummy_detect_objects
-from autofrap.mask_utils import half_object_stim_mask
+from autofrap.core.detection import dummy_detect_objects
+from autofrap.core.image.mask import half_object_stim_mask
 
 
 def detection_fun(survey_file):

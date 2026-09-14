@@ -26,17 +26,11 @@ Usage::
 flow_threshold, max_size_fraction.
 """
 import os
-import sys
 from functools import partial
 
-# Ensure the repo root is on sys.path (needed when run as __main__)
-_here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if _here not in sys.path:
-    sys.path.insert(0, _here)
-
-from autofrap import nd2_helpers
-from autofrap.detection import build_detector, remote_detect_objects
-from autofrap.mask_utils import half_object_stim_mask
+from autofrap.io.nd2 import read_channel
+from autofrap.core.detection import build_detector, remote_detect_objects
+from autofrap.core.image.mask import half_object_stim_mask
 
 CELLPOSE_SERVER_URL = os.environ.get(
     'CELLPOSE_SERVER_URL', 'http://10.163.69.12:8000')
@@ -44,7 +38,7 @@ SURVEY_CHANNEL = 0
 
 
 detection_fun = build_detector(
-    load_fun=partial(nd2_helpers.read_channel, channel=SURVEY_CHANNEL),
+    load_fun=partial(read_channel, channel=SURVEY_CHANNEL),
     detector_fun=partial(remote_detect_objects,
                          server_url=CELLPOSE_SERVER_URL),
     stim_mask_fun=lambda labels, image: half_object_stim_mask(labels),

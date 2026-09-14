@@ -54,20 +54,14 @@ AutofrapInterruptedException is not a failure - it only carries a
 requested stop to the point that can act on it.
 """
 import os
-import sys
 import time
 
 import numpy as np
 
-# Fallback: when run directly as a script (not through the package),
-# the repo root isn't on sys.path. __init__.py handles this when
-# imported as 'import autofrap', but direct execution needs it too.
-_here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _here not in sys.path:
-    sys.path.insert(0, _here)
-
-import nis_util  # root-level module
-from autofrap import detection, mask_utils, qc
+import autofrap.microscope.nis as nis_util
+from autofrap.core.detection import build_detector, load_detector_file, cell_mask
+from autofrap.core.image.mask import mask_to_polygon
+from autofrap.core.image.qc import save_qc_overlay
 from skimage.measure import regionprops
 
 
@@ -349,11 +343,11 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             skipped = set()
             fovd_done = False
             while True:
-                cell_poly = mask_utils.mask_to_polygon(
-                    detection.cell_mask(labels, cell)
+                cell_poly = mask_to_polygon(
+                    cell_mask(labels, cell)
                 )
-                stim_poly = mask_utils.mask_to_polygon(
-                    detection.cell_mask(labels, cell, stimulation_mask)
+                stim_poly = mask_to_polygon(
+                    cell_mask(labels, cell, stimulation_mask)
                 )
 
                 if cell_poly and stim_poly:
@@ -388,7 +382,7 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             # even if the NIS part of the cycle fails; a rendering
             # problem must not abort the run
             try:
-                qc.save_qc_overlay(
+                save_qc_overlay(
                     viz_image, labels,
                     os.path.join(out_dir, f'{file_prefix}_'
                                  f'{CYCLE_PREFIX}{cycle:02d}_survey_qc.png'),
@@ -836,7 +830,7 @@ if __name__ == '__main__':
         p.error('--no-timestamp requires --name')
 
     print(f'loading detector from: {a.detector}', flush=True)
-    detection_fun = detection.load_detector_file(a.detector)
+    detection_fun = load_detector_file(a.detector)
 
     detector_kwargs = {}
     for arg in a.detector_arg:

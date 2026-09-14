@@ -1,0 +1,16 @@
+[project]
+name = "autofrap"
+version = "0.1.0"
+description = "Auto-FRAP pipeline for Nikon NIS Elements"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scikit-image",
+    "nd2",
+    "fastremap",
+    "requests",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

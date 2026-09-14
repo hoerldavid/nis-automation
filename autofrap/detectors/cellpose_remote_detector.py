@@ -12,15 +12,9 @@ Usage::
         --nx 2 --ny 2 --detector-arg diameter=70
 """
 import os
-import sys
 
-# Ensure the repo root is on sys.path (needed when run as __main__)
-_here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if _here not in sys.path:
-    sys.path.insert(0, _here)
-
-from autofrap.detection import remote_detect_objects
-from autofrap.mask_utils import half_object_stim_mask
+from autofrap.core.detection import remote_detect_objects
+from autofrap.core.image.mask import half_object_stim_mask
 
 CELLPOSE_SERVER_URL = os.environ.get(
     'CELLPOSE_SERVER_URL', 'http://10.163.69.12:8000')
@@ -47,9 +41,9 @@ def detection_fun(survey_file, **detector_kwargs):
         labels: 2D integer array (0 = background, 1..N = detected cells)
         stim_mask: 2D boolean array (left half of each object)
     """
-    from autofrap import nd2_helpers
+    from autofrap.io.nd2 import read_channel
 
-    image = nd2_helpers.read_channel(survey_file, channel=SURVEY_CHANNEL)
+    image = read_channel(survey_file, channel=SURVEY_CHANNEL)
     labels = remote_detect_objects(image, server_url=CELLPOSE_SERVER_URL,
                                    **detector_kwargs)
     stim_mask = half_object_stim_mask(labels)

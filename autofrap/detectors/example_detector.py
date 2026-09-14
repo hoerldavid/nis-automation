@@ -18,20 +18,10 @@ callable named ``detection_fun`` with the signature:
 
 where labels is a 2D integer array (0 = background, 1..N = objects).
 """
-import os
-import sys
-
-# Ensure the repo root is on sys.path (needed when run as __main__).
-# The file lives in autofrap/autofrap_bitsnpieces/; the repo root is
-# two levels up from here.
-_here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if _here not in sys.path:
-    sys.path.insert(0, _here)
-
 import numpy as np
 
-from autofrap.detection import dummy_detect_objects
-from autofrap.mask_utils import half_object_stim_mask
+from autofrap.core.detection import dummy_detect_objects
+from autofrap.core.image.mask import half_object_stim_mask
 
 
 def detection_fun(survey_file):
