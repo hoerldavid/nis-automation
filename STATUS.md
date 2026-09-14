@@ -407,38 +407,32 @@ colleagues.
    recovered on retry) — `_run_macro` has no subprocess timeout; add
    timeout + retry if it recurs (or proactively, for unattended runs).
 
-2. **Hook up spiral visit ordering in the CLI** (follow-up to #15):
-   `spiral_positions(position, fov, spacing, max_positions=None)` exists in
-   `grid_utils.py` and `autofrap_grid` already accepts a `positions` list —
-   the missing piece is a CLI flag (e.g. `--spiral [N]` passing
-   `spiral_positions(...)` instead of the rectangular grid).
-
-3. **Detector tuning on real samples** (was #10): try `diameter` /
+2. **Detector tuning on real samples** (was #10): try `diameter` /
    `min_size` per sample (e.g. `min_size` to drop dust/debris); consider
    multi-channel input (channel 1 of the survey is currently unused).
 
-4. **CLI flag for `allow_interrupt_after_survey`** (deferred with the
+3. **CLI flag for `allow_interrupt_after_survey`** (deferred with the
    Ctrl-C work): the parameter exists in `autofrap()` / `autofrap_grid()`
    (default False) — expose it via argparse.
 
-5. **Stimulation ROI groups S1–S3** (was #16, low priority):
+4. **Stimulation ROI groups S1–S3** (was #16, low priority):
    `ChangeROIType(3)` puts the ROI into stimulation group 1 (label
    'S1:<n>'); no group parameter exists in the macro API (grep of
    `nis_ar_help_html/` found none). Only S1 is needed now (one
    stimulation ROI per FOV); investigate if multiple stimulation ROIs per
    FOV ever become necessary.
 
-6. **`half_object_stim_mask`: split within the object bbox** (was #28, low
+5. **`half_object_stim_mask`: split within the object bbox** (was #28, low
    priority) (regionprops) instead of over the full image per label —
    ~20 M element ops (tens of ms) vs ~2 s V100 inference.
 
-7. **Pixel ↔ stage coordinate transform for per-tile ROIs** (was #7, low
+6. **Pixel ↔ stage coordinate transform for per-tile ROIs** (was #7, low
    priority) (calibration matrix from `get_rotation_matrix` + pixel size;
    `get_roi_info` center as a shortcut) — only needed if centering the
    object before stimulating is wanted; the current approach (no stage
    move, ROI drawn directly on the survey image) works fine.
 
-8. **Final cleanup (housekeeping)**: stale one-offs left as-is per
+7. **Final cleanup (housekeeping)**: stale one-offs left as-is per
    convention — `test_autofrap_errors.py` (superseded by
    `test_autofrap_detection_contract.py`), the frozen `nis_util_old.py`
    snapshot + `test_nis_util_refactor.py` (remove once the macro bodies
@@ -446,9 +440,9 @@ colleagues.
    `<root>/overview/` output dir). Bitsnpieces gets a bulk cleanup in the
    final pass — don't spend effort fixing individual files.
 
-9. **Package reorg cleanup**: remove compatibility shims once bitsnpieces tests are migrated to new import paths — `autofrap/mask_utils.py`, `autofrap/nd2_helpers.py`, `autofrap/detection.py`, `autofrap/fake_nis.py`; update docstrings in `autofrap/core/detection.py` to reference new package paths (partially done). Remove `sys.path` hacks from bitsnpieces test scripts or document them as legacy.
+8. **Package reorg cleanup**: remove compatibility shims once bitsnpieces tests are migrated to new import paths — `autofrap/mask_utils.py`, `autofrap/nd2_helpers.py`, `autofrap/detection.py`, `autofrap/fake_nis.py`; update docstrings in `autofrap/core/detection.py` to reference new package paths (partially done). Remove `sys.path` hacks from bitsnpieces test scripts or document them as legacy.
 
-10. **User-facing documentation**: add README with install instructions (`pip install -e .`), detector authoring guide, and example `autofrap_grid` CLI usage. Document built-in detectors vs user-provided detector files and the `CELLPOSE_SERVER_URL` env var.
+9. **User-facing documentation**: add README with install instructions (`pip install -e .`), detector authoring guide, and example `autofrap_grid` CLI usage. Document built-in detectors vs user-provided detector files and the `CELLPOSE_SERVER_URL` env var.
 
 ## Done (short log — details in the session log / part sections)
 
