@@ -35,12 +35,24 @@ SPIRAL_FOV = 133.1  # µm, approximate FOV size for this sample
 SPIRAL_SPACING = 1.0  # FOV units between spiral layers
 START_XY = (0.0, 0.0)  # current stage position (µm) – FakeNIS centre
 
+PRESETS = {
+    'cellpose': {
+        'detector': 'autofrap/detectors/cellpose_remote_detector.py',
+        'kwargs': {'diameter': 70}
+    },
+    'simple_seg': {
+        'detector': 'autofrap/detectors/simple_seg_detector.py',
+        'kwargs': {'cell_sigma': 16.0, 'otsu_frac': 0.3, 'min_eroded_extent': 0.90}
+    },
+}
+
 def main():
     import argparse
     p = argparse.ArgumentParser()
+    p.add_argument('--preset', choices=list(PRESETS.keys()), default='simple_seg',
+                   help='detector preset to use')
     p.add_argument('--detector',
-                   default='autofrap/detectors/cellpose_remote_detector.py',
-                   help='detector file to use')
+                   help='override detector file, overrides --preset')
     args = p.parse_args()
 
     sources = sorted(glob.glob(SURVEY_GLOB))
@@ -57,14 +69,23 @@ def main():
     else:
         positions = None
 
+    # Resolve detector and kwargs from preset or explicit override
+    if args.detector:
+        detector_path = args.detector
+        detector_kwargs = {}
+    else:
+        preset = PRESETS[args.preset]
+        detector_path = preset['detector']
+        detector_kwargs = preset['kwargs']
+
     with fake_nis.FakeNIS(sources) as fake:
-        det = load_detector_file(args.detector)
+        det = load_detector_file(detector_path)
         results = autofrap.autofrap_multiposition(
             'fake', OUT_DIR,
             positions=positions, max_cycles=3,
             detection_fun=det,
-            name='mps_dryrun',
-            diameter=70)  # forwarded to the server (20260901: 26 cells here)
+            name='dryrun',
+            **detector_kwargs)
 
     # autofrap_multiposition results: (i, x, y, fov_dir, fov_results | None)
     n_fov = sum(1 for r in results if r[4] is not None)
