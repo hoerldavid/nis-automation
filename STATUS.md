@@ -2,7 +2,9 @@
 
 ## Session log (newest first; one bullet per work session)
 
-- **Simple Otsu+watershed detector refactored into core + pipeline integration (20260914)**: extracted `simple_seg_experiment.py` logic into `autofrap/core/simple_seg.py` with `SimpleSegParams` dataclass, `detect_objects`, and `segment_nuclei_otsu_watershed` wrapper. Detector now exposed via `autofrap/detectors/simple_seg_detector.py` using `build_detector` with `half_object_stim_mask` and image viz, matching the cellpose modular detector contract. `autofrap/autofrap_bitsnpieces/simple_seg_experiment.py` rewritten as a thin plotting harness importing the core module; dry-run with FakeNIS passes for the 20260901 grid: 19/17/19/12 objects per FOV, 3 cycles × 5 FOVs, QC PNGs written. Updated `dry_run_pipeline.py` with preset table `cellpose` / `simple_seg`, removed `mps` from run name, and deprecated skimage calls replaced (`remove_small_objects` max_size, `dilation` instead of `binary_dilation`). Marked TODO about integrating the simple detector as done.
+- **User-facing docs draft + TODO updates (20260914)**: created `README_draft.md` with install split for microscope workstation vs Cellpose server, detector authoring concept, CLI examples with `--name` and `--out`, multi-channel and ND template notes. Updated STATUS.md TODOs: added #10 spiral position count CLI and #11 Cellpose server URL via CLI, and noted README draft needs refinement before moving to repo root. Draft committed for review.
+
+- **Simple Otsu+watershed detector refactored into core + pipeline integration (20260914)**:  extracted `simple_seg_experiment.py` logic into `autofrap/core/simple_seg.py` with `SimpleSegParams` dataclass, `detect_objects`, and `segment_nuclei_otsu_watershed` wrapper. Detector now exposed via `autofrap/detectors/simple_seg_detector.py` using `build_detector` with `half_object_stim_mask` and image viz, matching the cellpose modular detector contract. `autofrap/autofrap_bitsnpieces/simple_seg_experiment.py` rewritten as a thin plotting harness importing the core module; dry-run with FakeNIS passes for the 20260901 grid: 19/17/19/12 objects per FOV, 3 cycles × 5 FOVs, QC PNGs written. Updated `dry_run_pipeline.py` with preset table `cellpose` / `simple_seg`, removed `mps` from run name, and deprecated skimage calls replaced (`remove_small_objects` max_size, `dilation` instead of `binary_dilation`). Marked TODO about integrating the simple detector as done.
 
 - **Package reorg step 1 – core move + shims (20260914)**:  moved `mask_utils`, `nd2_helpers`, `pipeline`, `detection`, `fake_nis` into `autofrap/core/`, `autofrap/io/`, `autofrap/microscope/`, `autofrap/pipeline/`. Added `pyproject.toml`, removed sys.path hacks from new code, created root shims `nis_util.py` / `grid_utils.py` and package shims for legacy bitsnpieces. Dry-run with FakeNIS and real cellpose server passes: 5 FOV × 3 cycles, 15 cells stimulated, QC PNGs written to `test_acquisitions/dry_run/`. Remaining TODOs added below.
 
@@ -442,7 +444,11 @@ colleagues.
 
 8. **Package reorg cleanup**: remove compatibility shims once bitsnpieces tests are migrated to new import paths — `autofrap/mask_utils.py`, `autofrap/nd2_helpers.py`, `autofrap/detection.py`, `autofrap/fake_nis.py`; update docstrings in `autofrap/core/detection.py` to reference new package paths (partially done). Remove `sys.path` hacks from bitsnpieces test scripts or document them as legacy.
 
-9. **User-facing documentation**: add README with install instructions (`pip install -e .`), detector authoring guide, and example `autofrap_grid` CLI usage. Document built-in detectors vs user-provided detector files and the `CELLPOSE_SERVER_URL` env var.
+9. **User-facing documentation**: add README with install instructions (`pip install -e .`), detector authoring guide, and example `autofrap_grid` CLI usage. Document built-in detectors vs user-provided detector files and the `CELLPOSE_SERVER_URL` env var. Draft `README_draft.md` exists — refine wording, examples, and move to repo root as `README.md` once finalized.
+
+10. **Spiral position count CLI**: currently the number of FOVs is specified via `--nx --ny`; spiral traversal logic exists to generate a centre-out list with a max position count, but the CLI does not expose a `--max-positions` / `--positions` flag to specify the number of positions directly. Wire this up so users can request N spiral positions instead of an NxM grid.
+
+11. **Cellpose server URL via CLI**: built-in Cellpose detectors read `CELLPOSE_SERVER_URL` at import time from the environment. Make the server URL configurable via CLI / detector arguments instead of an environment variable, so it can be passed per-run.
 
 ## Done (short log — details in the session log / part sections)
 
