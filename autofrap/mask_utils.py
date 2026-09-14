@@ -523,5 +523,124 @@ def mask_to_polygon(mask, tolerance=2.0):
     if len(poly) > 3:
         poly = approximate_polygon(poly, tolerance=tolerance)
 
-    return [(float(x), float(y)) for x, y in poly] 
+    return [(float(x), float(y)) for x, y in poly]
+
+
+def filter_intensity_inside(labels, image, channel=0, metric='mean', threshold=0.0):
+    """
+    Return the label IDs whose mean/median intensity inside the object is > threshold.
+
+    Parameters
+    ----------
+    labels: 2D np.ndarray (y, x), int
+        label map, 0 = background
+    image: 2D np.ndarray (y, x) or 3D np.ndarray (c, y, x)
+        intensity image
+    channel: int
+        channel index if image is 3D
+    metric: str
+        'mean' or 'median'
+    threshold: float
+        keep labels with metric > threshold
+
+    Returns
+    -------
+    list of int
+        label IDs to keep
+    """
+    from skimage.measure import regionprops
+
+    if image.ndim == 3:
+        img = image[channel]
+    else:
+        img = image
+
+    if metric not in ('mean', 'median'):
+        raise ValueError("metric must be 'mean' or 'median'")
+
+    good = []
+    for rp in regionprops(labels, intensity_image=img):
+        if rp.label == 0:
+            continue
+        if metric == 'mean':
+            # regionprops uses deprecated attribute name in older versions
+            val = getattr(rp, 'mean_intensity', getattr(rp, 'intensity_mean'))
+        else:
+            mask = labels == rp.label
+            val = float(np.median(img[mask]))
+        if val > threshold:
+            good.append(int(rp.label))
+    return good
+
+
+def filter_intensity_surround(labels, image, distance_px=5, channel=0,
+                              metric='mean', threshold=0.0, include_center=False):
+    """
+    Return the label IDs whose mean/median intensity in the surrounding ring
+    of radius distance_px is > threshold.
+
+    The ring is computed exactly with an Euclidean distance transform on a
+    cropped bounding box around each object, so the cost is O(crop size) and
+    independent of the radius.
+
+    Parameters
+    ----------
+    labels: 2D np.ndarray (y, x), int
+        label map, 0 = background
+    image: 2D np.ndarray (y, x) or 3D np.ndarray (c, y, x)
+        intensity image
+    distance_px: int
+        radius of the surrounding ring in pixels
+    channel: int
+        channel index if image is 3D
+    metric: str
+        'mean' or 'median'
+    threshold: float
+        keep labels with metric > threshold
+    include_center: bool
+        if True, use the whole dilated neighbourhood; if False, use the annulus
+        0 < dist <= distance_px
+
+    Returns
+    -------
+    list of int
+        label IDs to keep
+    """
+    from skimage.measure import regionprops
+    from scipy.ndimage import distance_transform_edt
+
+    if image.ndim == 3:
+        img = image[channel]
+    else:
+        img = image
+
+    if metric not in ('mean', 'median'):
+        raise ValueError("metric must be 'mean' or 'median'")
+
+    good = []
+    for rp in regionprops(labels):
+        if rp.label == 0:
+            continue
+        minr, minc, maxr, maxc = rp.bbox
+        r0 = max(0, minr - distance_px)
+        c0 = max(0, minc - distance_px)
+        r1 = min(img.shape[0], maxr + distance_px)
+        c1 = min(img.shape[1], maxc + distance_px)
+
+        img_crop = img[r0:r1, c0:c1]
+        mask_crop = (labels[r0:r1, c0:c1] == rp.label)
+
+        dist = distance_transform_edt(~mask_crop)
+        if include_center:
+            ring = dist <= distance_px
+        else:
+            ring = (dist > 0) & (dist <= distance_px)
+
+        if not np.any(ring):
+            continue
+        vals = img_crop[ring]
+        val = float(vals.mean()) if metric == 'mean' else float(np.median(vals))
+        if val > threshold:
+            good.append(int(rp.label))
+    return good 
 
