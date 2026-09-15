@@ -36,8 +36,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 5. **Pixel ↔ stage coordinate transform for per-tile ROIs** – calibration matrix from `get_rotation_matrix`. Low priority.
 6. **Final cleanup housekeeping** – stale one-offs left as-is per convention.
 7. **User-facing documentation** – `README_draft.md` exists, needs refinement and move to repo root.
-8. **Spiral position count CLI** – spiral generator exists, CLI lacks `--max-positions`/`--positions` flag.
-9. **Cellpose server URL via CLI** – detectors read `CELLPOSE_SERVER_URL` at import time; make configurable per-run.
+8. **Cellpose server URL via CLI** – detectors read `CELLPOSE_SERVER_URL` at import time; make configurable per-run.
 
 ## Known gotchas
 
@@ -52,6 +51,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * `GetROIInfo` color read-back always 0, but colors render correctly.
 
 ## Recent milestones
+* 20260916 – Spiral position count CLI + refactor: added `--max-positions/--num-positions` flag, applied as hard cap to both grid and spiral visit orders; extracted `build_positions` and `parse_cli_args` helpers from `__main__` in `autofrap/pipeline/autofrap.py`. Updated `README_draft.md` usage example. TODO #8 closed.
 * 20260915 – Mask utilities bbox-local refactor: `half_object_stim_mask`, `random_circle_stim_mask`, `largest_region_per_label`, `most_central_region_per_label`, `mask_to_polygon` rewritten to operate per-object bbox with EDT-based centre selection for random circles. TODO #5 closed.
 * 20260915 – Package reorg cleanup completed: compatibility shims `autofrap/detection.py`, `autofrap/mask_utils.py`, `autofrap/nd2_helpers.py`, `autofrap/fake_nis.py` removed after bitsnpieces imports migrated to `autofrap.core.*`, `autofrap.io.*`, `autofrap.microscope.*`. TODO #8 closed.
 * 20260914 – Package reorg step 1, simple-seg detector refactored into core, README draft + TODO updates.

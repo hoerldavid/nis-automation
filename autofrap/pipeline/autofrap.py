@@ -754,28 +754,50 @@ def _default_out_dir():
     return os.path.join(root, 'test_acquisitions', 'autofrap_grid')
 
 
-if __name__ == '__main__':
-    # CLI for autofrap_grid; the arguments mirror its parameters 1:1 so
-    # the same values can be used in a notebook call instead
+def build_positions(start_xy, fov, nx=2, ny=2, spacing=1.0,
+                    spiral=False, max_positions=None):
+    """Generate stage positions for grid or centre-out spiral.
+
+    Parameters
+    ----------
+    start_xy : tuple
+        Centre stage position (x, y) in µm.
+    fov : tuple
+        Field of view (fov_x, fov_y) in µm.
+    nx, ny : int
+        Grid dimensions.
+    spacing : float
+        Spacing in FOV units.
+    spiral : bool
+        If True, generate a centre-out square spiral.
+    max_positions : int or None
+        Hard cap on number of positions. For spiral mode, if None it
+        defaults to nx*ny.
+
+    Returns
+    -------
+    positions : list of (x, y)
+    """
+    if spiral:
+        from grid_utils import spiral_positions
+        max_pos = max_positions if max_positions is not None else nx * ny
+        positions = spiral_positions(start_xy, fov=fov, spacing=spacing,
+                                     max_positions=max_pos)
+    else:
+        positions = grid_positions(start_xy, fov=fov, nx=nx, ny=ny, spacing=spacing)
+
+    if max_positions is not None:
+        if max_positions < 1:
+            raise ValueError('--max-positions must be >= 1')
+        positions = positions[:max_positions]
+    return positions
+
+
+def parse_cli_args(argv=None):
     import argparse
-    import signal
-
-    # Ctrl-C: first press requests a clean stop at the next safe
-    # boundary (end of cycle / between FOVs - the current macro call
-    # runs to completion, we never kill it); a second press raises
-    # KeyboardInterrupt immediately (the finally-cleanup still runs)
-    _stop = {'requested': False, 'count': 0}
-
-    def _on_sigint(signum, frame):
-        _stop['count'] += 1
-        if _stop['count'] == 1:
-            _stop['requested'] = True
-            print('\nCtrl-C: stopping after the current cycle '
-                  '(press again to interrupt immediately)', flush=True)
-        else:
-            raise KeyboardInterrupt
-
-    signal.signal(signal.SIGINT, _on_sigint)
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _default_detector = os.path.join(
+        _repo_root, 'autofrap', 'detectors', 'cellpose_remote_detector.py')
 
     p = argparse.ArgumentParser(
         description='auto-FRAP over a grid of stage positions '
@@ -801,14 +823,12 @@ if __name__ == '__main__':
                    help="don't move back to the start position after the run")
     p.add_argument('--spiral', action='store_true',
                    help='use a centre-out square spiral instead of a plain NxM grid; '
-                        '--nx and --ny determine the maximum number of positions (nx*ny) '
-                        'if --max-positions is not given')
-    # Default: shipped cellpose remote detector
-    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _default_detector = os.path.join(
-        _repo_root, 'autofrap', 'detectors',
-        'cellpose_remote_detector.py')
-
+                        '--max-positions sets the number of positions, otherwise nx*ny is used')
+    p.add_argument('--max-positions', '--num-positions', type=int, default=None,
+                   help='maximum number of positions to visit, applied as a hard cap to both '
+                        'grid and spiral visit orders. For spiral mode, if omitted it defaults '
+                        'to --nx * --ny; for grid mode it truncates the generated NxM grid '
+                        '[default: None]')
     p.add_argument('--detector', default=_default_detector,
                    help='path to a .py file defining detection_fun '
                         '[default: %(default)s]')
@@ -824,52 +844,74 @@ if __name__ == '__main__':
     p.add_argument('--no-timestamp', action='store_true',
                    help='name the run directory exactly --name (requires '
                         '--name)')
-    a = p.parse_args()
-
-    if a.no_timestamp and not a.name:
+    args = p.parse_args(argv)
+    if args.no_timestamp and not args.name:
         p.error('--no-timestamp requires --name')
+    return args
 
-    print(f'loading detector from: {a.detector}', flush=True)
-    detection_fun = load_detector_file(a.detector)
+
+if __name__ == '__main__':
+    import signal
+    import sys
+    from autofrap.core.detection import load_detector_file
+    from autofrap.microscope.nis import NonRecoverableError
+
+    # Ctrl-C: first press requests a clean stop at the next safe
+    # boundary (end of cycle / between FOVs - the current macro call
+    # runs to completion, we never kill it); a second press raises
+    # KeyboardInterrupt immediately (the finally-cleanup still runs)
+    _stop = {'requested': False, 'count': 0}
+
+    def _on_sigint(signum, frame):
+        _stop['count'] += 1
+        if _stop['count'] == 1:
+            _stop['requested'] = True
+            print('\nCtrl-C: stopping after the current cycle '
+                  '(press again to interrupt immediately)', flush=True)
+        else:
+            raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _on_sigint)
+
+    args = parse_cli_args()
+
+    print(f'loading detector from: {args.detector}', flush=True)
+    detection_fun = load_detector_file(args.detector)
 
     detector_kwargs = {}
-    for arg in a.detector_arg:
+    for arg in args.detector_arg:
         if '=' not in arg:
             print(f'ERROR: --detector-arg expects KEY=VALUE, got: {arg!r}')
             sys.exit(1)
         key, val = arg.split('=', 1)
-        # try to convert to int/float, fall back to string
         try:
             val = float(val) if '.' in val else int(val)
         except ValueError:
             pass
         detector_kwargs[key] = val
 
-    if a.spiral:
-        from grid_utils import spiral_positions
-        start_xy = nis_util.get_position(a.nis)[:2]
-        res = nis_util.get_resolution(a.nis)
-        fov = nis_util.get_fov_from_res(res)
-        max_pos = (a.nx or 2) * (a.ny or 2)
-        positions = spiral_positions(start_xy, fov=fov, spacing=a.spacing,
-                                    max_positions=max_pos)
-    else:
-        # generate a plain NxM grid (used when --spiral is not set)
-        start_xy = nis_util.get_position(a.nis)[:2]
-        res = nis_util.get_resolution(a.nis)
-        fov = nis_util.get_fov_from_res(res)
-        positions = grid_positions(start_xy, fov=fov, nx=a.nx, ny=a.ny, spacing=a.spacing)
+    # microscope I/O – must happen here, not in the pure helper
+    start_xy = nis_util.get_position(args.nis)[:2]
+    res = nis_util.get_resolution(args.nis)
+    fov = nis_util.get_fov_from_res(res)
+
+    positions = build_positions(
+        start_xy, fov,
+        nx=args.nx, ny=args.ny, spacing=args.spacing,
+        spiral=args.spiral, max_positions=args.max_positions
+    )
 
     try:
-        autofrap_multiposition(a.nis, a.out, positions=positions,
-                      return_to_start=not a.no_return,
-                      max_cycles=None if a.until_done else a.max_cycles,
-                      detection_fun=detection_fun,
-                      name=a.name, use_timestamp=not a.no_timestamp,
-                      stop_check=lambda: _stop['requested'],
-                      **detector_kwargs)
+        autofrap_multiposition(
+            args.nis, args.out, positions=positions,
+            return_to_start=not args.no_return,
+            max_cycles=None if args.until_done else args.max_cycles,
+            detection_fun=detection_fun,
+            name=args.name, use_timestamp=not args.no_timestamp,
+            stop_check=lambda: _stop['requested'],
+            **detector_kwargs
+        )
     except AutofrapInterruptedException:
-        # a clean user stop is not an error
         sys.exit(130)
     except NonRecoverableError as e:
         print(f'\nERROR: {e}')

@@ -79,6 +79,7 @@ Key arguments:
 * `--out` output root, per-FOV subdirs created automatically
 * `--nx/--ny` grid size
 * `--spacing` FOV spacing in FOV units
+* `--max-positions` / `--num-positions` hard cap on number of positions visited; applies to both grid and spiral modes
 * `--max-cycles` cycles per FOV
 * `--detector` path to detector module
 * `--detector-arg key=value` forwarded to the detector via `build_detector`
@@ -89,7 +90,7 @@ Key arguments:
 python -m autofrap.pipeline \
   --out /path/to/output \
   --spiral \
-  --nx 5 --ny 5 \
+  --max-positions 25 \
   --spacing 1.0 \
   --max-cycles 3 \
   --name spiral_run \
@@ -99,7 +100,7 @@ python -m autofrap.pipeline \
   --detector-arg min_eroded_extent=0.90
 ```
 
-`--spiral N` generates a centre-out spiral via `grid_utils.spiral_positions`.
+`--spiral` generates a centre-out spiral via `grid_utils.spiral_positions`. Use `--max-positions` / `--num-positions` to set the number of positions to visit; if omitted it falls back to `--nx * --ny`. The same flag also caps a regular grid: e.g. `--nx 5 --ny 5 --max-positions 20` visits the first 20 positions of the 5×5 grid in row-major order. Example: `--spiral --max-positions 13` visits the centre plus 12 surrounding positions.
 
 ## Detectors
 
