@@ -13,17 +13,17 @@ are renumbered 1..N by increasing centroid distance to the image center
 stimulated first.
 
 Uses ``CELLPOSE_SERVER_URL`` environment variable (default:
-``http://10.163.69.12:8000``).
+``http://10.163.69.12:8000``), or an explicit ``server_url`` passed via
+``--detector-arg server_url=...``.
 
 Usage::
 
-    export CELLPOSE_SERVER_URL=http://10.163.69.12:8000
     autofrap_grid --detector autofrap/detectors/cellpose_remote_halfnucleus_modular.py \
-        --nx 2 --ny 2 --detector-arg diameter=70
+        --nx 2 --ny 2 --detector-arg diameter=70 --detector-arg server_url=http://...
 
 --detector-arg values are routed to the server call
 (parameter_map='auto'): diameter, min_size, cellprob_threshold,
-flow_threshold, max_size_fraction.
+flow_threshold, max_size_fraction, server_url.
 """
 import os
 from functools import partial
@@ -32,20 +32,23 @@ from autofrap.io.nd2 import read_channel
 from autofrap.core.detection import build_detector, remote_detect_objects
 from autofrap.core.image.mask import half_object_stim_mask
 
-CELLPOSE_SERVER_URL = os.environ.get(
-    'CELLPOSE_SERVER_URL', 'http://10.163.69.12:8000')
+DEFAULT_CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'
 SURVEY_CHANNEL = 0
 
 
+def _remote_detect(image, server_url=None, **kwargs):
+    if server_url is None:
+        server_url = os.environ.get('CELLPOSE_SERVER_URL', DEFAULT_CELLPOSE_SERVER_URL)
+    return remote_detect_objects(image, server_url=server_url, **kwargs)
+
 detection_fun = build_detector(
     load_fun=partial(read_channel, channel=SURVEY_CHANNEL),
-    detector_fun=partial(remote_detect_objects,
-                         server_url=CELLPOSE_SERVER_URL),
+    detector_fun=_remote_detect,
     stim_mask_fun=lambda labels, image: half_object_stim_mask(labels),
     # QC visualization: the loaded DAPI channel itself (2D; rendered
     # grayscale with 1-99.5 % percentile clipping by qc.save_qc_overlay)
     visualization_fun=lambda image: image,
-    parameter_map='auto',  # --detector-arg diameter=... reaches the server
+    parameter_map='auto',  # --detector-arg diameter=... and server_url reach the server
 )
 
 

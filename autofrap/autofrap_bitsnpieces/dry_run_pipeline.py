@@ -37,8 +37,8 @@ START_XY = (0.0, 0.0)  # current stage position (µm) – FakeNIS centre
 
 PRESETS = {
     'cellpose': {
-        'detector': 'autofrap/detectors/cellpose_remote_detector.py',
-        'kwargs': {'diameter': 70}
+        'detector': 'autofrap/detectors/cellpose_remote_halfnucleus_modular.py',
+        'kwargs': {'diameter': 70, 'server_url': 'http://localhost:9000'}
     },
     'simple_seg': {
         'detector': 'autofrap/detectors/simple_seg_detector.py',
