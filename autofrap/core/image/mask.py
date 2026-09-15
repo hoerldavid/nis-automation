@@ -89,12 +89,15 @@ def half_object_stim_mask(labels):
     stimulation_mask: 2D np.ndarray (y, x), bool
         binary mask of areas eligible for photostimulation
     """
-    stim_mask = np.zeros(labels.shape, dtype=np.bool_)
-    for lbl in np.unique(labels):
-        if lbl > 0:
-            # TODO: only do it in object bbox for speedup (use regionprops?)
-            left, _ = split_mask_equal_area(labels == lbl, axis=1)
-            stim_mask |= left
+    from skimage.measure import regionprops
+    stim_mask = np.zeros(labels.shape, dtype=bool)
+    for rp in regionprops(labels):
+        if rp.label == 0:
+            continue
+        minr, minc, maxr, maxc = rp.bbox
+        crop = labels[minr:maxr, minc:maxc] == rp.label
+        left_crop, _ = split_mask_equal_area(crop, axis=1)
+        stim_mask[minr:maxr, minc:maxc] |= left_crop
     return stim_mask
 
 
@@ -142,43 +145,43 @@ def random_circle_stim_mask(labels, area_fraction=0.25, seed=None):
         binary mask of areas eligible for photostimulation
     """
     from scipy import ndimage
+    from skimage.measure import regionprops
 
     rng = np.random.default_rng(seed)
-    stim_mask = np.zeros(labels.shape, dtype=np.bool_)
+    stim_mask = np.zeros(labels.shape, dtype=bool)
 
-    for lbl in np.unique(labels):
-        if lbl == 0:
+    for rp in regionprops(labels):
+        if rp.label == 0:
             continue
-        obj = labels == lbl
+        minr, minc, maxr, maxc = rp.bbox
+        crop = labels[minr:maxr, minc:maxc] == rp.label
+        area = int(crop.sum())
+        if area == 0:
+            continue
+        r = max(1, int(round(np.sqrt(area_fraction * area / np.pi))))
 
-        # target radius: circle covering the requested fraction of the
-        # object's area (pi * r^2 = area_fraction * area)
-        r = max(1, int(round(np.sqrt(area_fraction * obj.sum() / np.pi))))
+        # Use distance transform to find valid centers: dist >= r
+        # Pad with a single False border so EDT is well-defined even if object fills bbox
+        pad = 1
+        crop_padded = np.pad(crop, pad_width=pad, mode='constant', constant_values=False)
+        dist = ndimage.distance_transform_edt(crop_padded)
+        # valid centres in padded coordinates, then map back to original crop
+        valid = dist >= r
+        if not np.any(valid):
+            continue
+        # pick a random valid center
+        ys, xs = np.nonzero(valid)
+        i = int(rng.integers(len(ys)))
+        cy_c = int(ys[i] - pad)
+        cx_c = int(xs[i] - pad)
 
-        # valid centers: erosion of the object with the target disk
-        centers = ndimage.binary_erosion(obj, structure=_disk(r))
-        if not centers.any():
-            # object too small for the target radius: largest inscribed
-            # circle (shrink the radius until a disk of it fits)
-            dist = ndimage.distance_transform_edt(obj)
-            r = int(dist.max())
-            while r > 0:
-                centers = ndimage.binary_erosion(obj, structure=_disk(r))
-                if centers.any():
-                    break
-                r -= 1
-            if r < 1:
-                continue  # too small for a meaningful stimulation region
-            # center with the largest clearance among the valid ones
-            cy, cx = np.unravel_index(int(np.argmax(dist * centers)), obj.shape)
-        else:
-            ys, xs = np.nonzero(centers)
-            i = int(rng.integers(len(ys)))
-            cy, cx = int(ys[i]), int(xs[i])
-
-        # the disk is fully inside `obj` (that's what the erosion
-        # checked), so the slice is in bounds
-        stim_mask[cy - r:cy + r + 1, cx - r:cx + r + 1] |= _disk(r)
+        # place disk in the full-image mask, clipped to object
+        cy = minr + cy_c
+        cx = minc + cx_c
+        # draw disk directly with skimage to handle bounds
+        from skimage.draw import disk as sk_disk
+        rr, cc = sk_disk((cy, cx), r, shape=stim_mask.shape)
+        stim_mask[rr, cc] |= (labels[rr, cc] == rp.label)
 
     return stim_mask
 
@@ -225,20 +228,25 @@ def largest_region_per_label(labels, mask):
     reduced_mask: np.ndarray, same shape and dtype as mask
         binary mask with at most one region per label (the largest)
     """
-    from skimage.measure import label as _label
+    from skimage.measure import label as _label, regionprops
 
     result = np.zeros(labels.shape, dtype=bool)
-    for lbl, region in _mask_per_label(labels, mask):
-        components = _label(region, connectivity=1)
+    for rp in regionprops(labels):
+        if rp.label == 0:
+            continue
+        minr, minc, maxr, maxc = rp.bbox
+        region_crop = (labels[minr:maxr, minc:maxc] == rp.label) & mask[minr:maxr, minc:maxc]
+        if not np.any(region_crop):
+            continue
+        components = _label(region_crop, connectivity=1)
         if components.max() == 0:
-            continue  # no signal within this label
+            continue
         if components.max() == 1:
-            # single region, keep as-is
-            result |= region
+            result[minr:maxr, minc:maxc] |= region_crop
         else:
-            # pick largest component (+1 because areas skips background label 0)
             areas = np.bincount(components.ravel())[1:]
-            result |= (components == np.argmax(areas) + 1)
+            keep = components == np.argmax(areas) + 1
+            result[minr:maxr, minc:maxc] |= keep
     return result
 
 
@@ -265,20 +273,26 @@ def most_central_region_per_label(labels, mask):
     from skimage.measure import label as _label, regionprops
 
     result = np.zeros(labels.shape, dtype=bool)
-    for lbl, region in _mask_per_label(labels, mask):
-        components = _label(region, connectivity=1)
+    # pre-compute label centroids once
+    label_props = {p.label: p for p in regionprops(labels) if p.label != 0}
+    for rp in regionprops(labels):
+        if rp.label == 0:
+            continue
+        minr, minc, maxr, maxc = rp.bbox
+        region_crop = (labels[minr:maxr, minc:maxc] == rp.label) & mask[minr:maxr, minc:maxc]
+        if not np.any(region_crop):
+            continue
+        components = _label(region_crop, connectivity=1)
         if components.max() == 0:
             continue
-        props = regionprops(components)
-        if len(props) == 1:
-            result |= region
+        comp_props = regionprops(components)
+        if len(comp_props) == 1:
+            result[minr:maxr, minc:maxc] |= region_crop
             continue
-        # label centroid (reference point)
-        lp = regionprops(labels)
-        ref = np.array([p.centroid for p in lp if p.label == lbl][0])  # (y, x)
-        # find the component closest to the label centroid
-        best = min(props, key=lambda p: np.sum((p.centroid - ref) ** 2))
-        result |= (components == best.label)
+        # reference centroid in crop coordinates
+        ref = np.array(rp.centroid) - np.array([minr, minc])
+        best = min(comp_props, key=lambda p: np.sum((p.centroid - ref) ** 2))
+        result[minr:maxr, minc:maxc] |= (components == best.label)
     return result
 
 
@@ -514,11 +528,22 @@ def mask_to_polygon(mask, tolerance=2.0):
     """
     from skimage.measure import find_contours, approximate_polygon
 
-    contours = find_contours(mask, 0.5)
+    mask = np.asarray(mask, dtype=bool)
+    if not np.any(mask):
+        return []
+    # crop to bounding box for speed
+    coords = np.argwhere(mask)
+    minr, minc = coords.min(axis=0)
+    maxr, maxc = coords.max(axis=0) + 1
+    crop = mask[minr:maxr, minc:maxc]
+
+    contours = find_contours(crop, 0.5)
     if not contours:
         return []
 
     contour = max(contours, key=len)  # largest / outermost contour
+    contour[:, 0] += minr
+    contour[:, 1] += minc
     poly = np.column_stack((contour[:, 1], contour[:, 0]))  # (row, col) -> (x, y)
     if len(poly) > 3:
         poly = approximate_polygon(poly, tolerance=tolerance)
