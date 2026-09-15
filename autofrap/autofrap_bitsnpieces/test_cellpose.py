@@ -23,7 +23,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from autofrap.nd2_helpers import read_channel
+from autofrap.io.nd2 import read_channel
 
 
 def main():

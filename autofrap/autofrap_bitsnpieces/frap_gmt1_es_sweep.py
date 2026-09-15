@@ -30,7 +30,7 @@ import numpy as np
 from nd2 import ND2File
 from skimage.measure import find_contours
 
-from autofrap.detection import remote_detect_objects
+from autofrap.core.detection import remote_detect_objects
 
 DATA_DIR = 'test_data/FRAP_GMT1_ESC'
 DIAMETER = 70

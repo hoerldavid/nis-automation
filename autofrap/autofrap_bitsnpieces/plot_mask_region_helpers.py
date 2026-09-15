@@ -16,7 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from autofrap.mask_utils import (
+from autofrap.core.image.mask import (
     largest_region_per_label,
     most_central_region_per_label,
 )

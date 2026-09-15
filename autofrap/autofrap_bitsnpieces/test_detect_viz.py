@@ -17,7 +17,8 @@ sys.path.insert(0, ROOT)
 
 import numpy as np
 
-from autofrap import detection, mask_utils
+from autofrap.core import detection
+from autofrap.core.image import mask as mask_utils
 
 FAILURES = []
 

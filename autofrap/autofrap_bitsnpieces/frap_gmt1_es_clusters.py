@@ -62,8 +62,8 @@ from skimage.filters import threshold_otsu
 from skimage.measure import find_contours, label
 from skimage.segmentation import clear_border, relabel_sequential
 
-from autofrap.detection import remote_detect_objects
-from autofrap.mask_utils import cluster_stim_mask
+from autofrap.core.detection import remote_detect_objects
+from autofrap.core.image.mask import cluster_stim_mask
 
 DATA_DIR = 'test_data/FRAP_GMT1_ESC'
 DIAMETER = 70             # cellpose diameter, established for this family

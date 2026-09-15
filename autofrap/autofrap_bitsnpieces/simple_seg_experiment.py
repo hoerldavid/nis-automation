@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from skimage.measure import regionprops
 
-import autofrap.nd2_helpers as nd2h
+from autofrap.io import nd2 as nd2h
 from autofrap.core.simple_seg import SimpleSegParams, detect_objects
 
 # --- params for the two datasets ---

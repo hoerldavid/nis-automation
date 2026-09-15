@@ -17,9 +17,9 @@ sys.path.insert(0, ROOT)
 import nis_util
 import autofrap
 from autofrap import NonRecoverableError
-from autofrap.detection import load_detector_file
-from autofrap import fake_nis
-from autofrap.fake_nis import FakeNIS
+from autofrap.core.detection import load_detector_file
+from autofrap.microscope import fake_nis
+from autofrap.microscope.fake_nis import FakeNIS
 
 detection_fun = load_detector_file(os.path.join(
     ROOT, 'autofrap', 'detectors', 'dummy_detector.py'))

@@ -9,7 +9,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from autofrap.detection import load_detector_file
+from autofrap.core.detection import load_detector_file
 
 
 # Absolute path to the example detector (avoids path doubling issues)

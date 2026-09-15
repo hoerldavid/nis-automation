@@ -10,7 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, ROOT)
 
 import unittest
-from autofrap.pipeline import _check_nd_acq_template, NonRecoverableError
+from autofrap.pipeline.autofrap import _check_nd_acq_template, NonRecoverableError
 
 # Shared tab templates
 _TABS_BASE = {
@@ -100,14 +100,14 @@ class TestRunNDAcqCheck(unittest.TestCase):
         from unittest import mock
         import importlib
         import nis_util
-        from autofrap import pipeline
-        importlib.reload(pipeline)
+        from autofrap.pipeline import autofrap as autofrap_mod
+        importlib.reload(autofrap_mod)
 
         fake = mock.MagicMock()
         fake.get_nd_acq_tabs.return_value = dict(_TABS_BASE, Lambda=True)
         with mock.patch.dict('sys.modules', {'nis_util': fake}):
-            importlib.reload(pipeline)
-            result = pipeline._run_nd_acq_check('fake_nis')
+            importlib.reload(autofrap_mod)
+            result = autofrap_mod._run_nd_acq_check('fake_nis')
             fake.get_nd_acq_tabs.assert_called_once_with('fake_nis')
             self.assertEqual(result, dict(_TABS_BASE, Lambda=True))
 

@@ -11,13 +11,10 @@
 * `docs/` – split documentation
 
 ### `autofrap/`
-Package with legacy shims for bitsnpieces compatibility.
+Package with public API re-exports.
 
-* `__init__.py`
-* `detection.py` – legacy shim
-* `fake_nis.py` – legacy shim
-* `mask_utils.py` – legacy shim
-* `nd2_helpers.py` – legacy shim
+* `__init__.py` – public API re-exports for `autofrap()` / `autofrap_grid()`
+* `pipeline/` → `pipeline/autofrap.py` – `autofrap()` and `autofrap_grid()`
 * `pipeline/` → `pipeline/autofrap.py` – `autofrap()` and `autofrap_grid()`
 * `core/`
   * `core/detection.py` – `build_detector` composer, runtime parameter routing

@@ -13,7 +13,7 @@ from functools import partial
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from autofrap.detection import (
+from autofrap.core.detection import (
     build_detector,
     dummy_detect_objects,
 )

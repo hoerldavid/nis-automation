@@ -3,15 +3,11 @@ Tests for mask_utils one-stimulation-region-per-label helpers (TODO #29).
 
 run: python autofrap/autofrap_bitsnpieces/test_mask_region_helpers.py
 """
-import os
 import sys
-
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, ROOT)
 
 import numpy as np
 
-from autofrap.mask_utils import (
+from autofrap.core.image.mask import (
     largest_region_per_label,
     most_central_region_per_label,
 )

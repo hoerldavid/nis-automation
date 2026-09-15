@@ -1,5 +1,5 @@
 """
-one-off visual test for qc.save_qc_overlay, on the copied
+one-off visual test for save_qc_overlay, on the copied
 test_data/0013_ch1.tif image + test_data/0013_ch1_cp_masks.tif labels
 (run: python autofrap/autofrap_bitsnpieces/test_qc_overlay.py)
 
@@ -17,8 +17,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tifffile
 
-from autofrap import detection, mask_utils, qc
-from autofrap import next_stimulatable_cell
+from autofrap.core import detection
+from autofrap.core.image import mask as mask_utils
+from autofrap.core.image.qc import save_qc_overlay
+from autofrap.pipeline.autofrap import next_stimulatable_cell
 TEST_DATA = os.path.join(ROOT, 'test_data')
 IMAGE = os.path.join(TEST_DATA, '0013_ch1.tif')
 LABELS = os.path.join(TEST_DATA, '0013_ch1_cp_masks.tif')
@@ -37,14 +39,14 @@ print(f'{n_obj} objects, selected cell {cell} '
       f'({len(cell_poly)} + {len(stim_poly)} polygon vertices)')
 
 # full artifact, as autofrap() would save it
-qc.save_qc_overlay(
+save_qc_overlay(
     image, labels, os.path.join(TEST_DATA, '0013_qc_selected.png'),
     stimulation_mask=stim, cell_id=cell,
     cell_poly=cell_poly, stim_poly=stim_poly,
     caption=f'test  cell {cell} of {n_obj}')
 
 # no selection: just image + labels + stim mask
-qc.save_qc_overlay(
+save_qc_overlay(
     image, labels, os.path.join(TEST_DATA, '0013_qc_noselect.png'),
     stimulation_mask=stim,
     caption=f'test  no selection ({n_obj} objects)')
@@ -52,7 +54,7 @@ qc.save_qc_overlay(
 # highlight a different cell (largest area) to check generality
 big = max((l for l in np.unique(labels) if l > 0),
           key=lambda l: (labels == l).sum())
-qc.save_qc_overlay(
+save_qc_overlay(
     image, labels, os.path.join(TEST_DATA, '0013_qc_bigcell.png'),
     stimulation_mask=stim, cell_id=big,
     caption=f'test  largest cell {big}')
@@ -73,7 +75,7 @@ slbl[150:280, 150:280] = 1
 sstim = np.zeros((300, 300), bool)
 sstim[220:280, 220:280] = True
 syn_path = os.path.join(TEST_DATA, '0013_qc_synthetic.png')
-qc.save_qc_overlay(
+save_qc_overlay(
     simg, slbl, syn_path, stimulation_mask=sstim, cell_id=1,
     cell_poly=[(150, 150), (280, 150), (280, 280), (150, 280)],
     stim_poly=[(220, 220), (280, 220), (280, 280), (220, 280)])
@@ -113,7 +115,7 @@ if out[5, 5].max() > 30:
 rgb = np.zeros((300, 300, 3), np.uint8)
 rgb[200:280, 200:280] = (255, 0, 0)
 rgb_path = os.path.join(TEST_DATA, '0013_qc_rgb.png')
-qc.save_qc_overlay(rgb, slbl, rgb_path)
+save_qc_overlay(rgb, slbl, rgb_path)
 outr = (plt.imread(rgb_path)[..., :3] * 255).round().astype(int)
 # (240,240) is inside the red square, clear of label contour/text/legend
 if abs(int(outr[240, 240, 0]) - 255) > 10 or outr[240, 240, 1] > 10 \

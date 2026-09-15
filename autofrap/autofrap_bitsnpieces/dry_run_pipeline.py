@@ -21,9 +21,9 @@ if _here not in sys.path:
     sys.path.insert(0, _here)
 
 import autofrap
-from autofrap import fake_nis
-from autofrap.detection import load_detector_file
-from grid_utils import spiral_positions
+from autofrap.microscope import fake_nis
+from autofrap.core.detection import load_detector_file
+from autofrap.core.utils.grid import spiral_positions
 
 SURVEY_GLOB = 'test_acquisitions/autofrap_grid/20260901_160216/fov*/*survey.nd2'
 OUT_DIR = 'test_acquisitions/dry_run'

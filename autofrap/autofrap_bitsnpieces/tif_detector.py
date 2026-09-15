@@ -26,8 +26,8 @@ if _here not in sys.path:
 
 import tifffile
 
-from autofrap.detection import build_detector, remote_detect_objects
-from autofrap.mask_utils import half_object_stim_mask
+from autofrap.core.detection import build_detector, remote_detect_objects
+from autofrap.core.image.mask import half_object_stim_mask
 
 CELLPOSE_SERVER_URL = os.environ.get(
     'CELLPOSE_SERVER_URL', 'http://10.163.69.12:8000')

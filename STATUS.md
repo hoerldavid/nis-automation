@@ -36,10 +36,9 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 5. **half_object_stim_mask split within object bbox** – current split over full image. Low priority.
 6. **Pixel ↔ stage coordinate transform for per-tile ROIs** – calibration matrix from `get_rotation_matrix`. Low priority.
 7. **Final cleanup housekeeping** – stale one-offs left as-is per convention.
-8. **Package reorg cleanup** – remove compatibility shims once bitsnpieces tests migrated; update docstrings.
-9. **User-facing documentation** – `README_draft.md` exists, needs refinement and move to repo root.
-10. **Spiral position count CLI** – spiral generator exists, CLI lacks `--max-positions`/`--positions` flag.
-11. **Cellpose server URL via CLI** – detectors read `CELLPOSE_SERVER_URL` at import time; make configurable per-run.
+8. **User-facing documentation** – `README_draft.md` exists, needs refinement and move to repo root.
+9. **Spiral position count CLI** – spiral generator exists, CLI lacks `--max-positions`/`--positions` flag.
+10. **Cellpose server URL via CLI** – detectors read `CELLPOSE_SERVER_URL` at import time; make configurable per-run.
 
 ## Known gotchas
 
@@ -54,6 +53,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * `GetROIInfo` color read-back always 0, but colors render correctly.
 
 ## Recent milestones
+* 20260915 – Package reorg cleanup completed: compatibility shims `autofrap/detection.py`, `autofrap/mask_utils.py`, `autofrap/nd2_helpers.py`, `autofrap/fake_nis.py` removed after bitsnpieces imports migrated to `autofrap.core.*`, `autofrap.io.*`, `autofrap.microscope.*`. TODO #8 closed.
 * 20260914 – Package reorg step 1, simple-seg detector refactored into core, README draft + TODO updates.
 * 20260910 – FakeNIS dry-run, cellpose server `--device`, clean Ctrl-C stop, experiment name/run dir guards, detector runtime parameters.
 * 20260909 – ROI persistence probes, session-global ROIs discovery, opened-document wrappers live verified, ND template pre-flight check.

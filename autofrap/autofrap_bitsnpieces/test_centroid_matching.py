@@ -12,7 +12,7 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from autofrap.pipeline import next_stimulatable_cell
+from autofrap.pipeline.autofrap import next_stimulatable_cell
 from skimage.measure import regionprops
 
 

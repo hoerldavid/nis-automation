@@ -15,7 +15,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, ROOT)
 
 import nd2
-from autofrap import nd2_helpers
+from autofrap.io import nd2 as nd2_helpers
 SURVEY = os.path.join(ROOT, 'test_acquisitions', 'autofrap_out',
                       '20260824_125948_c01_survey.nd2')   # (C, Y, X), 3 ch
 FRAP = os.path.join(ROOT, 'test_acquisitions', 'autofrap_out',

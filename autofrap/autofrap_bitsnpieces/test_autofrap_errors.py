@@ -21,7 +21,7 @@ import requests
 
 import autofrap
 import nis_util
-from autofrap import detection
+from autofrap.core import detection
 REAL_SURVEY = os.path.join(ROOT, 'test_acquisitions',
                            'nuclei_20260901_110410.nd2')
 NIS = 'fake_nis'
