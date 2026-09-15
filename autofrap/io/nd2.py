@@ -22,10 +22,12 @@ def read_channel(nd2_file, channel=0, z_projection=None):
     ----------
     nd2_file: str
         path to the ND2 file
-    channel: int or tuple of int
+    channel: int, tuple of int, or 'all'
         one channel index -> 2D (y, x) array; several channel
-        indices -> (k, y, x) array in the given order. NIS omits the
-        C dimension of single-channel files: pass channel=0 for those
+        indices -> (k, y, x) array in the given order. 'all' loads all
+        channels and returns (C, Y, X), promoting single-channel files
+        to (1, Y, X). NIS omits the C dimension of single-channel files:
+        pass channel=0 for those. Default is 0.
     z_projection: None or 'max'
         None (default): files with a Z dimension raise ValueError;
         'max': max projection along Z (per channel)
@@ -33,7 +35,8 @@ def read_channel(nd2_file, channel=0, z_projection=None):
     Returns
     -------
     image: np.ndarray
-        2D (y, x) for a single channel, (k, y, x) for multiple
+        2D (y, x) for a single channel, (k, y, x) for multiple,
+        (C, y, x) for channel='all'
 
     Raises
     ------
@@ -45,8 +48,6 @@ def read_channel(nd2_file, channel=0, z_projection=None):
     if z_projection not in (None, 'max'):
         raise ValueError(f'unknown z_projection {z_projection!r} '
                          '(use None or \'max\')')
-    channels = (list(channel) if isinstance(channel, (tuple, list))
-                else [channel])
 
     with nd2.ND2File(nd2_file) as f:
         axes = list(f.sizes)  # axis names in array axis order
@@ -61,12 +62,32 @@ def read_channel(nd2_file, channel=0, z_projection=None):
             raise ValueError(
                 f'{nd2_file}: file has a Z dimension (axes: {axes}); '
                 "pass z_projection='max' to project it")
-        if 'C' not in axes and channels != [0]:
-            raise ValueError(
-                f'{nd2_file}: single-channel file (no C dimension); '
-                'pass channel=0')
 
-        return _extract(f.asarray(), axes, channels, z_projection)
+        # Determine channel selection
+        if channel == 'all':
+            if 'C' in axes:
+                num_c = f.sizes['C']
+                channels = list(range(num_c))
+            else:
+                # single-channel file: will be promoted to (1,Y,X) after extraction
+                channels = [0]
+        elif isinstance(channel, (tuple, list)):
+            channels = list(channel)
+        else:
+            channels = [channel]
+
+        if 'C' not in axes:
+            if channels != [0]:
+                raise ValueError(
+                    f'{nd2_file}: single-channel file (no C dimension); '
+                    'pass channel=0 or channel=\'all\'')
+
+        arr = _extract(f.asarray(), axes, channels, z_projection)
+
+        # Promote to (C,Y,X) for channel='all' on single-channel files
+        if channel == 'all' and 'C' not in axes:
+            return arr[None, ...]
+        return arr
 
 
 def _extract(arr, axes, channels, z_projection):
