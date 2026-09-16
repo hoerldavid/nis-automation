@@ -121,7 +121,7 @@ def dummy_detect_objects(image):
 
 
 def remote_detect_objects(image, server_url, timeout=60, retries=1,
-                          **eval_kwargs):
+                          channel=0, **eval_kwargs):
     """
     run cellpose on a remote server (see cellpose_server.py)
 
@@ -132,8 +132,8 @@ def remote_detect_objects(image, server_url, timeout=60, retries=1,
 
     Parameters
     ----------
-    image: 2D np.ndarray (y, x)
-        input image
+    image: 2D np.ndarray (y, x) or 3D np.ndarray (c, y, x)
+        input image; if 3D, the channel is selected with `channel`
     server_url: str
         base URL of the cellpose server, e.g. 'http://192.168.1.10:8000'
     timeout: float
@@ -141,6 +141,9 @@ def remote_detect_objects(image, server_url, timeout=60, retries=1,
         60 s leaves room for connection latency and queued requests
     retries: int
         number of retries after a failed request, with a 2 s backoff
+    channel: int
+        channel index to select from a (c, y, x) image; ignored for 2D
+        input (assumes the correct channel was already loaded)
     eval_kwargs: dict
         optional cellpose model.eval() parameters, sent as query params:
         diameter, min_size, cellprob_threshold, flow_threshold,
@@ -155,6 +158,16 @@ def remote_detect_objects(image, server_url, timeout=60, retries=1,
     import time
 
     import requests
+
+    # select channel if image is multi-channel
+    if image.ndim == 3:
+        if channel < 0 or channel >= image.shape[0]:
+            raise ValueError(
+                f'channel {channel} out of bounds for image with {image.shape[0]} channels')
+        image = image[channel]
+    elif image.ndim != 2:
+        raise ValueError(
+            f'remote_detect_objects expects 2D (y, x) or 3D (c, y, x) image, got {image.ndim}D')
 
     buf = io.BytesIO()
     np.save(buf, image)
@@ -571,6 +584,56 @@ def load_detector_file(path):
             f'detector file {path} must define a callable "detection_fun"; '
             f'found {type(detection_fun).__name__}')
     return detection_fun
+
+
+def default_visualization(image, channel_colors=None, percentiles=(1, 99.5)):
+    """
+    Default QC visualization for build_detector.
+
+    * 2-D input (y, x) -> returned unchanged (grayscale).
+    * 3-D input (c, y, x) -> composite to RGB by normalizing each channel
+      to [0, 1] via percentile clipping and mixing with per-channel RGB
+      colors. The RGBs are summed and clipped to [0, 1].
+
+    Parameters
+    ----------
+    image : np.ndarray
+        2-D or 3-D image as loaded by load_fun.
+    channel_colors : list of tuple or None
+        RGB triples in [0,1] for each channel. If None, a default cycling
+        palette is used.
+    percentiles : tuple
+        Low/high percentiles for per-channel normalization.
+
+    Returns
+    -------
+    np.ndarray
+        2-D grayscale or 3-D RGB float image in [0,1].
+    """
+    if image.ndim == 2:
+        return image
+    if image.ndim != 3:
+        raise ValueError(
+            f'default_visualization expects 2D or 3D image, got {image.ndim}D')
+    n_channels = image.shape[0]
+    h, w = image.shape[1:]
+    rgb = np.zeros((h, w, 3), dtype=float)
+    if channel_colors is None:
+        # default cycling palette
+        base = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0),
+                (1.0, 1.0, 0.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0)]
+        channel_colors = [base[i % len(base)] for i in range(n_channels)]
+    for i in range(n_channels):
+        ch = image[i].astype(float)
+        lo = np.percentile(ch, percentiles[0])
+        hi = np.percentile(ch, percentiles[1])
+        if hi <= lo:
+            norm = np.zeros_like(ch)
+        else:
+            norm = np.clip((ch - lo) / (hi - lo + 1e-12), 0, 1)
+        color = np.asarray(channel_colors[i], dtype=float)
+        rgb += norm[..., None] * color
+    return np.clip(rgb, 0, 1)
 
 
 if __name__ == '__main__':

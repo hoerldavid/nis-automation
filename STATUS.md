@@ -36,7 +36,6 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 5. **Pixel ↔ stage coordinate transform for per-tile ROIs** – calibration matrix from `get_rotation_matrix`. Low priority.
 6. **Final cleanup housekeeping** – stale one-offs left as-is per convention.
 7. **User-facing documentation** – `README_draft.md` exists, needs refinement and move to repo root.
-8. **Update building blocks to accept (C,Y,X) images** – `read_channel` now supports `channel='all'`. Masks/labels remain 2-D, but detectors / filters / stim masks should accept multi-channel images with explicit channel selection params. TODO for refactoring `autofrap/core/image/` and `autofrap/core/detection` building blocks.
 
 ## Known gotchas
 
@@ -51,6 +50,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * `GetROIInfo` color read-back always 0, but colors render correctly.
 
 ## Recent milestones
+* 20260916 – Multi-channel building blocks + default RGB visualization: added `channel` selection to `remote_detect_objects`, `cluster_stim_mask`, `detect_objects`/`segment_nuclei_otsu_watershed` in `autofrap/core/simple_seg.py`. Added `default_visualization` for (c,y,x) → RGB composite with per-channel percentile normalization. Updated `autofrap/detectors/cellpose_remote_halfnucleus_modular.py` to use `default_visualization` and explicit `load_channel`/`det_channel` routing via `parameter_map='auto'`. Verified with dry-run pipeline using `load_channel='all'` and `det_channel=0`. Closed TODO #8 “Update building blocks to accept (C,Y,X) images”.
 * 20260916 – `read_channel` load-all support: added `channel='all'` option to `autofrap/io/nd2.py`. Default remains `channel=0` → 2-D `(Y,X)`. `channel='all'` returns `(C,Y,X)`, promoting single-channel files to `(1,Y,X)`. Building blocks still expect 2-D labels/masks; updating them to accept `(C,Y,X)` with explicit channel selection is now TODO #8.
 * 20260916 – Cellpose server URL per-run: detectors now accept `server_url` via `**detector_kwargs` / `--detector-arg server_url=...` with fallback to `CELLPOSE_SERVER_URL` env var → `DEFAULT_CELLPOSE_SERVER_URL`. Updated `autofrap/detectors/cellpose_remote_detector.py` and `cellpose_remote_halfnucleus_modular.py`, tested via dry-run with modular detector. TODO #8 closed.
 * 20260916 – Spiral position count CLI + refactor: added `--max-positions/--num-positions` flag, applied as hard cap to both grid and spiral visit orders; extracted `build_positions` and `parse_cli_args` helpers from `__main__` in `autofrap/pipeline/autofrap.py`. Updated `README_draft.md` usage example. TODO #8 closed.

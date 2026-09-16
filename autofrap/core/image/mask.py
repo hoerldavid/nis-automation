@@ -359,7 +359,7 @@ def clusters_in_object(image, obj_mask, min_cluster_area=15, contrast=1.5,
 
 
 def cluster_stim_mask(labels, image, min_cluster_area=15, contrast=1.5,
-                      max_cluster_frac=0.2, pick='largest'):
+                      max_cluster_frac=0.2, pick='largest', channel=0):
     """
     stimulation mask from small bright clusters within the objects
 
@@ -384,8 +384,9 @@ def cluster_stim_mask(labels, image, min_cluster_area=15, contrast=1.5,
     ----------
     labels: 2D np.ndarray (y, x), int
         label map (0 = background, 1..N = objects)
-    image: 2D np.ndarray (y, x)
-        intensity image (same shape as labels)
+    image: 2D np.ndarray (y, x) or 3D np.ndarray (c, y, x)
+        intensity image (same shape as labels); if 3D, the channel is
+        selected with `channel`
     min_cluster_area: int
         see clusters_in_object
     contrast: float
@@ -394,12 +395,25 @@ def cluster_stim_mask(labels, image, min_cluster_area=15, contrast=1.5,
         see clusters_in_object
     pick: str or None
         'largest' / 'central' / None (see above)
+    channel: int
+        channel index to select from a (c, y, x) image; ignored for 2D
+        input (assumes the correct channel was already loaded)
 
     Returns
     -------
     stimulation_mask: 2D np.ndarray (y, x), bool
         binary mask of areas eligible for photostimulation
     """
+    # select channel if image is multi-channel
+    if image.ndim == 3:
+        if channel < 0 or channel >= image.shape[0]:
+            raise ValueError(
+                f'channel {channel} out of bounds for image with {image.shape[0]} channels')
+        image = image[channel]
+    elif image.ndim != 2:
+        raise ValueError(
+            f'cluster_stim_mask expects 2D (y, x) or 3D (c, y, x) image, got {image.ndim}D')
+
     mask = np.zeros(labels.shape, dtype=bool)
     for lbl in np.unique(labels):
         if lbl > 0:

@@ -97,25 +97,37 @@ def _extent_filter(lab, erode_iters, min_eroded_extent):
     return lab, dropped
 
 
-def detect_objects(image, params: SimpleSegParams, clip_pct=None, return_intermediates=False):
+def detect_objects(image, params: SimpleSegParams, clip_pct=None, return_intermediates=False, channel=0):
     """
     image -> label map
 
     Parameters
     ----------
     image : ndarray
-        2-D float image. Must be float to avoid underflow in high-pass.
+        2-D float image or 3-D (c, y, x) array. Must be float to avoid underflow in high-pass.
+        If 3-D, the channel is selected with `channel`.
     params : SimpleSegParams
     clip_pct : float or None
         If set, Otsu is computed on the histogram clipped to this percentile.
     return_intermediates : bool
         If True, returns (labels, intermediates) dict.
+    channel : int
+        Channel index to select from a (c, y, x) image; ignored for 2-D input.
 
     Returns
     -------
     labels or (labels, intermediates)
     """
     image = np.asarray(image, dtype=float)
+    # select channel if multi-channel
+    if image.ndim == 3:
+        if channel < 0 or channel >= image.shape[0]:
+            raise ValueError(
+                f'channel {channel} out of bounds for image with {image.shape[0]} channels')
+        image = image[channel]
+    elif image.ndim != 2:
+        raise ValueError(
+            f'detect_objects expects 2D (y, x) or 3D (c, y, x) image, got {image.ndim}D')
     d = params.derived()
     bg_sigma = d["bg_sigma"]
     smooth_sigma = d["smooth_sigma"]
@@ -192,13 +204,22 @@ def segment_nuclei_otsu_watershed(
     otsu_frac: float = 0.3,
     min_eroded_extent: float = 0.90,
     clip_pct: float | None = None,
+    channel: int = 0,
 ):
     """
     Friendly wrapper exposing the three main user knobs.
+
+    Parameters
+    ----------
+    image : ndarray
+        2-D or 3-D (c, y, x) image.
+    cell_sigma, otsu_frac, min_eroded_extent, clip_pct : see SimpleSegParams / detect_objects
+    channel : int
+        Channel index to select from a (c, y, x) image; ignored for 2-D input.
     """
     params = SimpleSegParams(
         cell_sigma=cell_sigma,
         otsu_frac=otsu_frac,
         min_eroded_extent=min_eroded_extent,
     )
-    return detect_objects(image, params, clip_pct=clip_pct)
+    return detect_objects(image, params, clip_pct=clip_pct, channel=channel)

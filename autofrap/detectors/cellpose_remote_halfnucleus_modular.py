@@ -3,8 +3,8 @@ Built-in cellpose detector with QC visualization: remote server on the
 GPU machine, assembled with build_detector.
 
     channel 0 of the survey nd2  ->  cellpose on the server  ->
-    left-half stimulation mask   +   the DAPI channel itself as
-    the QC overlay background.
+    left-half stimulation mask   +   RGB composite of loaded channels
+    as the QC overlay background.
 
 The compositor also applies its standard label housekeeping: objects
 touching the image border are discarded (clear_border=True) and labels
@@ -19,36 +19,41 @@ Uses ``CELLPOSE_SERVER_URL`` environment variable (default:
 Usage::
 
     autofrap_grid --detector autofrap/detectors/cellpose_remote_halfnucleus_modular.py \
-        --nx 2 --ny 2 --detector-arg diameter=70 --detector-arg server_url=http://...
+        --nx 2 --ny 2 --detector-arg diameter=70 --detector-arg server_url=http://... \
+        --detector-arg load_channel=all --detector-arg det_channel=0
 
---detector-arg values are routed to the server call
-(parameter_map='auto'): diameter, min_size, cellprob_threshold,
-flow_threshold, max_size_fraction, server_url.
+--detector-arg values are routed via parameter_map='auto':
+  load_channel -> load function channel selection for read_channel
+  det_channel  -> channel selection for remote_detect_objects
+  server_url   -> cellpose server URL
+  diameter, min_size, ... -> cellpose eval kwargs
 """
 import os
-from functools import partial
 
 from autofrap.io.nd2 import read_channel
-from autofrap.core.detection import build_detector, remote_detect_objects
+from autofrap.core.detection import build_detector, remote_detect_objects, default_visualization
 from autofrap.core.image.mask import half_object_stim_mask
 
 DEFAULT_CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'
 SURVEY_CHANNEL = 0
 
 
-def _remote_detect(image, server_url=None, **kwargs):
+def _load(survey_file, load_channel=SURVEY_CHANNEL):
+    # load_channel can be int, tuple/list, or 'all'
+    return read_channel(survey_file, channel=load_channel)
+
+
+def _remote_detect(image, server_url=None, det_channel=0, **kwargs):
     if server_url is None:
         server_url = os.environ.get('CELLPOSE_SERVER_URL', DEFAULT_CELLPOSE_SERVER_URL)
-    return remote_detect_objects(image, server_url=server_url, **kwargs)
+    return remote_detect_objects(image, server_url=server_url, channel=det_channel, **kwargs)
 
 detection_fun = build_detector(
-    load_fun=partial(read_channel, channel=SURVEY_CHANNEL),
+    load_fun=_load,
     detector_fun=_remote_detect,
     stim_mask_fun=lambda labels, image: half_object_stim_mask(labels),
-    # QC visualization: the loaded DAPI channel itself (2D; rendered
-    # grayscale with 1-99.5 % percentile clipping by qc.save_qc_overlay)
-    visualization_fun=lambda image: image,
-    parameter_map='auto',  # --detector-arg diameter=... and server_url reach the server
+    visualization_fun=default_visualization,
+    parameter_map='auto',  # --detector-arg load_channel=..., det_channel=..., server_url=..., diameter=...
 )
 
 
