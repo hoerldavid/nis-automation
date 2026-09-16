@@ -781,7 +781,11 @@ def build_positions(start_xy, fov, nx=2, ny=2, spacing=1.0,
     if spiral:
         from grid_utils import spiral_positions
         max_pos = max_positions if max_positions is not None else nx * ny
-        positions = spiral_positions(start_xy, fov=fov, spacing=spacing,
+        # spiral_positions expects a scalar FOV; use mean of x/y for rectangular FOVs
+        fov_scalar = float(fov[0]) if isinstance(fov, (list, tuple)) else float(fov)
+        if isinstance(fov, (list, tuple)) and len(fov) > 1:
+            fov_scalar = (float(fov[0]) + float(fov[1])) / 2.0
+        positions = spiral_positions(start_xy, fov=fov_scalar, spacing=spacing,
                                      max_positions=max_pos)
     else:
         positions = grid_positions(start_xy, fov=fov, nx=nx, ny=ny, spacing=spacing)
@@ -816,6 +820,8 @@ def parse_cli_args(argv=None):
                         '[default: %(default)s]')
     p.add_argument('--max-cycles', type=int, default=1,
                    help='max FRAP cycles per FOV [default: %(default)s]')
+    p.add_argument('--frap-oc', default='FRAPPA',
+                   help='optical configuration name to use for FRAP stimulation [default: %(default)s]')
     p.add_argument('--until-done', action='store_true',
                    help='run until all cells of a FOV are stimulated '
                         '(ignore --max-cycles)')
@@ -854,7 +860,6 @@ if __name__ == '__main__':
     import signal
     import sys
     from autofrap.core.detection import load_detector_file
-    from autofrap.microscope.nis import NonRecoverableError
 
     # Ctrl-C: first press requests a clean stop at the next safe
     # boundary (end of cycle / between FOVs - the current macro call
@@ -907,6 +912,7 @@ if __name__ == '__main__':
             return_to_start=not args.no_return,
             max_cycles=None if args.until_done else args.max_cycles,
             detection_fun=detection_fun,
+            frap_oc=args.frap_oc,
             name=args.name, use_timestamp=not args.no_timestamp,
             stop_check=lambda: _stop['requested'],
             **detector_kwargs

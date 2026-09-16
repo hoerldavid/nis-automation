@@ -32,7 +32,7 @@ import os
 
 from autofrap.io.nd2 import read_channel
 from autofrap.core.detection import build_detector, remote_detect_objects, default_visualization
-from autofrap.core.image.mask import half_object_stim_mask, filter_intensity_inside
+from autofrap.core.image.mask import random_circle_stim_mask, filter_intensity_inside
 
 DEFAULT_CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'
 SURVEY_CHANNEL = 0
@@ -54,7 +54,7 @@ def _filter_intensity(labels, image, channel=0, threshold=550, metric='mean'):
 detection_fun = build_detector(
     load_fun=_load,
     detector_fun=_remote_detect,
-    stim_mask_fun=lambda labels, image: half_object_stim_mask(labels),
+    stim_mask_fun=lambda labels, image: random_circle_stim_mask(labels, area_fraction=0.25),
     visualization_fun=default_visualization,
     filter_function=_filter_intensity,
     parameter_map='auto',  # --detector-arg load_channel=..., det_channel=..., server_url=..., diameter=...
