@@ -470,6 +470,12 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                     break
         except (RecoverableError, NonRecoverableError):
             raise
+        except TimeoutError as e:
+            # permissive: treat macro timeout as recoverable for this FOV
+            # finally block will clean ROIs / close docs
+            raise RecoverableError(
+                f'NIS macro timed out: {e}. Skipping this FOV.'
+            ) from e
         except KeyError as e:
             # an empty ini read-back means the NIS macro aborted partway -
             # the GUI state is now unknown, so don't queue more FOVs on top

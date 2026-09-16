@@ -93,7 +93,7 @@ def _nis_running(path_to_nis):
     return exe in out.stdout
 
 
-def _run_macro(path_to_nis, body, ini=False):
+def _run_macro(path_to_nis, body, ini=False, timeout=20):
     """
     run a NIS macro: write it to a temp .mac file and execute it with
     `nis_ar -mw` (attaches to the running NIS GUI, blocks until the
@@ -114,6 +114,10 @@ def _run_macro(path_to_nis, body, ini=False):
         create a temp .ini for the macro to write results into
         (Int_SetKeyValue / Int_SetKeyString); when True, the parsed
         .ini is returned
+    timeout: float or None, default 20
+        seconds to wait for nis_ar -mw. Default 20 s for quick macros.
+        Set to None to wait indefinitely. Long acquisitions should
+        override with a larger value, e.g. 300 s.
 
     Returns
     -------
@@ -137,7 +141,11 @@ def _run_macro(path_to_nis, body, ini=False):
         # the .mac handle must be closed before nis_ar opens the file,
         # otherwise the GUI reports "Can't open file for reading"
         ntf.close()
-        subprocess.call(f'"{path_to_nis}" -mw "{ntf.name}"')
+        try:
+            subprocess.run([path_to_nis, "-mw", ntf.name], timeout=timeout,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except subprocess.TimeoutExpired:
+            raise TimeoutError(f"NIS macro timed out after {timeout}s. Macro file: {ntf.name}")
         if ini:
             config = configparser.ConfigParser()
             config.read(ntf2.name)
@@ -429,7 +437,7 @@ def get_nd_acq_tabs(path_to_nis):
     return {tab: config['tabs'][tab] == '1' for tab in ND_ACQ_TABS}
 
 
-def run_current_nd_experiment(path_to_nis, outfile=None, open_after=True, progress_bar=True):
+def run_current_nd_experiment(path_to_nis, outfile=None, open_after=True, progress_bar=True, timeout=300):
     """
     run the ND experiment as currently configured in the NIS GUI
     (ND Acquisition window), without rebuilding its definition
@@ -455,14 +463,16 @@ def run_current_nd_experiment(path_to_nis, outfile=None, open_after=True, progre
         False when saving
     progress_bar: bool
         show the ND Experiment Acquisition Status window
+    timeout: float or None, default 300
+        seconds to wait for the acquisition macro. Override for longer/shorter runs.
     """
     cmd = f'ND_DefineExperiment(-1,-1,-1,-1,-1,"{outfile or ""}","",-1,-1,-1,-1);\n'
     run_fn = 'ND_RunExperiment' if progress_bar else 'ND_RunExperimentNoProgressBar'
     cmd += f'{run_fn}({1 if open_after else 0});'
-    _run_macro(path_to_nis, cmd)
+    _run_macro(path_to_nis, cmd, timeout=timeout)
 
 
-def run_stimulation_experiment(path_to_nis):
+def run_stimulation_experiment(path_to_nis, timeout=300):
     """
     run the currently configured sequential stimulation ND experiment
     (ND_RunSequentialStimulationExp = "starts the current Sequential
@@ -470,8 +480,15 @@ def run_stimulation_experiment(path_to_nis):
 
     the result stays open in the GUI as the current document (unsaved);
     save it with save_current_document
+
+    Parameters
+    ----------
+    path_to_nis: str
+        path to the nis_ar.exe executable
+    timeout: float or None, default 300
+        seconds to wait for the stimulation macro. Override for longer/shorter runs.
     """
-    _run_macro(path_to_nis, 'ND_RunSequentialStimulationExp();')
+    _run_macro(path_to_nis, 'ND_RunSequentialStimulationExp();', timeout=timeout)
 
 
 # predefined NIS ROI colors (BGR values, see CreatePolygonROI docs)
@@ -851,5 +868,5 @@ class NDAcquisition:
             cmd += self.compile_c_cmd()
         _run_macro(path_to_nis, cmd)
     
-    def run(self, path_to_nis):
-        _run_macro(path_to_nis, 'ND_RunExperiment(0);')
+    def run(self, path_to_nis, timeout=300):
+        _run_macro(path_to_nis, 'ND_RunExperiment(0);', timeout=timeout)
