@@ -4,6 +4,8 @@ from tempfile import NamedTemporaryFile
 import os
 from shutil import move
 import logging
+from dataclasses import dataclass
+from typing import Callable, Any
 
 from autofrap.microscope._resources import DUMMY_ND2 as dummy_nd2
 
@@ -31,6 +33,66 @@ EXPORT_DUMMY_PREFIX = '$tiffexport$'
 # placeholder for the temp .ini path in macro bodies; _run_macro
 # substitutes it with the real path (only when ini=True)
 INI_PLACEHOLDER = '__INI_PATH__'
+
+
+@dataclass(frozen=True)
+class MacroOp:
+    name: str
+    build: Callable[[dict, str], str]
+    parse: Callable[[object], Any] | None = None
+
+
+# MacroOps for batched reads
+def _parse_position(sec_cfg):
+    x = float(sec_cfg['x']); y = float(sec_cfg['y']); z0 = float(sec_cfg['z0'])
+    z1 = float(sec_cfg['z1']) if 'z1' in sec_cfg else None
+    return (x, y, z0, z1)
+
+def _parse_resolution(sec_cfg):
+    return tuple(map(float, (sec_cfg['xres'], sec_cfg['yres'], sec_cfg['siz'], sec_cfg['mag'])))
+
+def _parse_nd_acq_tabs(sec_cfg):
+    return {tab: sec_cfg.get(tab, fallback='0') == '1' for tab in ND_ACQ_TABS}
+
+_OP_POSITION = MacroOp(
+    name="position",
+    build=lambda params, sec: f'''
+        double x; double y; double z_0; double z_1;
+        StgGetPosXY(&x, &y);
+        StgGetPosZ(&z_0, 0);
+        if (StgZ_IsPresent(1)) {{
+            StgGetPosZ(&z_1, 1);
+            Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","z1",z_1);
+        }}
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","x",x);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","y",y);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","z0",z_0);
+    ''',
+    parse=_parse_position
+)
+
+_OP_RESOLUTION = MacroOp(
+    name="resolution",
+    build=lambda params, sec: f'''
+        int x; int y; double siz; double mag;
+        GetCameraResolution(2,&x,&y,&siz);
+        mag = GetCurrentObjMagnification();
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","xres",x);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","yres",y);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","siz",siz);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","mag",mag);
+    ''',
+    parse=_parse_resolution
+)
+
+_OP_ND_ACQ_TABS = MacroOp(
+    name="nd_acq_tabs",
+    build=lambda params, sec: "\n".join(
+        f'Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","{tab}",ND_IsAcqTabChecked("{tab}"));'
+        for tab in ND_ACQ_TABS
+    ),
+    parse=_parse_nd_acq_tabs
+)
 
 
 def is_color_camera(path_to_nis):
@@ -154,6 +216,46 @@ def _run_macro(path_to_nis, body, ini=False, timeout=20):
         _cleanup(ntf.name, ntf2.name if ntf2 else None)
 
 
+def batch_run_macro(path_to_nis, calls, timeout=20):
+    """
+    Run a list of MacroOps in a single NIS macro.
+
+    Parameters
+    ----------
+    path_to_nis: str
+        path to nis_ar.exe
+    calls: list[tuple[MacroOp, dict]]
+        list of (op, params) tuples. Params are passed to op.build.
+        Each op is run with a unique ini section name.
+    timeout: float
+        timeout for the combined macro
+
+    Returns
+    -------
+    dict {op.name: parsed_value}
+    """
+    if not calls:
+        return {}
+    sections = {}
+    stmts = []
+    needs_ini = False
+    for i, (op, params) in enumerate(calls):
+        sec = f"{op.name}_{i}"
+        sections[op] = sec
+        stmts.append(op.build(params or {}, sec))
+        if op.parse is not None:
+            needs_ini = True
+    body = "\n".join(stmts)
+    cfg = _run_macro(path_to_nis, body, ini=needs_ini, timeout=timeout)
+    out = {}
+    for op, sec in sections.items():
+        if op.parse is not None:
+            out[op.name] = op.parse(cfg[sec])
+        else:
+            out[op.name] = None
+    return out
+
+
 def backup_optical_configurations(path_to_nis, backup_path):
     """
     export all optical configurations as XML
@@ -220,22 +322,10 @@ def get_camera_format(path_to_nis):
 
 
 def get_resolution(path_to_nis):
-    cmd = f'''
-        int x;
-        int y;
-        double siz;
-        double mag;
-        GetCameraResolution(2,&x,&y,&siz);
-        mag = GetCurrentObjMagnification();
-        
-        Int_SetKeyValue("{INI_PLACEHOLDER}","res","xres",x);
-        Int_SetKeyValue("{INI_PLACEHOLDER}","res","yres",y);
-        Int_SetKeyValue("{INI_PLACEHOLDER}","res","siz",siz);
-        Int_SetKeyValue("{INI_PLACEHOLDER}","res","mag",mag);
-        '''
-    config = _run_macro(path_to_nis, cmd, ini=True)
-    res = (config['res']['xres'], config['res']['yres'], config['res']['siz'], config.get('res', 'mag'))
-    return tuple(map(float, res))
+    sec = "res"
+    body = _OP_RESOLUTION.build({}, sec)
+    cfg = _run_macro(path_to_nis, body, ini=True)
+    return _OP_RESOLUTION.parse(cfg[sec])
 
 
 def get_camera_roi(path_to_nis):
@@ -372,31 +462,10 @@ def set_position(path_to_nis, pos_xy=None, pos_z=None, pos_piezo=None, relative_
 
 
 def get_position(path_to_nis):
-    cmd = f'''
-        double x;
-        double y;
-        double z_0;
-        double z_1;
-        StgGetPosXY(&x, &y);
-        StgGetPosZ(&z_0, 0);
-        
-        if (StgZ_IsPresent(1))
-        {{
-            StgGetPosZ(&z_1, 1);
-            Int_SetKeyValue("{INI_PLACEHOLDER}","pos","z1",z_1);
-        }}        
-        
-        Int_SetKeyValue("{INI_PLACEHOLDER}","pos","x",x);
-        Int_SetKeyValue("{INI_PLACEHOLDER}","pos","y",y);
-        Int_SetKeyValue("{INI_PLACEHOLDER}","pos","z0",z_0);
-        
-        '''
-    config = _run_macro(path_to_nis, cmd, ini=True)
-    res = [float(config.get('pos', k)) for k in ('x', 'y', 'z0')]
-    # z1 (piezo) is only written when a second Z device is present
-    z1 = config.get('pos', 'z1', fallback=None)
-    res.append(float(z1) if z1 is not None else None)
-    return tuple(res)
+    sec = "pos"
+    body = _OP_POSITION.build({}, sec)
+    cfg = _run_macro(path_to_nis, body, ini=True)
+    return _OP_POSITION.parse(cfg[sec])
 
 
 def get_fov_from_res(res):
@@ -429,12 +498,10 @@ def get_nd_acq_tabs(path_to_nis):
     dict {tab name: bool}
         one entry per ND_ACQ_TABS tab, True if that loop is active
     """
-    cmd = '\n'.join(
-        'Int_SetKeyValue("%s","tabs","%s",ND_IsAcqTabChecked("%s"));'
-        % (INI_PLACEHOLDER, tab, tab)
-        for tab in ND_ACQ_TABS)
-    config = _run_macro(path_to_nis, cmd, ini=True)
-    return {tab: config['tabs'][tab] == '1' for tab in ND_ACQ_TABS}
+    sec = "tabs"
+    body = _OP_ND_ACQ_TABS.build({}, sec)
+    cfg = _run_macro(path_to_nis, body, ini=True)
+    return _OP_ND_ACQ_TABS.parse(cfg[sec])
 
 
 def run_current_nd_experiment(path_to_nis, outfile=None, open_after=True, progress_bar=True, timeout=300):

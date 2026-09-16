@@ -6,6 +6,24 @@ All wrappers in `nis_util.py` follow:
 2. `nis_ar.exe -mw <file>` attaches to running GUI, blocks until done
 3. Return values via `Int_SetKeyValue` / `Int_SetKeyString` into temp `.ini`
 
+### Macro batching
+To reduce `nis_ar` overhead, `autofrap/microscope/nis.py` now uses a `MacroOp` pattern:
+* `MacroOp(name, build(params, section), parse=None)`
+* `build` returns a NIS snippet with `Int_SetKeyValue("__INI_PATH__", section, ...)`
+* `parse` converts the ini section to Python value; setters have `parse=None`
+* `batch_run_macro(path, [(op, params), ...], timeout)` builds one macro with unique sections per op and runs it once.
+
+Current ops:
+* `_OP_POSITION` → `get_position`
+* `_OP_RESOLUTION` → `get_resolution`
+* `_OP_ND_ACQ_TABS` → `get_nd_acq_tabs`
+
+Example:
+```python
+from autofrap.microscope.nis import batch_run_macro, _OP_POSITION, _OP_RESOLUTION
+res = batch_run_macro(nis_exe, [(_OP_POSITION, {}), (_OP_RESOLUTION, {})])
+```
+
 Gotchas
 * Close `.mac` handle before calling `nis_ar`, else “Can't open file for reading”
 * NIS locks failed `.mac` files → `PermissionError` on remove

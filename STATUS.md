@@ -9,6 +9,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * Macro execution: temp `.mac` → `nis_ar.exe -mw` → temp `.ini`. Helper `_run_macro` used by all `nis_util` wrappers.
 * Live-verified wrappers: `get_position`, `get_resolution`, `get_rotation_matrix`, `get_optical_confs`, `get_nd_acq_tabs`, `get_opened_documents`/`activate_document`/`activate_opened_document`, `get_roi_ids`, `run_current_nd_experiment`, `run_stimulation_experiment`, `save_current_document`, `add_polygon_roi`, `set_roi_type`, `delete_roi`.
 * FOV = xres * pixel_size / magnification. e.g. 133.1 µm at 100x/13 µm.
+* **New macro batching pattern** `autofrap/microscope/nis.py`: `MacroOp` dataclass with `build(params,section)` and `parse`. Ops for `position`, `resolution`, `nd_acq_tabs` refactored; `batch_run_macro` runs multiple ops in one `nis_ar` call with unique ini sections. See `docs/NIS_REFERENCE.md` § Macro batching.
 
 **Detection**
 * `build_detector` composer with `parameter_map=None|'auto'|dict`. Runtime args via `--detector-arg`.
