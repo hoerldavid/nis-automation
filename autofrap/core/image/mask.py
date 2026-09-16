@@ -545,19 +545,24 @@ def mask_to_polygon(mask, tolerance=2.0):
     mask = np.asarray(mask, dtype=bool)
     if not np.any(mask):
         return []
-    # crop to bounding box for speed
+    # crop to bounding box for speed, with 1-px margin for contour detection
     coords = np.argwhere(mask)
     minr, minc = coords.min(axis=0)
     maxr, maxc = coords.max(axis=0) + 1
-    crop = mask[minr:maxr, minc:maxc]
+    margin = 1
+    minr_p = max(0, minr - margin)
+    minc_p = max(0, minc - margin)
+    maxr_p = min(mask.shape[0], maxr + margin)
+    maxc_p = min(mask.shape[1], maxc + margin)
+    crop = mask[minr_p:maxr_p, minc_p:maxc_p]
 
     contours = find_contours(crop, 0.5)
     if not contours:
         return []
 
     contour = max(contours, key=len)  # largest / outermost contour
-    contour[:, 0] += minr
-    contour[:, 1] += minc
+    contour[:, 0] += minr_p
+    contour[:, 1] += minc_p
     poly = np.column_stack((contour[:, 1], contour[:, 0]))  # (row, col) -> (x, y)
     if len(poly) > 3:
         poly = approximate_polygon(poly, tolerance=tolerance)
