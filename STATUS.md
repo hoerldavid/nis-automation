@@ -42,6 +42,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 
 ## Known gotchas
 
+* FakeNIS patch bypass: direct imports of `batch_run_macro` from `autofrap.microscope.nis` bypass the `nis_util` shim used by `FakeNIS`. Always access batch ops via `nis_util.batch_run_macro` to stay patchable. TODO: refactor imports to avoid direct module imports.
 * Close `.mac` handle before `nis_ar`, or GUI reports “Can't open file for reading”.
 * NIS keeps lock on failed `.mac` → `PermissionError` on remove.
 * `Int_SetKeyValue` only numeric; use `Int_SetKeyString` for strings.
@@ -53,6 +54,15 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * `GetROIInfo` color read-back always 0, but colors render correctly.
 
 ## Recent milestones
+* 20260917 – Refactor autoFRAP pipeline to explicit setup / cleanup blocks and batched macro calls:
+  - Added `setup_microscope` with batched `nd_acq_tabs + position + resolution` reads and 0/2/4 s retry.
+  - Introduced `autofrap_loop_inner`, `autofrap_loop_outer`, `cleanup_run`, and outer `autofrap` orchestrator; position generation moved outside the loop.
+  - Added `move_stage_with_retry` helper with 0/2/4 s retry and `TimeoutError` handling.
+  - Batched ROI creation: `delete_all_rois_in_current_document + add_polygon_roi x2` via `batch_run_macro` with one retry on timeout; `set_roi_type` kept separate.
+  - Replaced per-ROI `delete_roi` with `delete_all_rois_in_current_document` in cycle cleanup and finally block; removed reopen-on-failure guards.
+  - Updated `FakeNIS` to return MacroOp-compatible dicts for `add_polygon_roi` and patched `batch_run_macro` usage via `nis_util`.
+  - Dry-run pipeline verified with Cellpose remote server; intensity filter threshold lowered to 450 for test images.
+  - Updated `autofrap/__init__.py` alias for backwards compatibility.
 * 20260916 – Small fixes at microscope + detector examples: live 2×2 and spiral runs with Cellpose remote on real sample; fixed `pip install -e .` multiple-top-level-packages error via explicit `[tool.setuptools.packages.find]` in `pyproject.toml`; fixed import bug in `autofrap/pipeline/autofrap.py` (`NonRecoverableError` import) and added `--frap-oc` CLI flag; fixed `build_positions` spiral FOV scalar handling; added intensity filter `filter_intensity_inside` to `cellpose_remote_halfnucleus_modular.py` (channel 0 mean > 550) and created detector variants `cellpose_remote_cluster_modular.py` (cluster stim mask, channel 2) and `cellpose_remote_randomcircle_modular.py` (random circle stim mask). Live verified spiral 5-position, 2-cycle runs with `488 CSU-W1 FRAP` optical config.
 * 20260916 – Multi-channel building blocks + default RGB visualization: added `channel` selection to `remote_detect_objects`, `cluster_stim_mask`, `detect_objects`/`segment_nuclei_otsu_watershed` in `autofrap/core/simple_seg.py`. Added `default_visualization` for (c,y,x) → RGB composite with per-channel percentile normalization. Updated `autofrap/detectors/cellpose_remote_halfnucleus_modular.py` to use `default_visualization` and explicit `load_channel`/`det_channel` routing via `parameter_map='auto'`. Verified with dry-run pipeline using `load_channel='all'` and `det_channel=0`. Closed TODO #8 “Update building blocks to accept (C,Y,X) images”.
 * 20260916 – `read_channel` load-all support: added `channel='all'` option to `autofrap/io/nd2.py`. Default remains `channel=0` → 2-D `(Y,X)`. `channel='all'` returns `(C,Y,X)`, promoting single-channel files to `(1,Y,X)`. Building blocks still expect 2-D labels/masks; updating them to accept `(C,Y,X)` with explicit channel selection is now TODO #8.

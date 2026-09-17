@@ -325,7 +325,8 @@ class FakeNIS:
                 if self.abort_add_roi:
                     raise KeyError('id')
                 self._next_roi += 1
-                out[sec] = self.roi_id
+                # return the ini format expected by MacroOp.parse
+                out[sec] = {'id': self.roi_id}
                 continue
             if op.name == 'delete_all_rois_in_current_document':
                 # NOP for fake – ROIs are session-global, just clear counter

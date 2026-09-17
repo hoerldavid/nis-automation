@@ -48,7 +48,7 @@ def _remote_detect(image, server_url=None, det_channel=0, **kwargs):
         server_url = os.environ.get('CELLPOSE_SERVER_URL', DEFAULT_CELLPOSE_SERVER_URL)
     return remote_detect_objects(image, server_url=server_url, channel=det_channel, **kwargs)
 
-def _filter_intensity(labels, image, channel=0, threshold=550, metric='mean'):
+def _filter_intensity(labels, image, channel=0, threshold=450, metric='mean'):
     return filter_intensity_inside(labels, image, channel=channel, metric=metric, threshold=threshold)
 
 detection_fun = build_detector(

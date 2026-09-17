@@ -11,10 +11,12 @@ from autofrap.pipeline.autofrap import (  # noqa: E402,F401
     RecoverableError,
     NonRecoverableError,
     autofrap,
-    autofrap_multiposition,
+    autofrap_loop_outer,
     grid_positions,
     next_stimulatable_cell,
 )
 
-# Backwards‑compatible alias (the old name still works)
+# Backwards‑compatible alias
+# Old name 'autofrap_multiposition' now points to the loop outer function
+autofrap_multiposition = autofrap_loop_outer
 autofrap_grid = autofrap_multiposition

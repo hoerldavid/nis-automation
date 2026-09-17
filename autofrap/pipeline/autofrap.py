@@ -59,6 +59,10 @@ import time
 import numpy as np
 
 import autofrap.microscope.nis as nis_util
+from autofrap.microscope.nis import (
+    _OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT,
+    _OP_ADD_POLYGON_ROI,
+)
 from autofrap.core.detection import build_detector, load_detector_file, cell_mask
 from autofrap.core.image.mask import mask_to_polygon
 from autofrap.core.image.qc import save_qc_overlay
@@ -109,6 +113,139 @@ def _run_nd_acq_check(nis_exe):
     """Pre-flight wrapper: queries NIS then validates the template."""
     tabs = nis_util.get_nd_acq_tabs(nis_exe)
     return _check_nd_acq_template(tabs)
+
+
+def setup_microscope(nis_exe):
+    """Batch read of ND acquisition tabs, stage position and resolution.
+
+    Returns
+    -------
+    pos : tuple
+        (x, y, z0, z1) stage position
+    res : tuple
+        (xres, yres, pixel_size, magnification)
+    """
+    import time
+    from autofrap.microscope.nis import (
+        _OP_POSITION, _OP_RESOLUTION, _OP_ND_ACQ_TABS
+    )
+    calls = [
+        (_OP_ND_ACQ_TABS, {}),
+        (_OP_POSITION, {}),
+        (_OP_RESOLUTION, {}),
+    ]
+    # short timeout for reads with retry
+    last_exc = None
+    for attempt, delay in enumerate([0, 2, 4], start=1):
+        try:
+            if delay:
+                time.sleep(delay)
+            results = nis_util.batch_run_macro(nis_exe, calls, timeout=10)
+            tabs = _OP_ND_ACQ_TABS.parse(results['nd_acq_tabs_0'])
+            pos = _OP_POSITION.parse(results['position_0'])
+            res = _OP_RESOLUTION.parse(results['resolution_0'])
+            _check_nd_acq_template(tabs)
+            if attempt > 1:
+                print(f'[setup_microscope] succeeded on attempt {attempt}', flush=True)
+            return pos, res
+        except Exception as e:
+            last_exc = e
+            if attempt == 3:
+                break
+            print(f'[setup_microscope] attempt {attempt} failed: {e!r}, retrying in {delay}s', flush=True)
+    raise last_exc
+
+
+def move_stage_with_retry(nis_exe, pos_xy):
+    """Move stage with retry on timeout / KeyError / OSError.
+
+    Retries 3 times with delays 0s, 2s, 4s.
+    """
+    import time
+    last_err = None
+    for attempt, delay in enumerate([0, 2, 4], start=1):
+        try:
+            if delay:
+                time.sleep(delay)
+            nis_util.set_position(nis_exe, pos_xy=pos_xy)
+            if attempt > 1:
+                print(f'[move_stage] succeeded on attempt {attempt}', flush=True)
+            return
+        except (KeyError, OSError, TimeoutError) as e:
+            last_err = e
+            if attempt == 3:
+                break
+            print(f'[move_stage] attempt {attempt} failed: {e!r}, retry in {delay}s', flush=True)
+    raise last_err
+
+
+def cleanup_run(nis_exe, start_pos, return_to_start=True):
+    """Best-effort cleanup after a grid run.
+
+    * Optionally move back to start position with retry.
+    * Delete all ROIs in current document.
+    * Close all open documents.
+    All operations are idempotent and failures are logged but not raised.
+    """
+    if return_to_start and start_pos is not None:
+        try:
+            move_stage_with_retry(nis_exe, start_pos[:2])
+            print(f'moved back to start ({start_pos[0]:+.2f}, {start_pos[1]:+.2f})')
+        except Exception as e:
+            print(f'!!! could not return to start: {e!r}', flush=True)
+    # Idempotent cleanup
+    try:
+        nis_util.delete_all_rois_in_current_document(nis_exe)
+    except Exception as e:
+        print(f'!!! cleanup delete_all_rois failed: {e!r}', flush=True)
+    try:
+        nis_util.close_all_docs(nis_exe)
+    except Exception as e:
+        print(f'!!! cleanup close_all_docs failed: {e!r}', flush=True)
+
+
+def autofrap(nis_exe, out_dir,
+            nx=2, ny=2, spacing=1.0,
+            spiral=False, max_positions=None,
+            max_cycles=None,
+            detection_fun=None,
+            frap_oc='FRAPPA',
+            centroid_threshold='auto',
+            fov_subdirs=False,
+            name=None, use_timestamp=True,
+            stop_check=None,
+            allow_interrupt_after_survey=False,
+            return_to_start=True,
+            **detector_kwargs):
+    """Outermost autoFRAP entry point.
+
+    Performs setup, builds positions from grid parameters, runs the outer
+    loop over positions and guarantees cleanup.
+    """
+    # setup microscope
+    start_pos, res = setup_microscope(nis_exe)
+    fov = nis_util.get_fov_from_res(res)
+    positions = build_positions(
+        start_pos[:2], fov,
+        nx=nx, ny=ny, spacing=spacing,
+        spiral=spiral, max_positions=max_positions
+    )
+    try:
+        results = autofrap_loop_outer(
+            nis_exe, out_dir, positions,
+            max_cycles=max_cycles,
+            detection_fun=detection_fun,
+            frap_oc=frap_oc,
+            centroid_threshold=centroid_threshold,
+            fov_subdirs=fov_subdirs,
+            name=name, use_timestamp=use_timestamp,
+            stop_check=stop_check,
+            allow_interrupt_after_survey=allow_interrupt_after_survey,
+            **detector_kwargs
+        )
+    finally:
+        cleanup_run(nis_exe, start_pos, return_to_start=return_to_start)
+    return results
 
 
 class AutofrapError(Exception):
@@ -164,7 +301,7 @@ def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
     return None
 
 
-def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
+def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
              frap_oc='FRAPPA', centroid_threshold='auto',
              file_prefix=None, stop_check=None,
              allow_interrupt_after_survey=False, **detector_kwargs):
@@ -406,15 +543,34 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                 raise NonRecoverableError(
                     f'could not open {survey_file} '
                     f'(current document: {doc})')
-            cell_roi = nis_util.add_polygon_roi(nis_exe, cell_poly)
-            if cell_roi <= 0:
-                raise RecoverableError(
-                    f'cell ROI creation failed (id={cell_roi})')
-            stim_roi = nis_util.add_polygon_roi(nis_exe, stim_poly)
-            if stim_roi <= 0:
-                raise RecoverableError(
-                    f'stim ROI creation failed (id={stim_roi})')
-            nis_util.set_roi_type(nis_exe, stim_roi, 3)  # 3 = stimulation
+            # ROI batch: delete existing ROIs then add cell + stim ROIs
+            # The delete is idempotent, so the whole batch is safe to retry
+            roi_calls = [
+                (_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
+                (_OP_ADD_POLYGON_ROI, {'points': cell_poly}),
+                (_OP_ADD_POLYGON_ROI, {'points': stim_poly}),
+            ]
+            # retry once on timeout
+            try:
+                roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
+                # parse ROI ids
+                cell_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_1'])
+                stim_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_2'])
+                if cell_roi <= 0:
+                    raise RecoverableError(f'cell ROI creation failed (id={cell_roi})')
+                if stim_roi <= 0:
+                    raise RecoverableError(f'stim ROI creation failed (id={stim_roi})')
+                nis_util.set_roi_type(nis_exe, stim_roi, 3)  # 3 = stimulation
+            except TimeoutError:
+                # one retry of the whole ROI block
+                roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
+                cell_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_1'])
+                stim_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_2'])
+                if cell_roi <= 0:
+                    raise RecoverableError(f'cell ROI creation failed (id={cell_roi})')
+                if stim_roi <= 0:
+                    raise RecoverableError(f'stim ROI creation failed (id={stim_roi})')
+                nis_util.set_roi_type(nis_exe, stim_roi, 3)
 
             nis_util.set_optical_configuration(nis_exe, frap_oc)
             t0 = time.time()
@@ -446,19 +602,19 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             doc = nis_util.get_current_document(nis_exe)
             if os.path.normcase(doc) != os.path.normcase(survey_file):
                 # the survey document is still open, just not current -
-                # make it current without a disk re-load; open_image only
-                # as a fallback in case it really is gone
+                # make it current without a disk re-load
                 try:
                     nis_util.activate_opened_document(nis_exe, survey_file)
                 except (FileNotFoundError, RuntimeError):
-                    nis_util.open_image(nis_exe, survey_file)
+                    raise NonRecoverableError(
+                        f'could not activate {survey_file} '
+                        f'(current document: {doc})')
                 doc = nis_util.get_current_document(nis_exe)
             if os.path.normcase(doc) != os.path.normcase(survey_file):
                 raise NonRecoverableError(
                     f'could not make {survey_file} current '
                     f'(current document: {doc})')
-            nis_util.delete_roi(nis_exe, stim_roi)
-            nis_util.delete_roi(nis_exe, cell_roi)
+            nis_util.delete_all_rois_in_current_document(nis_exe)
             nis_util.close_current_document(nis_exe, save='discard')
             cell_roi = stim_roi = None
 
@@ -504,16 +660,16 @@ def autofrap(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                     # closing the document)
                     if os.path.normcase(doc) != os.path.normcase(survey_file):
                         nis_util.close_current_document(nis_exe, save='discard')
+                        # make survey document current without reopening
                         try:
                             nis_util.activate_opened_document(nis_exe, survey_file)
                         except Exception:
-                            nis_util.open_image(nis_exe, survey_file)
+                            # if activation fails we cannot guarantee cleanup,
+                            # but we still try to close what we can
+                            pass
                     # global-scope ROIs survive closing the document -
-                    # delete them explicitly (no-ops for ids that are gone)
-                    if stim_roi is not None:
-                        nis_util.delete_roi(nis_exe, stim_roi)
-                    if cell_roi is not None:
-                        nis_util.delete_roi(nis_exe, cell_roi)
+                    # delete them explicitly
+                    nis_util.delete_all_rois_in_current_document(nis_exe)
                     nis_util.close_current_document(nis_exe, save='discard')
             except Exception:
                 pass
@@ -555,8 +711,8 @@ def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
             for j in range(ny) for i in range(nx)]
 
 
-def autofrap_multiposition(nis_exe, out_dir, positions=None,
-                  return_to_start=True, max_cycles=None,
+def autofrap_loop_outer(nis_exe, out_dir, positions,
+                  max_cycles=None,
                   detection_fun=None, frap_oc='FRAPPA',
                   centroid_threshold='auto',
                   fov_subdirs=False, name=None, use_timestamp=True,
@@ -648,17 +804,10 @@ def autofrap_multiposition(nis_exe, out_dir, positions=None,
             f'invalid experiment name {name!r}: only letters, digits, "_", "." '
             'and "-" are allowed')
     os.makedirs(out_dir, exist_ok=True)
-    # Pre-flight check: verify the ND Acquisition template is sane
-    # (single image survey, no loops)
-    _run_nd_acq_check(nis_exe)
-    try:
-        start_xy = nis_util.get_position(nis_exe)[:2]
-    except (KeyError, OSError) as e:
-        raise NonRecoverableError(
-            f'could not read the starting stage position: {e!r}') from e
     if positions is None:
-        fov = nis_util.get_fov_from_res(nis_util.get_resolution(nis_exe))
-        positions = grid_positions(start_xy, fov, nx=2, ny=2, spacing=1.0)
+        raise NonRecoverableError(
+            'positions must be supplied; generate them outside autofrap_multiposition')
+    # positions are now required to be pre-computed
     stamp = time.strftime('%Y%m%d_%H%M%S')
     if name is None:
         run_name = stamp
@@ -671,24 +820,22 @@ def autofrap_multiposition(nis_exe, out_dir, positions=None,
             'choose a different name or move the old run')
     os.makedirs(run_dir, exist_ok=True)
 
-    print(f'grid: {len(positions)} position(s), '
-          f'start=({start_xy[0]:+.2f}, {start_xy[1]:+.2f}) um')
+    print(f'grid: {len(positions)} position(s)')
     results = []
     aborted = None
     stopped = False
-    try:
-        for i, (x, y) in enumerate(positions, 1):
+    for i, (x, y) in enumerate(positions, 1):
             fov_dir = (os.path.join(run_dir, f'fov{i:02d}')
                        if fov_subdirs else run_dir)
             print(f'\n=== [{i}/{len(positions)}] ({x:+.1f}, {y:+.1f}) um '
                   f'-> {fov_dir} (fov{i:02d})',
                   flush=True)
 
+            # move with retry
             try:
-                nis_util.set_position(nis_exe, pos_xy=(x, y))
-            except (KeyError, OSError) as e:
-                print(f'!!! FOV {i}: stage move failed: {e!r} '
-                      f'- aborting the grid run', flush=True)
+                move_stage_with_retry(nis_exe, (x, y))
+            except (KeyError, OSError, TimeoutError) as e:
+                print(f'!!! FOV {i}: stage move failed after retries: {e!r} - aborting the grid run', flush=True)
                 results.append((i, x, y, fov_dir, None))
                 aborted = i
                 break
@@ -697,7 +844,7 @@ def autofrap_multiposition(nis_exe, out_dir, positions=None,
             # on scope 20260909) - no settling wait needed
 
             try:
-                fov_results = autofrap(
+                fov_results = autofrap_loop_inner(
                     nis_exe, fov_dir, max_cycles=max_cycles,
                     detection_fun=detection_fun,
                     frap_oc=frap_oc,
@@ -724,16 +871,6 @@ def autofrap_multiposition(nis_exe, out_dir, positions=None,
                 fov_results = None
 
             results.append((i, x, y, fov_dir, fov_results))
-    finally:
-        if return_to_start:
-            # best effort: even after an abort or an unexpected error the
-            # stage should end up back where the run started
-            try:
-                nis_util.set_position(nis_exe, pos_xy=start_xy)
-                print(f'moved back to start ({start_xy[0]:+.2f}, '
-                      f'{start_xy[1]:+.2f})')
-            except Exception as e:
-                print(f'!!! could not return to start: {e!r}', flush=True)
 
     n_ok = sum(1 for r in results if r[4] is not None)
     n_cells = sum(len(r[4]) for r in results if r[4] is not None)
@@ -901,26 +1038,17 @@ if __name__ == '__main__':
             pass
         detector_kwargs[key] = val
 
-    # microscope I/O – must happen here, not in the pure helper
-    start_xy = nis_util.get_position(args.nis)[:2]
-    res = nis_util.get_resolution(args.nis)
-    fov = nis_util.get_fov_from_res(res)
-
-    positions = build_positions(
-        start_xy, fov,
-        nx=args.nx, ny=args.ny, spacing=args.spacing,
-        spiral=args.spiral, max_positions=args.max_positions
-    )
-
     try:
-        autofrap_multiposition(
-            args.nis, args.out, positions=positions,
-            return_to_start=not args.no_return,
+        autofrap(
+            args.nis, args.out,
+            nx=args.nx, ny=args.ny, spacing=args.spacing,
+            spiral=args.spiral, max_positions=args.max_positions,
             max_cycles=None if args.until_done else args.max_cycles,
             detection_fun=detection_fun,
             frap_oc=args.frap_oc,
             name=args.name, use_timestamp=not args.no_timestamp,
             stop_check=lambda: _stop['requested'],
+            return_to_start=not args.no_return,
             **detector_kwargs
         )
     except AutofrapInterruptedException:
