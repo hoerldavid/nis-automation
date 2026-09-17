@@ -237,7 +237,7 @@ def batch_run_macro(path_to_nis, calls, timeout=20):
     """
     if not calls:
         return {}
-    sections = {}
+    sections = []
     decls = []
     stmts = []
     needs_ini = False
@@ -248,7 +248,7 @@ def batch_run_macro(path_to_nis, calls, timeout=20):
     decl_pat = re.compile(r'\b(int|double|char|dword|byte|word|float)\b\s+([^;]+);')
     for i, (op, params) in enumerate(calls):
         sec = f"{op.name}_{i}"
-        sections[op] = sec
+        sections.append((op, sec))
         raw = op.build(params or {}, sec)
         var_map = {}
         def repl_decl(m):
@@ -282,11 +282,11 @@ def batch_run_macro(path_to_nis, calls, timeout=20):
     body += "\n".join(s for s in stmts if s)
     cfg = _run_macro(path_to_nis, body, ini=needs_ini, timeout=timeout)
     out = {}
-    for op, sec in sections.items():
+    for op, sec in sections:
         if op.parse is not None:
-            out[op.name] = op.parse(cfg[sec])
+            out[sec] = op.parse(cfg[sec])
         else:
-            out[op.name] = None
+            out[sec] = None
     return out
 
 

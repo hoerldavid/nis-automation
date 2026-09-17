@@ -22,6 +22,7 @@ Example:
 ```python
 from autofrap.microscope.nis import batch_run_macro, _OP_POSITION, _OP_RESOLUTION
 res = batch_run_macro(nis_exe, [(_OP_POSITION, {}), (_OP_RESOLUTION, {})])
+# res == {'position_0': (x,y,z0,z1), 'resolution_1': (xres,yres,siz,mag)}
 ```
 
 Implementation notes
