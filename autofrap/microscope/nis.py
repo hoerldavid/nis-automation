@@ -114,6 +114,54 @@ _OP_SET_OPTICAL_CONFIGURATION = MacroOp(
     parse=None
 )
 
+_OP_CHECKPOINT = MacroOp(
+    name="checkpoint",
+    build=lambda params, sec: f'Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","{params.get("key","ok")}",{params.get("value",1)});',
+    parse=lambda cfg: True
+)
+
+_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT = MacroOp(
+    name="delete_all_rois_in_current_document",
+    build=lambda params, sec: '''
+        int cnt, i, id;
+        cnt = GetROICount();
+        for(i=0; i<cnt; i=i+1){
+            id = GetROIIdFromIndex(i);
+            if(id > 0){ DeleteROI(id); }
+        }
+    ''',
+    parse=None
+)
+
+_OP_CLOSE_ALL_DOCS = MacroOp(
+    name="close_all_docs",
+    build=lambda params, sec: '''
+        char docs[24*260];
+        int num, i;
+        num = GetOpenedDocumentList(docs, 24, 260);
+        for(i=0; i<num; i=i+1){
+            CloseCurrentDocument(%s);
+        }
+    ''' % params.get('save_flag', 2),
+    parse=None
+)
+
+def _parse_add_polygon_roi(sec_cfg):
+    return int(sec_cfg['id'])
+
+_OP_ADD_POLYGON_ROI = MacroOp(
+    name="add_polygon_roi",
+    build=lambda params, sec: (
+        f'double pts[{2*len(params["points"])}];\n'
+        + '\n'.join(
+            f'pts[{2*i}]={x:.6f};\npts[{2*i+1}]={y:.6f};'
+            for i,(x,y) in enumerate(params['points'])
+        )
+        + f'\nInt_SetKeyValue("{INI_PLACEHOLDER}","{sec}","id",CreatePolygonROI(pts,{len(params["points"])},{params.get("color",0)}));'
+    ),
+    parse=_parse_add_polygon_roi
+)
+
 
 def is_color_camera(path_to_nis):
     '''
@@ -332,6 +380,18 @@ def do_autofocus(path_to_nis, step_coarse=None, step_fine=None, focus_criterion=
 
 def set_optical_configuration(path_to_nis, oc_name):
     body = _OP_SET_OPTICAL_CONFIGURATION.build({"name": oc_name}, "set_oc")
+    _run_macro(path_to_nis, body)
+
+def delete_all_rois_in_current_document(path_to_nis):
+    body = _OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT.build({}, "del_rois")
+    _run_macro(path_to_nis, body)
+
+def close_all_docs(path_to_nis, save_flag=2):
+    body = _OP_CLOSE_ALL_DOCS.build({"save_flag": save_flag}, "close_docs")
+    _run_macro(path_to_nis, body)
+
+def checkpoint(path_to_nis, key='ok', value=1):
+    body = _OP_CHECKPOINT.build({"key": key, "value": value}, "ckpt")
     _run_macro(path_to_nis, body)
 
 
@@ -821,17 +881,12 @@ def add_polygon_roi(path_to_nis, points, color='green'):
         >0 on success, <0 on failure
     """
     color = ROI_COLORS.get(color, color)
-    n = len(points)
-    if n < 3:
+    if len(points) < 3:
         raise ValueError('a polygon needs at least 3 points')
-
-    cmd = [f'double pts[{2 * n}];']
-    for i, (x, y) in enumerate(points):
-        cmd.append(f'pts[{2 * i}]={x:.6f};')
-        cmd.append(f'pts[{2 * i + 1}]={y:.6f};')
-    cmd.append(f'Int_SetKeyValue("{INI_PLACEHOLDER}","roi","id",CreatePolygonROI(pts,{n},{color}));')
-    config = _run_macro(path_to_nis, '\n'.join(cmd), ini=True)
-    return int(config['roi']['id'])
+    sec = 'roi'
+    body = _OP_ADD_POLYGON_ROI.build({'points': points, 'color': color}, sec)
+    cfg = _run_macro(path_to_nis, body, ini=True)
+    return _OP_ADD_POLYGON_ROI.parse(cfg[sec])
 
 
 def set_roi_type(path_to_nis, roi_id, roi_type):

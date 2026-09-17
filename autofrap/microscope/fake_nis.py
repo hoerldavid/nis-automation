@@ -57,6 +57,9 @@ PATCHED_FUNCTIONS = (
     'add_polygon_roi', 'set_roi_type', 'delete_roi',
     'set_optical_configuration',
     'batch_run_macro',
+    'delete_all_rois_in_current_document',
+    'close_all_docs',
+    'checkpoint',
 )
 
 _FOV_RE = re.compile(r'fov(\d+)_')
@@ -263,6 +266,18 @@ class FakeNIS:
     def _set_optical_configuration(self, nis, oc_name):
         self._call('set_optical_configuration', oc_name)
 
+    def _delete_all_rois_in_current_document(self, nis):
+        self._call('delete_all_rois_in_current_document')
+        self._next_roi = 0
+
+    def _close_all_docs(self, nis):
+        self._call('close_all_docs')
+        self.open_docs.clear()
+        self.current = 'Frozen'
+
+    def _checkpoint(self, nis, key='ok', value=1):
+        self._call('checkpoint', key, value)
+
     # ---------------------------- batch runner ------------------------- #
     def _batch_run_macro(self, nis, calls, timeout=20):
         self._call('batch_run_macro', len(calls))
@@ -299,6 +314,31 @@ class FakeNIS:
             if op.name == 'set_optical_configuration':
                 self._set_optical_configuration(nis, params.get('name'))
                 out[sec] = None
+                continue
+            if op.name == 'add_polygon_roi':
+                # delegate to existing fake add_polygon_roi
+                # params contains points and color
+                points = params.get('points', [])
+                color = params.get('color', 'green')
+                # simulate call
+                self._call('add_polygon_roi', len(points))
+                if self.abort_add_roi:
+                    raise KeyError('id')
+                self._next_roi += 1
+                out[sec] = self.roi_id
+                continue
+            if op.name == 'delete_all_rois_in_current_document':
+                # NOP for fake – ROIs are session-global, just clear counter
+                self._next_roi = 0
+                out[sec] = None
+                continue
+            if op.name == 'close_all_docs':
+                self.open_docs.clear()
+                self.current = 'Frozen'
+                out[sec] = None
+                continue
+            if op.name == 'checkpoint':
+                out[sec] = True
                 continue
             # acquisition ops – simulate side effects
             if op.name == 'run_current_nd_experiment':
