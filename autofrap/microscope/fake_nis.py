@@ -56,6 +56,7 @@ PATCHED_FUNCTIONS = (
     'close_current_document', 'activate_opened_document',
     'add_polygon_roi', 'set_roi_type', 'delete_roi',
     'set_optical_configuration',
+    'batch_run_macro',
 )
 
 _FOV_RE = re.compile(r'fov(\d+)_')
@@ -261,3 +262,57 @@ class FakeNIS:
     # ---------------------------- optical conf ------------------------- #
     def _set_optical_configuration(self, nis, oc_name):
         self._call('set_optical_configuration', oc_name)
+
+    # ---------------------------- batch runner ------------------------- #
+    def _batch_run_macro(self, nis, calls, timeout=20):
+        self._call('batch_run_macro', len(calls))
+        out = {}
+        for i, (op, params) in enumerate(calls):
+            sec = f"{op.name}_{i}"
+            # reads – return stored fake state
+            if op.name == 'position':
+                out[sec] = self.position
+                continue
+            if op.name == 'resolution':
+                out[sec] = self.resolution
+                continue
+            if op.name == 'nd_acq_tabs':
+                out[sec] = {'Time': False, 'XY': False, 'Z': False,
+                            'Lambda': False, 'Large Image': False}
+                continue
+            # setters – delegate to existing fakes for call logging / failure
+            if op.name == 'set_position':
+                pos_xy = None
+                if 'x' in params and 'y' in params:
+                    pos_xy = (params['x'], params['y'])
+                self._set_position(
+                    nis,
+                    pos_xy=pos_xy,
+                    pos_z=params.get('z'),
+                    pos_piezo=params.get('piezo'),
+                    relative_xy=params.get('relative_xy', False),
+                    relative_z=params.get('relative_z', False),
+                    relative_piezo=params.get('relative_piezo', False),
+                )
+                out[sec] = None
+                continue
+            if op.name == 'set_optical_configuration':
+                self._set_optical_configuration(nis, params.get('name'))
+                out[sec] = None
+                continue
+            # acquisition ops – simulate side effects
+            if op.name == 'run_current_nd_experiment':
+                outfile = params.get('outfile')
+                open_after = params.get('open_after', True)
+                self._run_current_nd_experiment(
+                    nis, outfile=outfile, open_after=open_after, progress_bar=True
+                )
+                out[sec] = None
+                continue
+            if op.name == 'run_stimulation_experiment':
+                self._run_stimulation_experiment(nis)
+                out[sec] = None
+                continue
+            # unknown / future ops – NOP
+            out[sec] = None
+        return out
