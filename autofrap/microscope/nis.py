@@ -4,6 +4,7 @@ from tempfile import NamedTemporaryFile
 import os
 from shutil import move
 import logging
+import re
 from dataclasses import dataclass
 from typing import Callable, Any
 
@@ -57,16 +58,16 @@ def _parse_nd_acq_tabs(sec_cfg):
 _OP_POSITION = MacroOp(
     name="position",
     build=lambda params, sec: f'''
-        double x; double y; double z_0; double z_1;
-        StgGetPosXY(&x, &y);
-        StgGetPosZ(&z_0, 0);
+        double x_pos; double y_pos; double z0_pos; double z1_pos;
+        StgGetPosXY(&x_pos, &y_pos);
+        StgGetPosZ(&z0_pos, 0);
         if (StgZ_IsPresent(1)) {{
-            StgGetPosZ(&z_1, 1);
-            Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","z1",z_1);
+            StgGetPosZ(&z1_pos, 1);
+            Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","z1",z1_pos);
         }}
-        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","x",x);
-        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","y",y);
-        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","z0",z_0);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","x",x_pos);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","y",y_pos);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","z0",z0_pos);
     ''',
     parse=_parse_position
 )
@@ -74,13 +75,13 @@ _OP_POSITION = MacroOp(
 _OP_RESOLUTION = MacroOp(
     name="resolution",
     build=lambda params, sec: f'''
-        int x; int y; double siz; double mag;
-        GetCameraResolution(2,&x,&y,&siz);
-        mag = GetCurrentObjMagnification();
-        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","xres",x);
-        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","yres",y);
-        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","siz",siz);
-        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","mag",mag);
+        int x_res; int y_res; double siz_res; double mag_res;
+        GetCameraResolution(2,&x_res,&y_res,&siz_res);
+        mag_res = GetCurrentObjMagnification();
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","xres",x_res);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","yres",y_res);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","siz",siz_res);
+        Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","mag",mag_res);
     ''',
     parse=_parse_resolution
 )
@@ -237,15 +238,48 @@ def batch_run_macro(path_to_nis, calls, timeout=20):
     if not calls:
         return {}
     sections = {}
+    decls = []
     stmts = []
     needs_ini = False
+    # NIS macro requires all variable declarations before any executable statements.
+    # Hoist declarations to the top of the combined macro and rename variables per section
+    # to avoid name collisions across ops.
+    # Types observed in NIS macro help: int, double, char, dword, byte, word, float
+    decl_pat = re.compile(r'\b(int|double|char|dword|byte|word|float)\b\s+([^;]+);')
     for i, (op, params) in enumerate(calls):
         sec = f"{op.name}_{i}"
         sections[op] = sec
-        stmts.append(op.build(params or {}, sec))
+        raw = op.build(params or {}, sec)
+        var_map = {}
+        def repl_decl(m):
+            typ = m.group(1)
+            vars_str = m.group(2)
+            vars_list = [v.strip() for v in vars_str.split(',')]
+            new_vars = []
+            for v in vars_list:
+                base = v.split('[')[0].strip()
+                new_name = f"{sec}_{base}"
+                var_map[base] = new_name
+                if '[' in v:
+                    arr_part = v[v.find('['):]
+                    new_vars.append(f"{new_name}{arr_part}")
+                else:
+                    new_vars.append(new_name)
+            decl_text = f"{typ} " + ", ".join(new_vars) + ";"
+            decls.append(decl_text)
+            return ''
+        raw_no_decl = decl_pat.sub(repl_decl, raw)
+        # rename usages of the variables in the statements
+        for old, new in var_map.items():
+            raw_no_decl = re.sub(r'\b' + re.escape(old) + r'\b', new, raw_no_decl)
+        stmts.append(raw_no_decl.strip())
         if op.parse is not None:
             needs_ini = True
-    body = "\n".join(stmts)
+    # build body with declarations hoisted
+    body = "\n".join(decls)
+    if body:
+        body += "\n\n"
+    body += "\n".join(s for s in stmts if s)
     cfg = _run_macro(path_to_nis, body, ini=needs_ini, timeout=timeout)
     out = {}
     for op, sec in sections.items():

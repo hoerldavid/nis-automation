@@ -24,6 +24,10 @@ from autofrap.microscope.nis import batch_run_macro, _OP_POSITION, _OP_RESOLUTIO
 res = batch_run_macro(nis_exe, [(_OP_POSITION, {}), (_OP_RESOLUTION, {})])
 ```
 
+Implementation notes
+* NIS macro language requires all variable declarations to appear before any executable statements. When multiple `MacroOp`s are concatenated, `batch_run_macro` hoists all `int/double/char/dword/byte/word/float` declarations to the top and automatically renames variables to `section_var` to avoid collisions across ops.
+* Live timing on microscope workstation: 3 individual calls ~3.4 s vs batched ~1.1 s; 4 calls ~4.4 s vs batched ~1.2 s. Overhead is dominated by `nis_ar -mw` startup.
+
 Gotchas
 * Close `.mac` handle before calling `nis_ar`, else “Can't open file for reading”
 * NIS locks failed `.mac` files → `PermissionError` on remove
