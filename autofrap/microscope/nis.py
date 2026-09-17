@@ -95,6 +95,25 @@ _OP_ND_ACQ_TABS = MacroOp(
     parse=_parse_nd_acq_tabs
 )
 
+_OP_SET_POSITION = MacroOp(
+    name="set_position",
+    build=lambda params, sec: "\n".join([
+        f'StgMoveXY({params["x"]},{params["y"]},{1 if params.get("relative_xy", False) else 0});'
+        if "x" in params else "",
+        f'StgMoveMainZ({params["z"]},{1 if params.get("relative_z", False) else 0});'
+        if "z" in params else "",
+        f'StgMovePiezoZ({params["piezo"]},{1 if params.get("relative_piezo", False) else 0});'
+        if "piezo" in params else "",
+    ]),
+    parse=None
+)
+
+_OP_SET_OPTICAL_CONFIGURATION = MacroOp(
+    name="set_optical_configuration",
+    build=lambda params, sec: f'SelectOptConf("{params["name"]}");',
+    parse=None
+)
+
 
 def is_color_camera(path_to_nis):
     '''
@@ -312,7 +331,8 @@ def do_autofocus(path_to_nis, step_coarse=None, step_fine=None, focus_criterion=
 
 
 def set_optical_configuration(path_to_nis, oc_name):
-    _run_macro(path_to_nis, f'SelectOptConf("{oc_name}");')
+    body = _OP_SET_OPTICAL_CONFIGURATION.build({"name": oc_name}, "set_oc")
+    _run_macro(path_to_nis, body)
 
 
 def do_large_image_scan(path_to_nis, save_path,
@@ -485,14 +505,18 @@ def set_position(path_to_nis, pos_xy=None, pos_z=None, pos_piezo=None, relative_
     if pos_xy is None and pos_z is None and pos_piezo is None:
         return
 
-    cmd = []
+    params = {}
     if pos_xy is not None:
-        cmd.append(f'StgMoveXY({pos_xy[0]},{pos_xy[1]},{1 if relative_xy else 0});')
+        params['x'], params['y'] = pos_xy
+        params['relative_xy'] = relative_xy
     if pos_z is not None:
-        cmd.append(f'StgMoveMainZ({pos_z},{1 if relative_z else 0});')
+        params['z'] = pos_z
+        params['relative_z'] = relative_z
     if pos_piezo is not None:
-        cmd.append(f'StgMovePiezoZ({pos_piezo},{1 if relative_piezo else 0});')
-    _run_macro(path_to_nis, '\n'.join(cmd))
+        params['piezo'] = pos_piezo
+        params['relative_piezo'] = relative_piezo
+    body = _OP_SET_POSITION.build(params, "set_pos")
+    _run_macro(path_to_nis, body)
 
 
 def get_position(path_to_nis):
