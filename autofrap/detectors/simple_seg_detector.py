@@ -17,7 +17,7 @@ from functools import partial
 from autofrap.io.nd2 import read_channel
 from autofrap.core.detection import build_detector
 from autofrap.core.image.mask import half_object_stim_mask
-from autofrap.core.simple_seg import SimpleSegParams, detect_objects
+from autofrap.core.image.segmentation import SimpleSegParams, detect_objects
 
 SURVEY_CHANNEL = 0
 

@@ -20,3 +20,4 @@ test_data/
 .DS_Store
 nis_manual/nis_help_html/
 nis_manual/*.chm
+nis_manual/*.CHM

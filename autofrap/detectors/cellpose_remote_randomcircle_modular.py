@@ -31,7 +31,9 @@ Usage::
 import os
 
 from autofrap.io.nd2 import read_channel
-from autofrap.core.detection import build_detector, remote_detect_objects, default_visualization
+from autofrap.core.detection import build_detector
+from autofrap.core.image.qc import default_visualization
+from autofrap.core.image.segmentation import remote_detect_objects
 from autofrap.core.image.mask import random_circle_stim_mask, filter_intensity_inside
 
 DEFAULT_CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'

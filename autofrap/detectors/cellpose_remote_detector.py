@@ -13,7 +13,7 @@ Usage::
 """
 import os
 
-from autofrap.core.detection import remote_detect_objects
+from autofrap.core.image.segmentation import remote_detect_objects
 from autofrap.core.image.mask import half_object_stim_mask
 
 DEFAULT_CELLPOSE_SERVER_URL = 'http://10.163.69.12:8000'

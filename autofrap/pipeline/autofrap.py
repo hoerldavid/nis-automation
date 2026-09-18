@@ -66,8 +66,8 @@ from autofrap.microscope.nis import (
     _OP_ADD_POLYGON_ROI,
     _OP_CLOSE_CURRENT_DOCUMENT,
 )
-from autofrap.core.detection import build_detector, load_detector_file, cell_mask
-from autofrap.core.image.mask import mask_to_polygon
+from autofrap.core.detection import build_detector, load_detector_file
+from autofrap.core.image.mask import mask_to_polygon, cell_mask
 from autofrap.core.image.qc import save_qc_overlay
 from skimage.measure import regionprops
 
@@ -368,9 +368,8 @@ def _inner_loop_select_cell_and_qc(labels, stimulation_mask, viz_image, imaged_c
     Returns (cell, cell_poly, stim_poly, n_obj) or (None, None, None, n_obj) if no cell is available.
     """
     from skimage.measure import regionprops
-    from autofrap.core.image.mask import mask_to_polygon
+    from autofrap.core.image.mask import mask_to_polygon, cell_mask
     from autofrap.core.image.qc import save_qc_overlay
-    from autofrap.core.detection import cell_mask
 
     n_obj = len(np.unique(labels)) - 1
     # match detected objects to already-imaged map

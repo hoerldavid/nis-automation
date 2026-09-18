@@ -76,6 +76,7 @@ import warnings
 import inspect
 
 from autofrap.core.image.mask import half_object_stim_mask, relabel_by_distance, shuffle_labels
+from autofrap.core.image.qc import default_visualization as _default_visualization
 import numpy as np
 
 def _accepts_kwargs(func):
@@ -85,113 +86,6 @@ def _accepts_kwargs(func):
         return any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
     except (ValueError, TypeError):
         return False
-
-def dummy_detect_objects(image):
-    """
-    dummy object detector: places one circle and one rectangle
-
-    Parameters
-    ----------
-    image: 2D np.ndarray (y, x) or (c, y, x)
-        input image (pixel values are ignored, only the shape is used)
-
-    Returns
-    -------
-    labels: 2D np.ndarray (y, x), int
-        0 = background, 1 = circle, 2 = rectangle
-    """
-    h, w = image.shape[-2:]  # works for 2D (y, x) and (c, y, x)
-    labels = np.zeros((h, w), dtype=np.int32)
-    yy, xx = np.ogrid[:h, :w]
-
-    # keep the objects small: FRAP bleaching is a laser scan, so the
-    # stimulation time scales with ROI area. The two sizes differ by
-    # ~3x on purpose, so a run over both objects also tests that the
-    # stimulation duration tracks the ROI area.
-
-    # object 1: circle, center in the upper-left third, radius 1/16 of min. axis
-    cy, cx, r = h // 3, w // 3, min(h, w) // 16
-    labels[(yy - cy) ** 2 + (xx - cx) ** 2 <= r ** 2] = 1
-
-    # object 2: rectangle, in the lower-right quadrant, 1/16 of the image per side
-    labels[3 * h // 4 - h // 16:3 * h // 4,
-           3 * w // 4 - w // 16:3 * w // 4] = 2
-
-    return labels
-
-
-def remote_detect_objects(image, server_url, timeout=60, retries=1,
-                          channel=0, **eval_kwargs):
-    """
-    run cellpose on a remote server (see cellpose_server.py)
-
-    The image is serialized with np.save and POSTed to the server's
-    /detect endpoint; the label map comes back in the same format.
-    A failed request (connection error, timeout, or HTTP error) is
-    retried `retries` times with a short backoff before propagating.
-
-    Parameters
-    ----------
-    image: 2D np.ndarray (y, x) or 3D np.ndarray (c, y, x)
-        input image; if 3D, the channel is selected with `channel`
-    server_url: str
-        base URL of the cellpose server, e.g. 'http://192.168.1.10:8000'
-    timeout: float
-        request timeout in seconds; the V100 server answers in ~2 s, so
-        60 s leaves room for connection latency and queued requests
-    retries: int
-        number of retries after a failed request, with a 2 s backoff
-    channel: int
-        channel index to select from a (c, y, x) image; ignored for 2D
-        input (assumes the correct channel was already loaded)
-    eval_kwargs: dict
-        optional cellpose model.eval() parameters, sent as query params:
-        diameter, min_size, cellprob_threshold, flow_threshold,
-        max_size_fraction (see cellpose_server.py for defaults)
-
-    Returns
-    -------
-    labels: 2D np.ndarray (y, x), int32
-        0 = background, 1..N = objects
-    """
-    import io
-    import time
-
-    import requests
-
-    # select channel if image is multi-channel
-    if image.ndim == 3:
-        if channel < 0 or channel >= image.shape[0]:
-            raise ValueError(
-                f'channel {channel} out of bounds for image with {image.shape[0]} channels')
-        image = image[channel]
-    elif image.ndim != 2:
-        raise ValueError(
-            f'remote_detect_objects expects 2D (y, x) or 3D (c, y, x) image, got {image.ndim}D')
-
-    buf = io.BytesIO()
-    np.save(buf, image)
-    for attempt in range(retries + 1):
-        try:
-            r = requests.post(f'{server_url}/detect', data=buf.getvalue(),
-                              headers={'Content-Type': 'application/x-numpy'},
-                              params=eval_kwargs or None,
-                              timeout=timeout)
-            r.raise_for_status()
-            break
-        except (requests.exceptions.ConnectionError,
-                requests.exceptions.Timeout,
-                requests.exceptions.HTTPError) as e:
-            if attempt == retries:
-                raise
-            time.sleep(2.0 * (attempt + 1))
-    labels = np.load(io.BytesIO(r.content), allow_pickle=False)
-    print(f'remote detection: {r.headers.get("X-Inference-Time-S", "?")} s '
-          f'({r.headers.get("X-N-Objects", "?")} objects) on {server_url}')
-
-    # CP4 returns uint16 masks; the rest of the pipeline uses int32
-    return np.ascontiguousarray(labels, dtype=np.int32)
-
 
 def _warn_multi_region(labels, stimulation_mask):
     """
@@ -347,16 +241,19 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         renumbers the remaining IDs gap-free). Called *after* the
         detector and *before* clear_border/relabelling — the caller
         gets the exact raw detector labels. None: no filtering.
-    visualization_fun: callable or None
+    visualization_fun: callable, None, or False
         image -> 2D (y, x) or (y, x, 3/4) RGB(A) image for the QC
         overlay; receives the same loaded image the detector got
         (2D or (c, y, x)), independent of the detection result.
         Note the convention: scientific images are (c, y, x), only
         the visualization is (y, x, 3/4) (display format).
-        None: no visualization (the overlay is drawn on a blank
-        canvas). Best effort: any failure (exception or wrong output
-        shape, e.g. a 2-channel image) only warns and drops the
-        visualization - it is cosmetic and must not break the run.
+        None: use the default visualization from
+        autofrap.core.image.qc.default_visualization (grayscale pass-through
+        for 2-D, RGB composite for 3-D). False: explicitly disable
+        visualization, the overlay is drawn on a blank canvas.
+        Best effort: any failure (exception or wrong output shape, e.g. a
+        2-channel image) only warns and drops the visualization - it is
+        cosmetic and must not break the run.
     parameter_map: str or dict or None, optional
         Controls how extra keyword arguments are routed to the
         sub-functions (``load_fun``, ``detector_fun``, etc.) when
@@ -458,8 +355,14 @@ def build_detector(load_fun, detector_fun, relabel='distance',
             _warn_multi_region(labels, mask)
 
         viz = None
-        if visualization_fun is not None:
-            viz = _make_viz(
+        # Use default visualization if none was provided; False disables visualization
+        if visualization_fun is False:
+            viz = None
+        elif visualization_fun is None:
+            viz = _check_viz(
+                _default_visualization, image, labels.shape)
+        else:
+            viz = _check_viz(
                 visualization_fun, image, labels.shape,
                 **_route(visualization_fun, 'visualization_fun',
                          runtime_kwargs))
@@ -474,8 +377,7 @@ def build_detector(load_fun, detector_fun, relabel='distance',
 
     return _detect
 
-
-def _make_viz(visualization_fun, image, shape, **kwargs):
+def _check_viz(visualization_fun, image, shape, **kwargs):
     """
     best-effort visualization: run visualization_fun and check the
     output shape; on failure (exception or wrong shape) warn and
@@ -504,34 +406,6 @@ def _make_viz(visualization_fun, image, shape, **kwargs):
             'continuing without a visualization', stacklevel=2)
         return None
     return viz
-
-
-def cell_mask(labels, cell_id, stimulation_mask=None):
-    """
-    binary mask of one cell of a label map
-
-    Without a stimulation mask: the whole cell (``labels == cell_id``).
-    With one: the intersection of the cell with the stimulation mask,
-    i.e. only the areas that are both inside the cell and eligible for
-    photostimulation.
-
-    Parameters
-    ----------
-    labels: 2D np.ndarray
-        label map (0 = background, 1..N = objects)
-    cell_id: int
-        the cell label to extract
-    stimulation_mask: 2D np.ndarray, optional
-        binary stimulation mask; if given, the cell is intersected with it
-
-    Returns
-    -------
-    mask: 2D np.ndarray, bool
-        binary mask of the cell (or its stimulation-eligible part)
-    """
-    if stimulation_mask is None:
-        return labels == cell_id
-    return (labels == cell_id) & stimulation_mask
 
 
 def load_detector_file(path):
@@ -586,54 +460,40 @@ def load_detector_file(path):
     return detection_fun
 
 
-def default_visualization(image, channel_colors=None, percentiles=(1, 99.5)):
-    """
-    Default QC visualization for build_detector.
-
-    * 2-D input (y, x) -> returned unchanged (grayscale).
-    * 3-D input (c, y, x) -> composite to RGB by normalizing each channel
-      to [0, 1] via percentile clipping and mixing with per-channel RGB
-      colors. The RGBs are summed and clipped to [0, 1].
-
-    Parameters
-    ----------
-    image : np.ndarray
-        2-D or 3-D image as loaded by load_fun.
-    channel_colors : list of tuple or None
-        RGB triples in [0,1] for each channel. If None, a default cycling
-        palette is used.
-    percentiles : tuple
-        Low/high percentiles for per-channel normalization.
-
-    Returns
-    -------
-    np.ndarray
-        2-D grayscale or 3-D RGB float image in [0,1].
-    """
-    if image.ndim == 2:
-        return image
-    if image.ndim != 3:
-        raise ValueError(
-            f'default_visualization expects 2D or 3D image, got {image.ndim}D')
-    n_channels = image.shape[0]
-    h, w = image.shape[1:]
-    rgb = np.zeros((h, w, 3), dtype=float)
-    if channel_colors is None:
-        # default cycling palette
-        base = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0),
-                (1.0, 1.0, 0.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0)]
-        channel_colors = [base[i % len(base)] for i in range(n_channels)]
-    for i in range(n_channels):
-        ch = image[i].astype(float)
-        lo = np.percentile(ch, percentiles[0])
-        hi = np.percentile(ch, percentiles[1])
-        if hi <= lo:
-            norm = np.zeros_like(ch)
-        else:
-            norm = np.clip((ch - lo) / (hi - lo + 1e-12), 0, 1)
-        color = np.asarray(channel_colors[i], dtype=float)
-        rgb += norm[..., None] * color
-    return np.clip(rgb, 0, 1)
+def __getattr__(name):
+    if name == "dummy_detect_objects":
+        import warnings
+        warnings.warn(
+            "autofrap.core.detection.dummy_detect_objects is deprecated, import from autofrap.core.image.segmentation instead",
+            DeprecationWarning, stacklevel=2,
+        )
+        from autofrap.core.image.segmentation import dummy_detect_objects as _f
+        return _f
+    if name == "remote_detect_objects":
+        import warnings
+        warnings.warn(
+            "autofrap.core.detection.remote_detect_objects is deprecated, import from autofrap.core.image.segmentation instead",
+            DeprecationWarning, stacklevel=2,
+        )
+        from autofrap.core.image.segmentation import remote_detect_objects as _f
+        return _f
+    if name == "cell_mask":
+        import warnings
+        warnings.warn(
+            "autofrap.core.detection.cell_mask is deprecated, import from autofrap.core.image.mask instead",
+            DeprecationWarning, stacklevel=2,
+        )
+        from autofrap.core.image.mask import cell_mask as _f
+        return _f
+    if name == "default_visualization":
+        import warnings
+        warnings.warn(
+            "autofrap.core.detection.default_visualization is deprecated, import from autofrap.core.image.qc instead",
+            DeprecationWarning, stacklevel=2,
+        )
+        from autofrap.core.image.qc import default_visualization as _f
+        return _f
+    raise AttributeError(name)
 
 
 if __name__ == '__main__':

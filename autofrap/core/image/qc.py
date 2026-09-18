@@ -207,3 +207,52 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
 
     fig.savefig(path, dpi=dpi)
     plt.close(fig)
+
+def default_visualization(image, channel_colors=None, percentiles=(1, 99.5)):
+    """
+    Default QC visualization for build_detector.
+
+    * 2-D input (y, x) -> returned unchanged (grayscale).
+    * 3-D input (c, y, x) -> composite to RGB by normalizing each channel
+      to [0, 1] via percentile clipping and mixing with per-channel RGB
+      colors. The RGBs are summed and clipped to [0, 1].
+
+    Parameters
+    ----------
+    image : np.ndarray
+        2-D or 3-D image as loaded by load_fun.
+    channel_colors : list of tuple or None
+        RGB triples in [0,1] for each channel. If None, a default cycling
+        palette is used.
+    percentiles : tuple
+        Low/high percentiles for per-channel normalization.
+
+    Returns
+    -------
+    np.ndarray
+        2-D grayscale or 3-D RGB float image in [0,1].
+    """
+    import numpy as np
+    if image.ndim == 2:
+        return image
+    if image.ndim != 3:
+        raise ValueError(
+            f'default_visualization expects 2D or 3D image, got {image.ndim}D')
+    n_channels = image.shape[0]
+    h, w = image.shape[1:]
+    rgb = np.zeros((h, w, 3), dtype=float)
+    if channel_colors is None:
+        base = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0),
+                (1.0, 1.0, 0.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0)]
+        channel_colors = [base[i % len(base)] for i in range(n_channels)]
+    for i in range(n_channels):
+        ch = image[i].astype(float)
+        lo = np.percentile(ch, percentiles[0])
+        hi = np.percentile(ch, percentiles[1])
+        if hi <= lo:
+            norm = np.zeros_like(ch)
+        else:
+            norm = np.clip((ch - lo) / (hi - lo + 1e-12), 0, 1)
+        color = np.asarray(channel_colors[i], dtype=float)
+        rgb += norm[..., None] * color
+    return np.clip(rgb, 0, 1)

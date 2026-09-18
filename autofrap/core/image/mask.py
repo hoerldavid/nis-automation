@@ -688,3 +688,31 @@ def filter_intensity_surround(labels, image, distance_px=5, channel=0,
             good.append(int(rp.label))
     return good 
 
+
+
+def cell_mask(labels, cell_id, stimulation_mask=None):
+    """
+    binary mask of one cell of a label map
+
+    Without a stimulation mask: the whole cell (``labels == cell_id``).
+    With one: the intersection of the cell with the stimulation mask,
+    i.e. only the areas that are both inside the cell and eligible for
+    photostimulation.
+
+    Parameters
+    ----------
+    labels: 2D np.ndarray
+        label map (0 = background, 1..N = objects)
+    cell_id: int
+        the cell label to extract
+    stimulation_mask: 2D np.ndarray, optional
+        binary stimulation mask; if given, the cell is intersected with it
+
+    Returns
+    -------
+    mask: 2D np.ndarray, bool
+        binary mask of the cell (or its stimulation-eligible part)
+    """
+    if stimulation_mask is None:
+        return labels == cell_id
+    return (labels == cell_id) & stimulation_mask

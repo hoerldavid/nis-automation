@@ -8,7 +8,7 @@ Usage::
 """
 import numpy as np
 
-from autofrap.core.detection import dummy_detect_objects
+from autofrap.core.image.segmentation import dummy_detect_objects
 from autofrap.core.image.mask import half_object_stim_mask
 
 
