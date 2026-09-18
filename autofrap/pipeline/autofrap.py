@@ -109,6 +109,7 @@ def _check_nd_acq_template(tabs):
     return tabs
 
 
+# TODO: no longer used - remove?
 def _run_nd_acq_check(nis_exe):
     """Pre-flight wrapper: queries NIS then validates the template."""
     tabs = nis_util.get_nd_acq_tabs(nis_exe)
@@ -167,6 +168,8 @@ def move_stage_with_retry(nis_exe, pos_xy):
         try:
             if delay:
                 time.sleep(delay)
+
+            # TODO: do a set_pos + get_pos batch, check if we reached destination (+- a few micron tolerance)?
             nis_util.set_position(nis_exe, pos_xy=pos_xy)
             if attempt > 1:
                 print(f'[move_stage] succeeded on attempt {attempt}', flush=True)
@@ -193,15 +196,53 @@ def cleanup_run(nis_exe, start_pos, return_to_start=True):
             print(f'moved back to start ({start_pos[0]:+.2f}, {start_pos[1]:+.2f})')
         except Exception as e:
             print(f'!!! could not return to start: {e!r}', flush=True)
+
     # Idempotent cleanup
     try:
-        nis_util.delete_all_rois_in_current_document(nis_exe)
+        cleanup_everything(nis_exe)
     except Exception as e:
-        print(f'!!! cleanup delete_all_rois failed: {e!r}', flush=True)
-    try:
-        nis_util.close_all_docs(nis_exe)
-    except Exception as e:
-        print(f'!!! cleanup close_all_docs failed: {e!r}', flush=True)
+        print(f'!!! cleanup_everything failed: {e!r}', flush=True)
+
+
+def cleanup_everything(nis_exe):
+    """Best-effort thorough cleanup: delete ROIs and close all open documents
+    in one batched macro. Retries on TimeoutError.
+    """
+    import time
+    from autofrap.microscope.nis import MacroOp, batch_run_macro
+    # MacroOp for CloseCurrentDocument with save_flag
+    _OP_CLOSE_CURRENT_DOCUMENT = MacroOp(
+        name="close_current_document",
+        build=lambda params, sec: f'CloseCurrentDocument({params.get("save_flag", 2)});',
+        parse=None
+    )
+    last_exc = None
+    for attempt, delay in enumerate([0, 2, 4], start=1):
+        try:
+            if delay:
+                time.sleep(delay)
+            docs = nis_util.get_opened_documents(nis_exe)
+            n = len(docs)
+            if n == 0:
+                print('[cleanup_everything] no open documents')
+                return
+            calls = [
+                (_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
+                (_OP_CLOSE_CURRENT_DOCUMENT, {'save_flag': 2}),
+            ] * n
+            batch_run_macro(nis_exe, calls, timeout=20)
+            print(f'[cleanup_everything] cleaned {n} document(s)')
+            return
+        except TimeoutError as e:
+            last_exc = e
+            print(f'[cleanup_everything] attempt {attempt} timed out: {e!r}', flush=True)
+            if attempt == 3:
+                break
+        except Exception as e:
+            print(f'!!! cleanup_everything error: {e!r}', flush=True)
+            return
+    if last_exc:
+        print(f'!!! cleanup_everything failed after retries: {last_exc!r}', flush=True)
 
 
 def autofrap(nis_exe, out_dir,
@@ -245,6 +286,8 @@ def autofrap(nis_exe, out_dir,
         )
     finally:
         cleanup_run(nis_exe, start_pos, return_to_start=return_to_start)
+
+
     return results
 
 
@@ -397,6 +440,9 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         cell_roi = stim_roi = None
 
         try:
+
+            # TODO: extract run + check for outfile existence to something like _inner_loop_do_survey()?
+
             # 1+2. survey: run the GUI-configured ND experiment, saved
             t0 = time.time()
             nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file,
@@ -409,6 +455,9 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                 raise NonRecoverableError(
                     f'survey file missing after the ND run: {survey_file} '
                     '(NIS did not save it - check the GUI / disk)')
+
+            # TODO: extract detection + matching + qc save to _inner_loop_detect()?
+            # the interrupted check is currently in the middle of this but can be moved to the front or back of the ROI generation logic?
 
             # 3. detect (the client already retried once; any failure
             # that survives is run-level: the detector/server state is
@@ -530,6 +579,10 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                 print(f'[c{cycle:02d}] WARNING: QC overlay failed: {e!r}',
                       flush=True)
 
+            # TODO: make this open-doc-is-survey check part of the survey step above?
+            # there are edge cases (user opens another document in GUI while detection is running)
+            # but users can be instructed not to touch GUI during an automated run
+
             # The survey document is already the current one after the ND
             # run (open_after=True; live-verified 20260909) - verify that,
             # with open_image only as a fallback in case it ever doesn't
@@ -543,6 +596,9 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                 raise NonRecoverableError(
                     f'could not open {survey_file} '
                     f'(current document: {doc})')
+
+            # TODO: extract from here to end of block 6. to _inner_loop_stimulation?
+
             # ROI batch: delete existing ROIs then add cell + stim ROIs
             # The delete is idempotent, so the whole batch is safe to retry
             roi_calls = [
@@ -587,35 +643,7 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                     f'FRAP file missing after save_current_document: '
                     f'{frap_file} (ImageSaveAs wrote nothing)')
 
-            # 7. close the FRAP document (current), make the still-open
-            #    survey document current (no disk re-load), delete both
-            #    ROIs and close it. The ROIs are already saved in the FRAP
-            #    file; the deletes are NOT optional - the ROIs are
-            #    ScopeType.Global, i.e. session-global (not per-document,
-            #    not stage-position keyed): closing the document does not
-            #    remove them, and any new acquisition picks them up again
-            #    (live-verified 20260909: without the deletes, cycle 2's
-            #    survey + FRAP files of a 2-cycle run contained cycle 1's
-            #    ROIs; reopening a *saved* file shows none, which made a
-            #    close/reopen probe misleading)
-            nis_util.close_current_document(nis_exe, save='discard')
-            doc = nis_util.get_current_document(nis_exe)
-            if os.path.normcase(doc) != os.path.normcase(survey_file):
-                # the survey document is still open, just not current -
-                # make it current without a disk re-load
-                try:
-                    nis_util.activate_opened_document(nis_exe, survey_file)
-                except (FileNotFoundError, RuntimeError):
-                    raise NonRecoverableError(
-                        f'could not activate {survey_file} '
-                        f'(current document: {doc})')
-                doc = nis_util.get_current_document(nis_exe)
-            if os.path.normcase(doc) != os.path.normcase(survey_file):
-                raise NonRecoverableError(
-                    f'could not make {survey_file} current '
-                    f'(current document: {doc})')
-            nis_util.delete_all_rois_in_current_document(nis_exe)
-            nis_util.close_current_document(nis_exe, save='discard')
+            # cleanup is deferred to finally via cleanup_everything
             cell_roi = stim_roi = None
 
             results.append((cycle, cell, survey_file, frap_file))
@@ -641,36 +669,9 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         except OSError as e:
             raise NonRecoverableError(f'OS error: {e!r}') from e
         finally:
-            # failed mid-cycle: delete this cycle's ROIs and close its
-            # documents, best effort (NIS may itself be the problem, in
-            # which case just give up quietly). Also covers failures
-            # before ROI creation (e.g. detection): the ND run leaves
-            # the survey document open (open_after=True) and nothing
-            # else closes it then
+            # best-effort cleanup: close all open docs and delete ROIs
             try:
-                doc = nis_util.get_current_document(nis_exe)
-                if cell_roi is None and stim_roi is None:
-                    # no ROIs to delete; just close the survey document
-                    # if the ND run left it open
-                    if os.path.normcase(doc) == os.path.normcase(survey_file):
-                        nis_util.close_current_document(nis_exe, save='discard')
-                else:
-                    # close both of this cycle's documents and delete its
-                    # ROIs (see step 7: they are session-global and survive
-                    # closing the document)
-                    if os.path.normcase(doc) != os.path.normcase(survey_file):
-                        nis_util.close_current_document(nis_exe, save='discard')
-                        # make survey document current without reopening
-                        try:
-                            nis_util.activate_opened_document(nis_exe, survey_file)
-                        except Exception:
-                            # if activation fails we cannot guarantee cleanup,
-                            # but we still try to close what we can
-                            pass
-                    # global-scope ROIs survive closing the document -
-                    # delete them explicitly
-                    nis_util.delete_all_rois_in_current_document(nis_exe)
-                    nis_util.close_current_document(nis_exe, save='discard')
+                cleanup_everything(nis_exe)
             except Exception:
                 pass
 
@@ -871,6 +872,12 @@ def autofrap_loop_outer(nis_exe, out_dir, positions,
                 fov_results = None
 
             results.append((i, x, y, fov_dir, fov_results))
+
+    # TODO: this is the only time we make use of the results list
+    # for printing (x of N positions done) we could just use a counter here in the outer loop
+    # printing n_cells here is not really necessary, we could just print some stats in inner loop
+    # Thus, remove the results passing from this, inner_loop and wrapper?
+    # May cause problems for FakeNIS dry runs if that relies on results, but for production use it's not necessary. 
 
     n_ok = sum(1 for r in results if r[4] is not None)
     n_cells = sum(len(r[4]) for r in results if r[4] is not None)
