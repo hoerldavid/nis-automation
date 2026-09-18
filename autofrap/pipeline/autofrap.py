@@ -64,6 +64,7 @@ import autofrap.microscope.nis as nis_util
 from autofrap.microscope.nis import (
     _OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT,
     _OP_ADD_POLYGON_ROI,
+    _OP_CLOSE_CURRENT_DOCUMENT,
 )
 from autofrap.core.detection import build_detector, load_detector_file, cell_mask
 from autofrap.core.image.mask import mask_to_polygon
@@ -144,9 +145,9 @@ def setup_microscope(nis_exe):
             if delay:
                 time.sleep(delay)
             results = nis_util.batch_run_macro(nis_exe, calls, timeout=10)
-            tabs = _OP_ND_ACQ_TABS.parse(results['nd_acq_tabs_0'])
-            pos = _OP_POSITION.parse(results['position_0'])
-            res = _OP_RESOLUTION.parse(results['resolution_0'])
+            tabs = results['nd_acq_tabs_0']
+            pos = results['position_1']
+            res = results['resolution_2']
             _check_nd_acq_template(tabs)
             if attempt > 1:
                 print(f'[setup_microscope] succeeded on attempt {attempt}', flush=True)
@@ -211,13 +212,6 @@ def cleanup_everything(nis_exe):
     in one batched macro. Retries on TimeoutError.
     """
     import time
-    from autofrap.microscope.nis import MacroOp
-    # MacroOp for CloseCurrentDocument with save_flag
-    _OP_CLOSE_CURRENT_DOCUMENT = MacroOp(
-        name="close_current_document",
-        build=lambda params, sec: f'CloseCurrentDocument({params.get("save_flag", 2)});',
-        parse=None
-    )
     last_exc = None
     for attempt, delay in enumerate([0, 2, 4], start=1):
         try:
@@ -449,12 +443,12 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     ]
     try:
         roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
-        cell_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_1'])
-        stim_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_2'])
+        cell_roi = roi_results['add_polygon_roi_1']
+        stim_roi = roi_results['add_polygon_roi_2']
     except TimeoutError:
         roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
-        cell_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_1'])
-        stim_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_2'])
+        cell_roi = roi_results['add_polygon_roi_1']
+        stim_roi = roi_results['add_polygon_roi_2']
 
     if cell_roi <= 0:
         raise RecoverableError(f'cell ROI creation failed (id={cell_roi})')
@@ -467,6 +461,14 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     t0 = time.time()
     nis_util.run_stimulation_experiment(nis_exe)
     print(f'[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)', flush=True)
+
+    # safeguard: move GUI focus off the survey / FRAP documents to an unsaved ND Acquisition
+    # to avoid accidental user interaction with ROIs while the next cycle prepares
+    try:
+        nis_util.activate_document(nis_exe, 'ND Acquisition')
+    except Exception:
+        # ND Acquisition should always be present; ignore if activation fails
+        pass
 
     nis_util.save_current_document(nis_exe, frap_file)
     if not os.path.isfile(frap_file):

@@ -32,7 +32,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 
 ## Open TODOs
 
-1. **Understand ROI persistence** – ROIs from `CreatePolygonROI` are `ScopeType.Global`, session-global, picked up by any new acquisition. End-of-cycle `delete_roi` mandatory. Exact new-acquisition inheritance still open. No wiring changes until understood.
+1. **Understand ROI persistence** – ROIs from `CreatePolygonROI` are `ScopeType.Global`, session-global, picked up by any new acquisition. End-of-cycle `delete_roi` mandatory. Exact new-acquisition inheritance still open. No wiring changes until understood. *Note: functionally less critical now – the pipeline deletes all ROIs before adding new ones each cycle and `cleanup_everything` now reliably removes both ROIs via backward iteration.*
 2. **Detector tuning on real samples** – try `diameter`/`min_size` per sample, consider multi-channel input.
 3. **CLI flag for `allow_interrupt_after_survey`** – parameter exists, not exposed via argparse.
 4. **Stimulation ROI groups S1–S3** – `ChangeROIType(3)` → group 1. No macro API for group selection found. Low priority.
@@ -54,6 +54,14 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * `GetROIInfo` color read-back always 0, but colors render correctly.
 
 ## Recent milestones
+* 20260918 – Live microscope validation and bug fixes:
+  - Fixed `_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT` macro to iterate backwards to avoid skipping ROIs on deletion; stimulation ROI no longer persists after `cleanup_everything`.
+  - Fixed `_parse_nd_acq_tabs` fallback usage `sec_cfg.get(tab, fallback='0')` → `sec_cfg.get(tab, '0')` for `SectionProxy` compatibility.
+  - Fixed `setup_microscope` double-parse of `batch_run_macro` results and incorrect result keys `position_0`/`resolution_0` → `position_1`/`resolution_2`.
+  - Fixed `_inner_loop_stimulation` double-parse of `add_polygon_roi` results from `batch_run_macro`.
+  - Moved inline `_OP_CLOSE_CURRENT_DOCUMENT` MacroOp to `autofrap/microscope/nis.py`, updated `close_current_document` wrapper to use the op, and imported it in `autofrap/pipeline/autofrap.py`.
+  - Added safeguard activation of unsaved `ND Acquisition` document after stimulation completes and before FRAP save to reduce accidental user interaction with survey ROIs.
+  - Live tested 2×2 grid with `simple_seg_detector.py` and `488 CSU-W1 FRAP`, then 1-FOV until-done run with remote Cellpose server `10.163.69.12:8000`, 7 cells stimulated over 8 cycles with clean cleanup.
 * 202610? – Centralize cleanup and untangle autofrap_loop_inner:
   - Added `cleanup_everything(nis_exe)` with n_open==0 guard and 3× TimeoutError retry using batched delete ROIs + close current document.
   - Updated `cleanup_run` and `autofrap_loop_inner` finally block to use `cleanup_everything`.

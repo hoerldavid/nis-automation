@@ -53,7 +53,7 @@ def _parse_resolution(sec_cfg):
     return tuple(map(float, (sec_cfg['xres'], sec_cfg['yres'], sec_cfg['siz'], sec_cfg['mag'])))
 
 def _parse_nd_acq_tabs(sec_cfg):
-    return {tab: sec_cfg.get(tab, fallback='0') == '1' for tab in ND_ACQ_TABS}
+    return {tab: sec_cfg.get(tab, '0') == '1' for tab in ND_ACQ_TABS}
 
 _OP_POSITION = MacroOp(
     name="position",
@@ -125,7 +125,7 @@ _OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT = MacroOp(
     build=lambda params, sec: '''
         int cnt, i, id;
         cnt = GetROICount();
-        for(i=0; i<cnt; i=i+1){
+        for(i=cnt-1; i>=0; i=i-1){
             id = GetROIIdFromIndex(i);
             if(id > 0){ DeleteROI(id); }
         }
@@ -143,6 +143,12 @@ _OP_CLOSE_ALL_DOCS = MacroOp(
             CloseCurrentDocument(%s);
         }
     ''' % params.get('save_flag', 2),
+    parse=None
+)
+
+_OP_CLOSE_CURRENT_DOCUMENT = MacroOp(
+    name="close_current_document",
+    build=lambda params, sec: f'CloseCurrentDocument({params.get("save_flag", 2)});',
     parse=None
 )
 
@@ -860,7 +866,8 @@ def close_current_document(path_to_nis, save='discard'):
     the macro call blocks until it is answered (cancel keeps the document open)
     """
     save_flag = {'ask': 0, 'discard': 2, 'yes': 1}[save]
-    _run_macro(path_to_nis, f'CloseCurrentDocument({save_flag});')
+    body = _OP_CLOSE_CURRENT_DOCUMENT.build({'save_flag': save_flag}, 'close_current')
+    _run_macro(path_to_nis, body)
 
 
 def add_polygon_roi(path_to_nis, points, color='green'):
