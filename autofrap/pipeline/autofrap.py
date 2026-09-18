@@ -58,6 +58,8 @@ import time
 
 import numpy as np
 
+# NOTE/TODO: for dry-runs, the FakeNIS patcher explicitly patches functions in nis_util,
+# so we have to import it under the old name -> remove once FakeNIS is updated
 import autofrap.microscope.nis as nis_util
 from autofrap.microscope.nis import (
     _OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT,
@@ -209,7 +211,7 @@ def cleanup_everything(nis_exe):
     in one batched macro. Retries on TimeoutError.
     """
     import time
-    from autofrap.microscope.nis import MacroOp, batch_run_macro
+    from autofrap.microscope.nis import MacroOp
     # MacroOp for CloseCurrentDocument with save_flag
     _OP_CLOSE_CURRENT_DOCUMENT = MacroOp(
         name="close_current_document",
@@ -230,7 +232,7 @@ def cleanup_everything(nis_exe):
                 (_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
                 (_OP_CLOSE_CURRENT_DOCUMENT, {'save_flag': 2}),
             ] * n
-            batch_run_macro(nis_exe, calls, timeout=20)
+            nis_util.batch_run_macro(nis_exe, calls, timeout=20)
             print(f'[cleanup_everything] cleaned {n} document(s)')
             return
         except TimeoutError as e:
@@ -344,6 +346,136 @@ def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
     return None
 
 
+def _inner_loop_do_survey(nis_exe, survey_file, cycle):
+    """Run ND survey acquisition and ensure the survey document is current."""
+    import time
+    t0 = time.time()
+    nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file, progress_bar=True)
+    print(f'[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)', flush=True)
+    if not os.path.isfile(survey_file):
+        raise NonRecoverableError(
+            f'survey file missing after the ND run: {survey_file} '
+            '(NIS did not save it - check the GUI / disk)'
+        )
+    # ensure survey document is current
+    doc = nis_util.get_current_document(nis_exe)
+    if os.path.normcase(doc) != os.path.normcase(survey_file):
+        nis_util.open_image(nis_exe, survey_file)
+        doc = nis_util.get_current_document(nis_exe)
+    if os.path.normcase(doc) != os.path.normcase(survey_file):
+        raise NonRecoverableError(
+            f'could not open {survey_file} (current document: {doc})'
+        )
+    return survey_file
+
+
+def _inner_loop_select_cell_and_qc(labels, stimulation_mask, viz_image, imaged_centroids, centroid_threshold, cycle, out_dir, file_prefix):
+    """Match detected objects to already-imaged map, pick next cell, build polygons and save QC overlay.
+    Returns (cell, cell_poly, stim_poly, n_obj) or (None, None, None, n_obj) if no cell is available.
+    """
+    from skimage.measure import regionprops
+    from autofrap.core.image.mask import mask_to_polygon
+    from autofrap.core.image.qc import save_qc_overlay
+    from autofrap.core.detection import cell_mask
+
+    n_obj = len(np.unique(labels)) - 1
+    # match detected objects to already-imaged map
+    if imaged_centroids:
+        matched = set()
+        for rp in regionprops(labels):
+            cy, cx = rp.centroid
+            if centroid_threshold == 'auto':
+                radius = rp.equivalent_diameter_area
+            else:
+                radius = centroid_threshold
+            for iy, ix in imaged_centroids:
+                if (cy - iy)**2 + (cx - ix)**2 < radius**2:
+                    matched.add(rp.label)
+                    break
+    else:
+        matched = set()
+
+    cell = next_stimulatable_cell(labels, matched, stimulation_mask)
+    if cell is None:
+        print(
+            f'[c{cycle:02d}] {n_obj} objects, all stimulated or no '
+            'stimulation mask -> stop'
+        )
+        return None, None, None, n_obj
+
+    skipped = set()
+    while True:
+        cell_poly = mask_to_polygon(cell_mask(labels, cell))
+        stim_poly = mask_to_polygon(cell_mask(labels, cell, stimulation_mask))
+        if cell_poly and stim_poly:
+            break
+        skipped.add(cell)
+        print(f'[c{cycle:02d}] cell {cell}: no polygon, skipping')
+        cell = next_stimulatable_cell(labels, matched | skipped, stimulation_mask)
+        if cell is None:
+            print(
+                f'[c{cycle:02d}] all {n_obj} objects have no '
+                'polygon -> move to next FOV'
+            )
+            return None, None, None, n_obj
+
+    print(f'[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}')
+    # QC overlay before stimulation
+    try:
+        save_qc_overlay(
+            viz_image, labels,
+            os.path.join(out_dir, f'{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_survey_qc.png'),
+            stimulation_mask=stimulation_mask, cell_id=cell,
+            cell_poly=cell_poly, stim_poly=stim_poly,
+            caption=f'{CYCLE_PREFIX}{cycle:02d} cell {cell}'
+        )
+    except Exception as e:
+        print(f'[c{cycle:02d}] WARNING: QC overlay failed: {e!r}', flush=True)
+
+    return cell, cell_poly, stim_poly, n_obj
+
+
+def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, cycle):
+    """Create ROIs, run FRAP stimulation and save the timeseries.
+    Raises RecoverableError / NonRecoverableError on failure.
+    """
+    import time
+    from autofrap.microscope.nis import _OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, _OP_ADD_POLYGON_ROI
+
+    roi_calls = [
+        (_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
+        (_OP_ADD_POLYGON_ROI, {'points': cell_poly}),
+        (_OP_ADD_POLYGON_ROI, {'points': stim_poly}),
+    ]
+    try:
+        roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
+        cell_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_1'])
+        stim_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_2'])
+    except TimeoutError:
+        roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
+        cell_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_1'])
+        stim_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_2'])
+
+    if cell_roi <= 0:
+        raise RecoverableError(f'cell ROI creation failed (id={cell_roi})')
+    if stim_roi <= 0:
+        raise RecoverableError(f'stim ROI creation failed (id={stim_roi})')
+
+    nis_util.set_roi_type(nis_exe, stim_roi, 3)
+
+    nis_util.set_optical_configuration(nis_exe, frap_oc)
+    t0 = time.time()
+    nis_util.run_stimulation_experiment(nis_exe)
+    print(f'[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)', flush=True)
+
+    nis_util.save_current_document(nis_exe, frap_file)
+    if not os.path.isfile(frap_file):
+        raise NonRecoverableError(
+            f'FRAP file missing after save_current_document: '
+            f'{frap_file} (ImageSaveAs wrote nothing)'
+        )
+
+
 def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
              frap_oc='FRAPPA', centroid_threshold='auto',
              file_prefix=None, stop_check=None,
@@ -440,21 +572,7 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         cell_roi = stim_roi = None
 
         try:
-
-            # TODO: extract run + check for outfile existence to something like _inner_loop_do_survey()?
-
-            # 1+2. survey: run the GUI-configured ND experiment, saved
-            t0 = time.time()
-            nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file,
-                                               progress_bar=True)
-            print(f'[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)',
-                  flush=True)
-            # NIS can fail to save without saying so (disk full, GUI dialog,
-            # crash) - check instead of trusting
-            if not os.path.isfile(survey_file):
-                raise NonRecoverableError(
-                    f'survey file missing after the ND run: {survey_file} '
-                    '(NIS did not save it - check the GUI / disk)')
+            _inner_loop_do_survey(nis_exe, survey_file, cycle)
 
             # TODO: extract detection + matching + qc save to _inner_loop_detect()?
             # the interrupted check is currently in the middle of this but can be moved to the front or back of the ROI generation logic?
@@ -491,159 +609,18 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                     f'stop requested by user after survey + detection '
                     f'of cycle {cycle}')
 
-            # 4. match detected objects to the "already-imaged" map
-            # via centroid distance; pick the smallest unmatched label
-            # that has at least one pixel in the stimulation mask
-            if imaged_centroids:
-                # build a set of current-cycle labels that match an
-                # already-imaged cell (centroid-based, id-independent).
-                # In 'auto' mode the threshold is the cell's own
-                # equivalent_diameter; a numeric value is used as-is.
-                matched = set()
-                for rp in regionprops(labels):
-                    cy, cx = rp.centroid  # (y, x) — numpy order
-                    # determine per-cell matching radius
-                    if centroid_threshold == 'auto':
-                        radius = rp.equivalent_diameter_area
-                    else:
-                        radius = centroid_threshold
-                    for iy, ix in imaged_centroids:
-                        if (cy - iy)**2 + (cx - ix)**2 < radius**2:
-                            matched.add(rp.label)
-                            break
-            else:
-                matched = set()
-
-            cell = next_stimulatable_cell(labels, matched, stimulation_mask)
-
+            cell, cell_poly, stim_poly, _ = _inner_loop_select_cell_and_qc(
+                labels, stimulation_mask, viz_image, imaged_centroids,
+                centroid_threshold, cycle, out_dir, file_prefix
+            )
             if cell is None:
-                print(
-                    f'[c{cycle:02d}] {n_obj} objects, all stimulated or no '
-                    'stimulation mask -> stop'
-                )
+                # no stimulatable cell or no viable polygon; move to next FOV
                 break
 
-            # Inner loop: if the picked cell has no polygon, skip it and
-            # try the next one in the same survey (defensive; nearly
-            # unreachable with current mask logic).
-            skipped = set()
-            fovd_done = False
-            while True:
-                cell_poly = mask_to_polygon(
-                    cell_mask(labels, cell)
-                )
-                stim_poly = mask_to_polygon(
-                    cell_mask(labels, cell, stimulation_mask)
-                )
-
-                if cell_poly and stim_poly:
-                    break  # found a viable cell
-
-                # This cell can't be used — skip it and try the next.
-                skipped.add(cell)
-                print(
-                    f'[c{cycle:02d}] cell {cell}: no polygon, skipping'
-                )
-                cell = next_stimulatable_cell(
-                    labels, matched | skipped, stimulation_mask
-                )
-                if cell is None:
-                    print(
-                        f'[c{cycle:02d}] all {n_obj} objects have no '
-                        'polygon -> move to next FOV'
-                    )
-                    fovd_done = True
-                    break
-
-            if fovd_done:
-                break  # exit the cycle loop, go to next FOV
-
-            print(f'[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}')
-
-            # 5. ROIs + stimulation run: whole cell (saved for downstream
-            #    analysis) + stimulation region, the latter set to
-            #    stimulation mode
-
-            # QC artifact before the stimulation run, so it is on disk
-            # even if the NIS part of the cycle fails; a rendering
-            # problem must not abort the run
-            try:
-                save_qc_overlay(
-                    viz_image, labels,
-                    os.path.join(out_dir, f'{file_prefix}_'
-                                 f'{CYCLE_PREFIX}{cycle:02d}_survey_qc.png'),
-                    stimulation_mask=stimulation_mask, cell_id=cell,
-                    cell_poly=cell_poly, stim_poly=stim_poly,
-                    caption=f'{CYCLE_PREFIX}{cycle:02d} cell {cell}')
-            except Exception as e:
-                print(f'[c{cycle:02d}] WARNING: QC overlay failed: {e!r}',
-                      flush=True)
-
-            # TODO: make this open-doc-is-survey check part of the survey step above?
-            # there are edge cases (user opens another document in GUI while detection is running)
-            # but users can be instructed not to touch GUI during an automated run
-
-            # The survey document is already the current one after the ND
-            # run (open_after=True; live-verified 20260909) - verify that,
-            # with open_image only as a fallback in case it ever doesn't
-            # hold (a mismatch then means the NIS state is unexpected, and
-            # one cheap ImageOpen recovers it before the ROIs are drawn)
-            doc = nis_util.get_current_document(nis_exe)
-            if os.path.normcase(doc) != os.path.normcase(survey_file):
-                nis_util.open_image(nis_exe, survey_file)
-                doc = nis_util.get_current_document(nis_exe)
-            if os.path.normcase(doc) != os.path.normcase(survey_file):
-                raise NonRecoverableError(
-                    f'could not open {survey_file} '
-                    f'(current document: {doc})')
-
             # TODO: extract from here to end of block 6. to _inner_loop_stimulation?
+            _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, cycle)
 
-            # ROI batch: delete existing ROIs then add cell + stim ROIs
-            # The delete is idempotent, so the whole batch is safe to retry
-            roi_calls = [
-                (_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
-                (_OP_ADD_POLYGON_ROI, {'points': cell_poly}),
-                (_OP_ADD_POLYGON_ROI, {'points': stim_poly}),
-            ]
-            # retry once on timeout
-            try:
-                roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
-                # parse ROI ids
-                cell_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_1'])
-                stim_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_2'])
-                if cell_roi <= 0:
-                    raise RecoverableError(f'cell ROI creation failed (id={cell_roi})')
-                if stim_roi <= 0:
-                    raise RecoverableError(f'stim ROI creation failed (id={stim_roi})')
-                nis_util.set_roi_type(nis_exe, stim_roi, 3)  # 3 = stimulation
-            except TimeoutError:
-                # one retry of the whole ROI block
-                roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
-                cell_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_1'])
-                stim_roi = _OP_ADD_POLYGON_ROI.parse(roi_results['add_polygon_roi_2'])
-                if cell_roi <= 0:
-                    raise RecoverableError(f'cell ROI creation failed (id={cell_roi})')
-                if stim_roi <= 0:
-                    raise RecoverableError(f'stim ROI creation failed (id={stim_roi})')
-                nis_util.set_roi_type(nis_exe, stim_roi, 3)
-
-            nis_util.set_optical_configuration(nis_exe, frap_oc)
-            t0 = time.time()
-            nis_util.run_stimulation_experiment(nis_exe)
-            print(f'[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)',
-                  flush=True)
-
-            # 6. save the FRAP timeseries (includes the stimulation ROI)
-            nis_util.save_current_document(nis_exe, frap_file)
-            # ImageSaveAs can silently write nothing (frozen live view, disk
-            # full) - check instead of trusting
-            if not os.path.isfile(frap_file):
-                raise NonRecoverableError(
-                    f'FRAP file missing after save_current_document: '
-                    f'{frap_file} (ImageSaveAs wrote nothing)')
-
-            # cleanup is deferred to finally via cleanup_everything
+            # cleanup is deferred to finally via cleanup_everything            # cleanup is deferred to finally via cleanup_everything
             cell_roi = stim_roi = None
 
             results.append((cycle, cell, survey_file, frap_file))

@@ -54,6 +54,14 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * `GetROIInfo` color read-back always 0, but colors render correctly.
 
 ## Recent milestones
+* 202610? – Centralize cleanup and untangle autofrap_loop_inner:
+  - Added `cleanup_everything(nis_exe)` with n_open==0 guard and 3× TimeoutError retry using batched delete ROIs + close current document.
+  - Updated `cleanup_run` and `autofrap_loop_inner` finally block to use `cleanup_everything`.
+  - Removed explicit per-cycle block 7 document/ROI teardown from inner loop.
+  - Extracted survey acquisition + document sanity check to `_inner_loop_do_survey`.
+  - Extracted matching / cell selection / polygon building / QC overlay to `_inner_loop_select_cell_and_qc` with stop check left before the call.
+  - Extracted ROI creation, optical config switch, stimulation run and FRAP save to `_inner_loop_stimulation`.
+  - Inner loop now a readable survey → detect → select+QC → stimulate pipeline.
 * 20260917 – Refactor autoFRAP pipeline to explicit setup / cleanup blocks and batched macro calls:
   - Added `setup_microscope` with batched `nd_acq_tabs + position + resolution` reads and 0/2/4 s retry.
   - Introduced `autofrap_loop_inner`, `autofrap_loop_outer`, `cleanup_run`, and outer `autofrap` orchestrator; position generation moved outside the loop.
