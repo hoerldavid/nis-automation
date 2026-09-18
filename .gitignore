@@ -18,3 +18,5 @@ test_data/
 
 # macOS
 .DS_Store
+nis_manual/nis_help_html/
+nis_manual/*.chm
