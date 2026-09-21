@@ -15,9 +15,9 @@ the stable housekeeping + contract checks (composition contract and
 examples in its docstring). Parts:
 
   - autofrap.io.nd2.read_channel    read one survey channel (2D)
-  - dummy_detect_objects        fixed circle + rectangle (testing,
+  - autofrap.core.image.segmentation.dummy_detect_objects        fixed circle + rectangle (testing,
                                 no dependencies)
-  - remote_detect_objects       cellpose on a separate server
+  - autofrap.core.image.segmentation.remote_detect_objects       cellpose on a separate server
                                 (cellpose_server.py); this machine
                                 only ships the image over HTTP
   - autofrap.core.image.mask.half_object_stim_mask  left half of each object (pass as
@@ -57,12 +57,12 @@ clear_border/relabelling — it works on the raw detector IDs so the
 caller can use the exact label map from the detector (e.g. reference
 the detector's label IDs when computing per-cell marker intensity).
 
-**Custom detector file** (for ``autofrap_grid --detector FILE``):
+**Custom detector file** (for ``python -m autofrap.pipeline --detector FILE``):
 any ``.py`` file that defines ``detection_fun`` — a callable with
 the ``build_detector`` return signature
 (`survey_file -> (labels[, mask[, viz]])`). The runner imports the
 file and uses ``detection_fun`` directly. See
-``autofrap/autofrap_bitsnpieces/example_detector.py``.
+``autofrap/detectors/example_detector.py``.
 
 **Extra detector parameters** (``--detector-arg key=value``):
 the runner passes additional keyword arguments to ``detection_fun``
@@ -75,7 +75,7 @@ accept them via ``**kwargs`` or by name.
 import warnings
 import inspect
 
-from autofrap.core.image.mask import half_object_stim_mask, relabel_by_distance, shuffle_labels
+from autofrap.core.image.mask import relabel_by_distance, shuffle_labels
 from autofrap.core.image.qc import default_visualization as _default_visualization
 import numpy as np
 
@@ -89,18 +89,13 @@ def _accepts_kwargs(func):
 
 def _warn_multi_region(labels, stimulation_mask):
     """
-    warn about cells whose stimulation mask has more than one connected
-    region
-
-    Detector contract violation (see the detect docstring). This is a
-    warning, not an error: mask_to_polygon still works and implicitly
-    selects the largest region, so a violating detector degrades the
-    run instead of aborting it.
+    Warn about cells whose stimulation mask has more than one connected
+    region. This is a detector contract violation (see the detect docstring)
+    and results in warning, not an error: downstream mask_to_polygon still works
+    and implicitly selects the largest region.
 
     Connectivity is 4-neighborhood (cross), the same convention
-    find_contours uses for boundaries: blobs touching only at a corner
-    count as two regions (label's default is full connectivity, which
-    would merge them).
+    find_contours uses for boundaries during polygon generation.
     """
     from skimage.measure import label
     for cell_id in np.unique(labels)[1:]:
@@ -164,6 +159,7 @@ def build_detector(load_fun, detector_fun, relabel='distance',
     mask, the channel itself as visualization) - as used by
     autofrap():
 
+        from autofrap.core.image.segmentation import remote_detect_objects
         build_detector(partial(autofrap.io.nd2.read_channel, channel=0),
                        partial(remote_detect_objects, server_url=...),
                        stim_mask_fun=lambda labels, image:
@@ -180,7 +176,8 @@ def build_detector(load_fun, detector_fun, relabel='distance',
                             axis=0)  # (c, y, x)
 
         def detect_expressing(img):
-            labels = cellpose(img[..., 0])
+            from autofrap.core.image.segmentation import remote_detect_objects
+            labels = remote_detect_objects(img[..., 0], server_url=...)
             expressing = per-cell means of img[..., 1] above threshold
             return np.where(expressing, labels, 0)
 
@@ -207,6 +204,7 @@ def build_detector(load_fun, detector_fun, relabel='distance',
                     good.append(rp.label)
             return good
 
+        from autofrap.core.image.segmentation import remote_detect_objects
         detection_fun = build_detector(
             load,
             partial(remote_detect_objects, server_url=...),
@@ -223,7 +221,8 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         (e.g. partial(autofrap.io.nd2.read_channel, channel=...))
     detector_fun: callable
         image -> 2D (y, x) int label map (0 = background, 1..N);
-        e.g. dummy_detect_objects, partial(remote_detect_objects,
+        e.g. autofrap.core.image.segmentation.dummy_detect_objects,
+        partial(autofrap.core.image.segmentation.remote_detect_objects,
         server_url=...), or your own model
     relabel: str or None
         'distance' (default), 'shuffle', or None (no relabelling)
@@ -258,7 +257,7 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         Controls how extra keyword arguments are routed to the
         sub-functions (``load_fun``, ``detector_fun``, etc.) when
         ``detection_fun`` is called with additional keyword arguments
-        (e.g. from ``autofrap_grid --detector-arg key=value``).
+        (e.g. from ``python -m autofrap.pipeline --detector-arg key=value``).
 
         - ``None`` (default): no extra arguments are passed to any
           sub-function.
@@ -294,6 +293,8 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         """Extract the subset of runtime_kwargs for a sub-function."""
         if parameter_map is None or not runtime_kwargs:
             return {}
+
+        # TODO: remove auto? might only cause confusion?
         if parameter_map == 'auto':
             if _accepts_kwargs(func):
                 return runtime_kwargs
@@ -309,8 +310,11 @@ def build_detector(load_fun, detector_fun, relabel='distance',
                 if rk in func_map}
 
     def _detect(survey_file, **runtime_kwargs):
+        
         image = load_fun(survey_file, **_route(load_fun, 'load_fun', runtime_kwargs))
         labels = detector_fun(image, **_route(detector_fun, 'detector_fun', runtime_kwargs))
+        
+        # check detection output - should be integer label map with same yx shape as input
         if labels.ndim != 2:
             raise ValueError(
                 f'detector_fun returned {labels.ndim}D labels, '
@@ -323,12 +327,12 @@ def build_detector(load_fun, detector_fun, relabel='distance',
 
         # filter: keep only labels in the set returned by
         # filter_function; labels not in the set are zeroed.
-        # np.isin needs a list (sets produce object-dtype arrays
-        # that don't match integer label maps).
         if filter_function is not None:
             good = filter_function(
                 labels, image, **_route(filter_function, 'filter_function',
                                         runtime_kwargs))
+            # np.isin needs a list (sets produce object-dtype arrays
+            # that don't match integer label maps).
             labels = np.isin(labels, list(good)) * labels
 
         if clear_border:
@@ -359,10 +363,10 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         if visualization_fun is False:
             viz = None
         elif visualization_fun is None:
-            viz = _check_viz(
+            viz = _apply_and_check_viz(
                 _default_visualization, image, labels.shape)
         else:
-            viz = _check_viz(
+            viz = _apply_and_check_viz(
                 visualization_fun, image, labels.shape,
                 **_route(visualization_fun, 'visualization_fun',
                          runtime_kwargs))
@@ -377,14 +381,14 @@ def build_detector(load_fun, detector_fun, relabel='distance',
 
     return _detect
 
-def _check_viz(visualization_fun, image, shape, **kwargs):
-    """
-    best-effort visualization: run visualization_fun and check the
-    output shape; on failure (exception or wrong shape) warn and
-    return None
 
-    The visualization is cosmetic (QC overlay only) and must not
-    break the run - a bad visualization_fun is a warning, not an
+def _apply_and_check_viz(visualization_fun, image, shape, **kwargs):
+    """
+    Run visualization_fun and check that the output can be used by downstream plotting. 
+    On failure (exception or wrong shape) warn and return None.
+
+    The visualization is cosmetic (QC overlay only) and must not break the run.
+    Therefore a bad visualization_fun result is a warning, not an
     error, unlike the labels/mask contract checks.
     """
     try:
@@ -427,10 +431,10 @@ def load_detector_file(path):
 
     Examples
     --------
-    A simple detector file (see ``example_detector.py``):
+    A simple detector file (see ``autofrap/detectors/example_detector.py``):
 
         # my_detector.py
-        from autofrap.core.detection import dummy_detect_objects
+        from autofrap.core.image.segmentation import dummy_detect_objects
         from autofrap.core.image.mask import half_object_stim_mask
 
         def detection_fun(f):
@@ -440,7 +444,7 @@ def load_detector_file(path):
 
     Usage from the CLI:
 
-        autofrap_grid --detector my_detector.py ...
+        python -m autofrap.pipeline --detector my_detector.py ...
     """
     import importlib.util
     import os
@@ -460,6 +464,7 @@ def load_detector_file(path):
     return detection_fun
 
 
+# TODO: remove complicated wrapper for deprecated functions
 def __getattr__(name):
     if name == "dummy_detect_objects":
         import warnings
@@ -494,26 +499,3 @@ def __getattr__(name):
         from autofrap.core.image.qc import default_visualization as _f
         return _f
     raise AttributeError(name)
-
-
-if __name__ == '__main__':
-    import sys
-    from functools import partial
-
-    from autofrap.io.nd2 import read_channel
-
-    f = sys.argv[1] if len(sys.argv) > 1 else \
-        r'C:\Users\David\Desktop\nis-automation\overview\20260819_173530_p01_-0262.4_-0270.0.nd2'
-    labels, stim, viz = build_detector(
-        partial(read_channel, channel=0),
-        dummy_detect_objects,
-        stim_mask_fun=lambda labels, image:
-            half_object_stim_mask(labels),
-        visualization_fun=lambda image: image)(f)
-    vals, counts = np.unique(labels, return_counts=True)
-    print(f'{f}')
-    print(f'label shape: {labels.shape} (y, x), dtype: {labels.dtype}')
-    for v, c in zip(vals, counts):
-        print(f'  label {v}: {c} px')
-    print(f'stim_mask shape: {stim.shape}, nonzero: {np.sum(stim)}')
-    print(f'viz shape: {viz.shape}')

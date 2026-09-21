@@ -112,6 +112,7 @@ def _extract(arr, axes, channels, z_projection):
     return arr
 
 
+# TODO: not really needed - remove?
 def stage_position(nd2_file):
     """
     read the (x, y, z) stage position [um] recorded in the ND2 metadata

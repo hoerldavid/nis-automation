@@ -4,8 +4,7 @@ QC overlay rendering for the auto-FRAP pipeline.
 Renders a single PNG combining the survey image, the detector's label
 map, the stimulation mask, and (optionally) the cell selected for FRAP
 plus the exact polygons sent to NIS. Saved next to the survey file so
-detection + selection can be spot-checked without opening NIS
-(STATUS.md TODO #8).
+detection + selection can be spot-checked without opening NIS.
 
 Rendering is headless (Agg backend): the microscope workstation may not
 have a display, and this is a pipeline artifact, not interactive work.
@@ -16,6 +15,7 @@ import numpy as np
 
 import matplotlib
 matplotlib.use('Agg')
+
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
 from matplotlib.lines import Line2D
@@ -29,10 +29,12 @@ COLOR_STIM = (1.0, 0.65, 0.0)      # stimulation mask (orange)
 COLOR_CELL_POLY = (0.0, 1.0, 1.0)  # whole-cell polygon sent to NIS (cyan)
 COLOR_STIM_POLY = (1.0, 0.0, 1.0)  # stimulation polygon sent to NIS (magenta)
 
+DEFAULT_INTENSITY_PERCENTILES = (2.0, 99.8)
 
-def _image_clipping(image):
+
+def _image_clipping(image, percentiles=DEFAULT_INTENSITY_PERCENTILES):
     """percentile clipping so a few hot pixels don't wash out the image"""
-    lo, hi = np.percentile(image, [1, 99.5])
+    lo, hi = np.percentile(image, percentiles)
     if hi <= lo:  # constant image: fall back to full range
         lo, hi = float(image.min()), float(image.max())
     return float(lo), float(hi)
@@ -57,9 +59,9 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
     Layers, bottom to top (explicit zorder; note matplotlib would
     otherwise draw Text above every imshow image regardless of call
     order):
-      1. image (2D: grayscale, 1-99.5 % percentile-clipped; RGB(A):
-         as-is - a detector-provided visualization is already scaled;
-         None: blank black canvas)
+      1. image (2D: grayscale, DEFAULT_INTENSITY_PERCENTILES percentile-clipped;
+            RGB(A): as-is - a detector-provided visualization is expected to be already scaled;
+              None: blank black canvas)
       2. stimulation mask (orange fill)
       3. contours of all labels + stimulation mask contour
       4. polygons sent to NIS (solid: whole cell cyan, stimulation magenta)
@@ -76,13 +78,8 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
 
     Parameters
     ----------
-    image: 2D np.ndarray (y, x) numeric, or 3D (y, x, 3/4), or None
-        2D: the survey channel the detector ran on, shown grayscale
-        with 1-99.5 % percentile clipping; RGB(A): shown as-is, no
-        scaling or colormap - e.g. a multi-channel visualization
-        assembled by the detector (its responsibility to provide);
-        None: a blank (black) canvas - the palette (white contours and
-        IDs, black-stroked text) is designed for a dark background
+    image: 2D np.ndarray (y, x) numeric, or RGB(A) (y, x, 3/4), or None
+        the survey image the detector ran on
     labels: 2D np.ndarray (y, x), int
         label map (0 = background, 1..N = objects)
     path: str
@@ -90,7 +87,7 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
     stimulation_mask: 2D np.ndarray (y, x), bool, optional
         stimulation-eligible areas (all cells); filled in orange
     cell_id: int, optional
-        the label selected for FRAP; highlighted in green
+        the label selected for FRAP;
     cell_poly: list of (x, y), optional
         whole-cell polygon as sent to NIS
     stim_poly: list of (x, y), optional
@@ -208,7 +205,8 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
     fig.savefig(path, dpi=dpi)
     plt.close(fig)
 
-def default_visualization(image, channel_colors=None, percentiles=(1, 99.5)):
+
+def default_visualization(image, channel_colors=None, percentiles=DEFAULT_INTENSITY_PERCENTILES):
     """
     Default QC visualization for build_detector.
 

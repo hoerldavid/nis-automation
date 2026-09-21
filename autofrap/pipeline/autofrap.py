@@ -1,5 +1,5 @@
 """
-Auto-FRAP loop: survey -> detect -> pick unused cell -> stimulate -> repeat.
+Auto-FRAP inner loop: survey -> detect -> pick unused cell -> stimulate -> repeat.
 
 All acquisition settings come from the NIS GUI (the ND acquisition
 definition carries the survey's optical configuration); this script
@@ -8,7 +8,7 @@ just runs them in a loop.
 Per cycle:
   1. run the current ND experiment, saved to
      <file_prefix>_cycle<NN>_survey.nd2 (file_prefix defaults to a
-     timestamp for standalone runs; autofrap_grid passes 'fov<NN>')
+     timestamp for standalone runs; autofrap_loop_outer passes 'fov<NN>')
   2. detect objects in the survey image (detection_fun — by default
      cellpose on the GPU server via cellpose_server.py) — returns
      (labels[, stimulation_mask[, visualization]]): only the label
@@ -112,13 +112,6 @@ def _check_nd_acq_template(tabs):
     return tabs
 
 
-# TODO: no longer used - remove?
-def _run_nd_acq_check(nis_exe):
-    """Pre-flight wrapper: queries NIS then validates the template."""
-    tabs = nis_util.get_nd_acq_tabs(nis_exe)
-    return _check_nd_acq_template(tabs)
-
-
 def setup_microscope(nis_exe):
     """Batch read of ND acquisition tabs, stage position and resolution.
 
@@ -202,14 +195,15 @@ def cleanup_run(nis_exe, start_pos, return_to_start=True):
 
     # Idempotent cleanup
     try:
-        cleanup_everything(nis_exe)
+        nis_cleanup_everything(nis_exe)
     except Exception as e:
         print(f'!!! cleanup_everything failed: {e!r}', flush=True)
 
 
-def cleanup_everything(nis_exe):
-    """Best-effort thorough cleanup: delete ROIs and close all open documents
-    in one batched macro. Retries on TimeoutError.
+def nis_cleanup_everything(nis_exe):
+    """Best-effort thorough cleanup in NIS:
+    Delete ROIs and close all open documents in one batched macro.
+    Retries on TimeoutError.
     """
     import time
     last_exc = None
@@ -293,13 +287,13 @@ class AutofrapError(Exception):
 
 class RecoverableError(AutofrapError):
     """failure confined to the current FOV (no polygon for the cell, ROI
-    creation failed); a grid run can continue with the next position"""
+    creation failed); a run can continue with the next position"""
 
 
 class NonRecoverableError(AutofrapError):
     """failure that makes further FOVs pointless or unsafe (NIS state
     unknown, detection failed - the detector/server state is suspect,
-    disk full); a grid run aborts"""
+    disk full); a run aborts"""
 
 
 class AutofrapInterruptedException(AutofrapError):
@@ -309,6 +303,7 @@ class AutofrapInterruptedException(AutofrapError):
     runs from a known state; the grid stops (it is not a failure)"""
 
 
+# TODO: move to mask functions?
 def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
     """
     Find the next unstimulated cell (smallest label first).
@@ -573,21 +568,19 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         cell_roi = stim_roi = None
 
         try:
+
+            # 1. acquire survey image
             _inner_loop_do_survey(nis_exe, survey_file, cycle)
 
-            # TODO: extract detection + matching + qc save to _inner_loop_detect()?
-            # the interrupted check is currently in the middle of this but can be moved to the front or back of the ROI generation logic?
-
-            # 3. detect (the client already retried once; any failure
-            # that survives is run-level: the detector/server state is
-            # suspect, so a grid run aborts - no per-exception
-            # translation here, the detector may be any callable)
+            # run detection function 
             try:
                 det = detection_fun(survey_file, **detector_kwargs)
             except Exception as e:
+                # TODO: detection failure -> recoverable error & continue with next FOV?
                 raise NonRecoverableError(
                     f'detection failed on {survey_file}: {e!r}') from e
 
+            # 2. unpack detector output
             # a bare label map is accepted (normalized to a 1-tuple);
             # otherwise: a 1-3 tuple/list (labels[, mask[, viz]])
             if isinstance(det, np.ndarray):
@@ -599,7 +592,6 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             labels = det[0]
             stimulation_mask = det[1] if len(det) > 1 else None
             viz_image = det[2] if len(det) > 2 else None
-            n_obj = len(np.unique(labels)) - 1
 
             # safe stop point P2: survey acquired + detected, no ROIs
             # created yet (the finally-cleanup just closes the survey
@@ -610,6 +602,7 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                     f'stop requested by user after survey + detection '
                     f'of cycle {cycle}')
 
+            # 3. find next cell and create QC image
             cell, cell_poly, stim_poly, _ = _inner_loop_select_cell_and_qc(
                 labels, stimulation_mask, viz_image, imaged_centroids,
                 centroid_threshold, cycle, out_dir, file_prefix
@@ -618,10 +611,10 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
                 # no stimulatable cell or no viable polygon; move to next FOV
                 break
 
-            # TODO: extract from here to end of block 6. to _inner_loop_stimulation?
+            # 4. run stimulation / FRAP
             _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, cycle)
 
-            # cleanup is deferred to finally via cleanup_everything            # cleanup is deferred to finally via cleanup_everything
+            # cleanup is deferred to finally via cleanup_everything
             cell_roi = stim_roi = None
 
             results.append((cycle, cell, survey_file, frap_file))
@@ -649,7 +642,7 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         finally:
             # best-effort cleanup: close all open docs and delete ROIs
             try:
-                cleanup_everything(nis_exe)
+                nis_cleanup_everything(nis_exe)
             except Exception:
                 pass
 
@@ -657,6 +650,7 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
     return results
 
 
+# TODO: move to core.utils.grid?
 def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
     """
     compute a grid of stage positions centered on the given position
@@ -698,8 +692,7 @@ def autofrap_loop_outer(nis_exe, out_dir, positions,
                   stop_check=None, allow_interrupt_after_survey=False,
                   **detector_kwargs):
     """
-    run the autofrap() loop on every position of a stage grid, centered
-    on the current stage position
+    Go over multiple stage positions / FOVs and run one or more autoFRAP cycles at each.
 
     By default all FOVs are written to a single run directory; the
     'fov<NN>' file prefix (matching the log lines) keeps files
@@ -719,9 +712,6 @@ def autofrap_loop_outer(nis_exe, out_dir, positions,
     With fov_subdirs=True, each FOV goes into its own sub-directory
     instead (<run_stamp>/fov<NN>/, same file names).
 
-    (the exact stage position of each FOV is in the nd2 metadata of
-    the saved files — nd2_helpers.stage_position reads it back)
-
     Parameters
     ----------
     nis_exe, out_dir: str
@@ -730,9 +720,7 @@ def autofrap_loop_outer(nis_exe, out_dir, positions,
     positions: list of (x, y)
         precomputed stage positions in visit order; the list is generated
         outside (e.g. via :func:`grid_positions` for a plain NxM grid or
-        :func:`spiral_positions` for a centre‑out spiral).  The function
-        does not use ``nx``, ``ny``, or ``spacing`` when ``positions`` is
-        supplied.
+        :func:`spiral_positions` for a centre‑out spiral).
     return_to_start: bool
         move back to the starting position after the last FOV
     max_cycles, detection_fun, frap_oc, centroid_threshold:
@@ -748,20 +736,20 @@ def autofrap_loop_outer(nis_exe, out_dir, positions,
         prefix the run directory name with a timestamp (default True);
         only meaningful together with name
     stop_check, allow_interrupt_after_survey:
-        passed through to autofrap() unchanged; additionally the grid
+        passed through to autofrap_loop_inner() unchanged; additionally the grid
         checks stop_check between FOVs. A requested stop stops the run
         at the next safe boundary (AutofrapInterruptedException from
-        autofrap()) — this is not a failure: the remaining positions
+        autofrap_loop_inner()) — this is not a failure: the remaining positions
         are simply not visited and the partial results are returned
     detector_kwargs: dict, optional
-        extra keyword arguments forwarded to ``autofrap`` →
-        ``detection_fun`` (see :func:`autofrap` for details); from the
+        extra keyword arguments forwarded to ``autofrap_loop_inner`` →
+        ``detection_fun`` (see :func:`autofrap_loop_inner` for details); from the
         CLI these come from ``--detector-arg key=value`` (repeatable)
 
     Returns
     -------
     results: list of (i, x, y, fov_dir, fov_results)
-        fov_results is autofrap's per-cycle results, or None if that FOV
+        fov_results is autofrap_loop_inner's per-cycle results, or None if that FOV
         failed; fov_dir is the per-FOV sub-directory (fov_subdirs=True)
         or the shared run directory. A RecoverableError skips the FOV
         and continues; a NonRecoverableError aborts the run (the
@@ -773,9 +761,7 @@ def autofrap_loop_outer(nis_exe, out_dir, positions,
     NonRecoverableError
         if the starting stage position cannot be read, the ND
         Acquisition template is misconfigured, the detector name is
-        invalid, the run directory already exists and is non-empty, or
-        the detection server is unreachable (passed on from
-        autofrap())
+        invalid, the run directory already exists and is non-empty
     """
     if name is not None and not all(c.isalnum() or c in '._-'
                                     for c in name):
@@ -907,7 +893,7 @@ def build_positions(start_xy, fov, nx=2, ny=2, spacing=1.0,
     positions : list of (x, y)
     """
     if spiral:
-        from grid_utils import spiral_positions
+        from autofrap.core.utils.grid import spiral_positions
         max_pos = max_positions if max_positions is not None else nx * ny
         # spiral_positions expects a scalar FOV; use mean of x/y for rectangular FOVs
         fov_scalar = float(fov[0]) if isinstance(fov, (list, tuple)) else float(fov)

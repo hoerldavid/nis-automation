@@ -223,6 +223,7 @@ def _nis_running(path_to_nis):
     """
     check the NIS GUI is running (tasklist on the executable name)
     """
+    # TODO: check if we're on Windows, if not -> don't even try, NIS is not running
     exe = os.path.basename(path_to_nis)
     out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq ' + exe],
                          capture_output=True, text=True)

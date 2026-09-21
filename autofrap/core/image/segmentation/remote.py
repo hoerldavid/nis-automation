@@ -76,4 +76,5 @@ def remote_detect_objects(image, server_url, timeout=60, retries=1,
           f'({r.headers.get("X-N-Objects", "?")} objects) on {server_url}')
 
     # CP4 returns uint16 masks; the rest of the pipeline uses int32
+    # TODO: this is unlikely to cause problems, stick to uint16?
     return np.ascontiguousarray(labels, dtype=np.int32)

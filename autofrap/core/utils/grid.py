@@ -40,7 +40,7 @@ def spiral_positions(position, fov, spacing, max_positions=None):
 
     Examples
     --------
-    5×5 FOV grid (spacing=1):
+    5x5 FOV grid (spacing=1):
 
         positions = spiral_positions(start, fov, 1.0, max_positions=25)
 
@@ -166,6 +166,3 @@ def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True)
 
     return res, tilesX, tilesY, overlap
 
-
-if __name__ == '__main__':
-    print(gen_grid([.6, .6], [1, 0], [0, 1], 0.0, True, True, True))
