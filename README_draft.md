@@ -32,23 +32,21 @@ python /path/to/repo/cellpose_server.py --device auto --host 0.0.0.0 --port 8000
 ```
 
 `cellpose_server.py` lives in the repository root. The built-in Cellpose detectors read `CELLPOSE_SERVER_URL` at import time; set it on the workstation.
-```
 
-Dependencies are declared in `pyproject.toml`. The package provides shims for legacy bitsnpieces imports.
+Dependencies are declared in `pyproject.toml`.
 
 ## Quick start – dry run with FakeNIS
 
 No microscope required:
 
 ```bash
-python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py \
-  --preset simple_seg \
-  --out test_acquisitions/dry_run
+python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py --preset simple_seg
 ```
 
 Presets:
+* `dummy` → `autofrap/detectors/dummy_detector.py` (fixed shapes, for testing)
 * `simple_seg` → `autofrap/detectors/simple_seg_detector.py` (Otsu + watershed, local, no server)
-* `cellpose` → `autofrap/detectors/cellpose_remote_detector.py` with `diameter=70`
+* `cellpose` → `autofrap/detectors/cellpose_remote_halfnucleus_modular.py` with `diameter=70`
 
 The dry run is designed to work with arbitrary existing ND2 files. The test script uses a hardcoded survey glob, but the pipeline itself accepts any source list. It copies source ND2s as surveys/FRAPs and writes QC PNGs.
 
@@ -100,7 +98,7 @@ python -m autofrap.pipeline \
   --detector-arg min_eroded_extent=0.90
 ```
 
-`--spiral` generates a centre-out spiral via `grid_utils.spiral_positions`. Use `--max-positions` / `--num-positions` to set the number of positions to visit; if omitted it falls back to `--nx * --ny`. The same flag also caps a regular grid: e.g. `--nx 5 --ny 5 --max-positions 20` visits the first 20 positions of the 5×5 grid in row-major order. Example: `--spiral --max-positions 13` visits the centre plus 12 surrounding positions.
+`--spiral` generates a centre-out spiral via `autofrap.core.utils.grid.spiral_positions`. Use `--max-positions` / `--num-positions` to set the number of positions to visit; if omitted it falls back to `--nx * --ny`. The same flag also caps a regular grid: e.g. `--nx 5 --ny 5 --max-positions 20` visits the first 20 positions of the 5×5 grid in row-major order. Example: `--spiral --max-positions 13` visits the centre plus 12 surrounding positions.
 
 ## Detectors
 
@@ -118,15 +116,11 @@ The built-in detectors are just examples of this contract. You can use the Cellp
 
 `build_detector` composes load → detect → mask → viz and routes CLI parameters to sub-functions via `parameter_map`. With `parameter_map='auto'` each sub-function receives the arguments it can accept; explicit mappings can be provided to avoid name collisions, see `autofrap/core/detection.py`.
 
-Built-in:
-* `autofrap/detectors/dummy_detector.py` – labels only, for testing
-* `autofrap/detectors/simple_seg_detector.py` – Otsu high-pass + watershed, local
-* `autofrap/detectors/cellpose_remote_detector.py` – remote Cellpose server, half-nucleus stim mask
-* `autofrap/detectors/cellpose_remote_halfnucleus_modular.py` – same as above built with `build_detector` and QC viz
+Built-in detectors live in `autofrap/detectors/` (dummy, local Otsu+watershed, and remote-Cellpose variants with different stimulation masks) — see the directory for the current list.
 
 Authoring a detector:
 ```python
-from autofrap.detection import build_detector
+from autofrap.core.detection import build_detector
 from functools import partial
 
 def load_fun(path): ...
@@ -156,4 +150,4 @@ The pipeline returns to start position on completion or abort.
 * The microscope workstation must have both an ND-Acquisition template for the survey image and an ND-Stimulation template for the FRAP time series defined in NIS Elements GUI.
 * For real runs, ensure the ND acquisition template is a single image with one or more channels, no Time/XY/Large Image tabs.
 
-See `STATUS.md` for the full development log and open TODOs.
+See `STATUS.md` for the current state and open TODOs.

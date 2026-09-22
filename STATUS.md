@@ -26,7 +26,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * Error handling: `RecoverableError` → skip FOV, `NonRecoverableError` → abort grid. Best-effort cleanup.
 * Clean Ctrl-C: `AutofrapInterruptedException` with checkpoints P1 cycle end, P2 after survey, P3 between FOVs.
 * Live verified 20260901: 2×2 grid, real DAPI nuclei, cellpose `diameter=70`. Survey ~10 s, detection ~2.1 s, stimulation ~14 s, return to start.
-* FakeNIS offline dry-run works: `autofrap/fake_nis.py` + `dry_run_pipeline.py`.
+* FakeNIS offline dry-run works: `autofrap/microscope/fake_nis.py` + `autofrap/autofrap_bitsnpieces/dry_run_pipeline.py`.
 
 **QC**
 * `autofrap.core.image.qc.save_qc_overlay` renders per-cycle PNG with image, FRAP mask, labels, polygons, legend.
