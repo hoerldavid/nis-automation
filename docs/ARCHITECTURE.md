@@ -4,11 +4,13 @@
 
 ### Root
 * `nis_util.py` – NIS macro wrappers, `_run_macro` helper. Root-level shim for legacy code; package version lives in `autofrap/microscope/nis.py`
-* `cellpose_server.py` – FastAPI Cellpose inference server, `--device auto|cuda|mps|cpu`
+* `cellpose_server.py` – FastAPI Cellpose inference server, `--device auto|cuda|mps|cpu`. Runs on a remote GPU machine — the microscope PC is CPU-only (its K2200 GPU is unsupported by current PyTorch); GPU inference is much faster than CPU (verified live)
 * `grid_utils.py` – pure grid geometry, `gen_grid`, `spiral_positions`. Root-level shim for legacy code; package version lives in `autofrap/core/utils/grid.py`
 * `pyproject.toml`, `requirements.txt`
 * `DESIGN_GOALS_AUTOFRAP.md`, `README_draft.md`, `STATUS.md`
 * `docs/` – split documentation
+* `legacy/wingscanner/` – pre-existing wing-scanner project (kept as-is): `automation.py`, `annotation.py`, `resources.py`, `simple_detection.py`, `start_wing_scanner.bat`, calibration JSONs in `res/`, exploratory notebooks
+* `nis_ar_help_html/` – extracted NIS macro CHM (greppable HTML), source of truth for macro signatures; `nis_manual/` – NIS manual (both gitignored)
 
 ### `autofrap/`
 Package with public API re-exports.
@@ -50,7 +52,7 @@ Package with public API re-exports.
   * `0013_ch1.tif` + cellpose masks for QC tests
 
 ### Documentation
-* `docs/STATUS_HISTORY.md` – full session log moved from STATUS.md
+* `docs/SESSION_HISTORY.md` – session history (detailed log of agentic coding sessions)
 * `docs/NIS_REFERENCE.md` – macro → wrapper reference
 * `docs/ARCHITECTURE.md` – this file
 

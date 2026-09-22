@@ -11,7 +11,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * FOV = xres * pixel_size / magnification. e.g. 133.1 µm at 100x/13 µm.
 * **New macro batching pattern** `autofrap/microscope/nis.py`: `MacroOp` dataclass with `build(params,section)` and `parse`. Ops for `position`, `resolution`, `nd_acq_tabs` refactored; `batch_run_macro` runs multiple ops in one `nis_ar` call with unique ini sections. See `docs/NIS_REFERENCE.md` § Macro batching.
 * Added new `MacroOp`s for batching and idempotent cleanup: `checkpoint`, `delete_all_rois_in_current_document`, `close_all_docs`, `add_polygon_roi` now MacroOp-based. Single-call wrappers `delete_all_rois_in_current_document`, `close_all_docs`, `checkpoint` added. `FakeNIS` patched for `batch_run_macro` and the new ops. **Needs live microscope testing** – the macros have not been run on the scope workstation yet; verify `CloseCurrentDocument` flag semantics and ROI delete loop on real NIS.
-* Batching gotcha: NIS macro requires all variable declarations before any executable statements. `batch_run_macro` now hoists `int/double/char/dword/byte/word/float` declarations to the top and automatically renames variables to `section_var` to avoid collisions across ops. Live timing: 3 individual calls ~3.4 s vs batched ~1.1 s; 4 calls ~4.4 s vs batched ~1.2 s.
+* Batching gotcha: NIS macro requires all variable declarations before any executable statements. `batch_run_macro` now hoists `int/double/char/dword/byte/word/float` declarations to the top and automatically renames variables to `section_var` to avoid collisions across ops. Every `nis_ar` call carries a roughly constant startup overhead, so batching several ops into one call measurably reduces it (verified live; concrete timings in `docs/SESSION_HISTORY.md`).
 
 **Detection**
 * `build_detector` composer with `parameter_map=None|'auto'|dict`. Runtime args via `--detector-arg`.
@@ -21,6 +21,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 
 **Pipeline**
 * `autofrap.pipeline.autofrap` single FOV, `autofrap_grid` multi-FOV.
+* Cross-cycle cell tracking: centroid matching against an accumulated “already imaged” map (`centroid_threshold='auto'` ≈ one equivalent diameter per cell), so each cell is stimulated at most once.
 * Run dir naming: `<out>/<stamp>_<name>` with `--name`/`--no-timestamp`. Non-empty dir collision aborts.
 * Error handling: `RecoverableError` → skip FOV, `NonRecoverableError` → abort grid. Best-effort cleanup.
 * Clean Ctrl-C: `AutofrapInterruptedException` with checkpoints P1 cycle end, P2 after survey, P3 between FOVs.
@@ -38,6 +39,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 4. **Pixel ↔ stage coordinate transform for per-tile ROIs** – calibration matrix from `get_rotation_matrix`. Low priority.
 5. **Final cleanup housekeeping** – stale one-offs left as-is per convention.
 6. **User-facing documentation** – `README_draft.md` exists, needs refinement and move to repo root.
+7. **Finish documentation rework** – STATUS.md: recent-sessions rollup, unnumbered TODOs, trim redundant milestones; `docs/ARCHITECTURE.md`: full file-map refresh; `docs/NIS_REFERENCE.md`: complete wrapper list. (Structure/rules themselves are in place per AGENTS.md.)
 
 ## Known gotchas
 
@@ -98,6 +100,6 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * 20260909 – ROI persistence probes, session-global ROIs discovery, opened-document wrappers live verified, ND template pre-flight check.
 * 20260901 – Live 2×2 grid with real cellpose, stage position from ND2 metadata verified.
 
-Full session history: `docs/STATUS_HISTORY.md`
+Full session history: `docs/SESSION_HISTORY.md`
 NIS macro reference: `docs/NIS_REFERENCE.md`
 Architecture / file map: `docs/ARCHITECTURE.md`
