@@ -11,7 +11,7 @@ Legacy code from a previous project (Wing-Scanner) lives in the `legacy` directo
 ## Instructions
 
 - Agentic work documentation structure:
-  - `STATUS.md` – living status document (current state, open TODOs, cross-cutting gotchas). Update it as we work; keep it current, not append-only.
+  - `STATUS.md` – living status document (current state, open TODOs, cross-cutting gotchas, short “Recent sessions” rollup of the newest 3–5 sessions — prune older ones when updating). Update it as we work; keep it current, not append-only.
   - `docs/SESSION_HISTORY.md` – append-only log of agentic coding sessions (newest first, one entry per session). Multiple commits within one session extend/edit the topmost entry rather than adding new entries. Detailed session work and concrete measurements from tests go here. Manual (user) commits are not logged as sessions — `git log` is their record.
   - `docs/NIS_REFERENCE.md` / `docs/ARCHITECTURE.md` – reference docs; update in place when the code or structure they describe changes.
   - User-facing documentation (README.md, how-to guides) lives at the repo root; `docs/` holds agent-maintained project documentation.

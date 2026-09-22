@@ -16,30 +16,21 @@
 Package with public API re-exports.
 
 * `__init__.py` – public API re-exports for `autofrap()` / `autofrap_grid()`
-* `pipeline/` → `pipeline/autofrap.py` – `autofrap()` and `autofrap_grid()`
-* `pipeline/` → `pipeline/autofrap.py` – `autofrap()` and `autofrap_grid()`
+* `pipeline/autofrap.py` – `autofrap()` and `autofrap_grid()` (+ CLI)
 * `core/`
-  * `core/detection.py` – `build_detector` composer, runtime parameter routing
-  * `core/simple_seg.py` – `SimpleSegParams`, `detect_objects`
-  * `core/image/mask.py` – mask utilities
-  * `core/image/qc.py` – `save_qc_overlay`
-  * `core/utils/grid.py`
-* `io/` → `io/nd2.py` – ND2 read helpers, `stage_position`
+  * `core/detection.py` – `build_detector` composer, `load_detector_file`, runtime parameter routing
+  * `core/image/segmentation/` – segmentation building blocks: `simple.py` (Otsu+watershed `SimpleSegParams`/`detect_objects`), `remote.py` (Cellpose client), `dummy.py`
+  * `core/image/mask.py` – mask / label utilities (stim masks, polygons, filters)
+  * `core/image/qc.py` – `save_qc_overlay`, `default_visualization`
+  * `core/simple_seg.py` – deprecated shim for `core/image/segmentation/simple`
+  * `core/utils/grid.py` – `gen_grid`, `spiral_positions`
+* `io/nd2.py` – ND2 read helpers (`read_channel`, `stage_position`)
 * `microscope/`
-  * `microscope/nis.py` – NIS wrappers package version
-  * `microscope/fake_nis.py`
-  * `microscope/_resources.py`
-* `detectors/`
-  * `dummy_detector.py`
-  * `cellpose_remote_detector.py`
-  * `cellpose_remote_halfnucleus_modular.py` – `build_detector` assembled
-  * `simple_seg_detector.py`
-  * `example_detector.py`
-* `autofrap_bitsnpieces/` – one-off experiments, tests, bits & pieces
-  * `dry_run_pipeline.py`
-  * `simple_seg_experiment.py`
-  * `frap_gmt1_es_sweep.py`, `frap_gmt1_es_clusters.py`
-  * tests: `test_fake_nis.py`, `test_autofrap_errors.py`, `test_centroid_matching.py`, `test_qc_overlay.py`, etc.
+  * `nis.py` – NIS macro wrappers: `_run_macro`, `MacroOp` + `batch_run_macro` (batched ops), getters/setters, ROI + document management, `NDAcquisition` builder
+  * `fake_nis.py` – offline stand-in for dry runs
+  * `_resources.py` – resource paths (`microscope/res/`)
+* `detectors/` – detector files for `--detector` (one `detection_fun` each; see the directory for the current list)
+* `autofrap_bitsnpieces/` – one-off experiments, tests, bits & pieces (no per-file docs; see the directory listing)
 
 ### Test data
 * `test_acquisitions/`
@@ -63,11 +54,9 @@ Package with public API re-exports.
 3. `next_stimulatable_cell` with centroid matching
 4. `add_polygon_roi` whole cell + stim ROI, `set_roi_type(3)`
 5. `run_stimulation_experiment` → `save_current_document` → FRAP ND2
-6. `delete_roi` both ROIs, close docs
+6. `cleanup_everything`: delete all ROIs + close documents (batched)
 
 Detector contract: `survey_file -> (labels,) or (labels, stim_mask) or (labels, stim_mask, viz)`
 
 ## Notes
-* `autofrap/pipeline.py` referenced in old STATUS.md → now `autofrap/pipeline/autofrap.py`
-* `autofrap/qc.py` referenced in old STATUS.md → now `autofrap/core/image/qc.py`
-* Legacy shims kept at top level for bitsnpieces scripts; new code uses `autofrap.core.*`, `autofrap.io.*`, `autofrap.microscope.*`
+* Root-level `nis_util.py` / `grid_utils.py` are shims for legacy/bitsnpieces code; new code uses `autofrap.core.*`, `autofrap.io.*`, `autofrap.microscope.*`.

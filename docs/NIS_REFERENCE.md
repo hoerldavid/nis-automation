@@ -65,6 +65,7 @@ Gotchas
 * `save_current_document(outfile)` → `ImageSaveAs(path, 15, 0)` ImType 15 = all layers, ImCompr 0 = lossless
 * `close_current_document(save='discard'|'save'|'ask')` → `CloseCurrentDocument(2)` = discard without dialog
 * `open_image(path)` → `ImageOpen`, makes the file the current document
+* Gotcha: `ImageSaveAs` on the frozen live view (current doc `Frozen`) silently writes nothing — grab a single-frame ND acquisition instead
 
 ### Stimulation (GUI-template-driven)
 * No programmatic define function exists: `_ND_CreateSequentialStimulationExp()` / `_ND_CreateSimultaneousStimulationExp()` only open the GUI window — the stimulation experiment must be pre-configured in the GUI
@@ -74,7 +75,7 @@ Gotchas
 * Not wrapped yet: `MatchCameraROI("CLxStimulationDeviceFrappa")` (match camera FOV to stimulation device extent), `A1ApplyStimulationSettings()` (push a changed stimulation ROI to hardware mid-experiment)
 
 ### Stage
-* `set_position(x,y,z=None,pos_piezo=None)` → `StgMoveXY` blocks until arrival. `settle_s` removed.
+* `set_position(pos_xy, pos_z=None, pos_piezo=None, relative_xy=False, relative_z=False, relative_piezo=False)` → `StgMoveXY` blocks until arrival (relative flags give a Δ instead of an absolute position). `settle_s` removed.
 
 ### ROIs
 * `add_polygon_roi(points, color)` → `CreatePolygonROI`, returns ROI ID
@@ -94,6 +95,17 @@ Important ROI behavior
 * ND experiment save embeds ROIs present at acquisition time
 * NIS stores closed polygons without the repeated closing vertex (one point fewer than the pixel-space polygon sent)
 
+### Housekeeping / other
+* `get_roi_count` → number of visible ROIs (`GetROICount`)
+* `delete_all_rois_in_current_document()` → batched `DeleteROI` loop (backward iteration), one macro call
+* `close_all_docs(save_flag=2)` → close all open documents (default: discard)
+* `checkpoint(key='ok', value=1)` → writes an ini key via a macro (liveness / progress marker)
+* `do_autofocus(step_coarse, step_fine, focus_criterion, focus_with_piezo)` → two-pass adaptive stage focus (`StgFocusAdaptiveTwoPasses`) + freeze
+* `do_large_image_scan(save_path, left, right, top, bottom, ...)` → `Stg_LargeImageScanArea` stitched scan
+* `backup_optical_configurations(backup_path)` → `BackupOptConf` exports all optical configurations as XML
+* `export_nd2_to_tiff(nd2_file, out_dir, combine_t/yx/z/c)` → converts an ND2 to TIFFs via NIS
+* `NDAcquisition(outfile)` → from-scratch ND experiment builder (points, channels, z-range → compiled macro)
+
 ### FOV
 `FOV = xres * pixel_size / magnification`
 
@@ -103,7 +115,7 @@ Important ROI behavior
 * Make an already-open ND2 current → `activate_opened_document`
 * Create whole-cell ROI → `add_polygon_roi` + `set_roi_type(0)`
 * Create stimulation ROI → `add_polygon_roi` + `set_roi_type(3)`
-* Remove all ROIs from session → `get_roi_ids` → `delete_roi` for each
+* Remove all ROIs → `delete_all_rois_in_current_document` (batched), or `get_roi_ids` → `delete_roi` for each
 * Move stage → `set_position`
 * Check survey template is single image → `get_nd_acq_tabs` → Time/XY/Large Image must be inactive
 * Switch optical configuration → `set_optical_configuration` (FRAPPA required before stimulation)
