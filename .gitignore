@@ -16,6 +16,9 @@ nis_ar_help_html/
 # ephemeral test data + test artifacts (colleague images, QC outputs, ...)
 test_data/
 
+# local editor settings
+.vscode/
+
 # macOS
 .DS_Store
 nis_manual/nis_help_html/

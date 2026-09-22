@@ -6,7 +6,7 @@ All wrappers in `autofrap/microscope/nis.py` follow:
 2. `nis_ar.exe -mw <file>` attaches to running GUI, blocks until done
 3. Return values via `Int_SetKeyValue` / `Int_SetKeyString` into temp `.ini`
 
-Macro function signatures: `nis_ar_help_html/` (the NIS macro CHM extracted to greppable HTML) is the source of truth.
+Macro function signatures: the NIS macro function reference (CHM from a NIS installation, extracted to greppable HTML — see `nis_manual/README.md` how to obtain/extract it; extracted copy at `nis_ar_help_html/`) is the source of truth.
 
 ### Macro batching
 To reduce `nis_ar` overhead, `autofrap/microscope/nis.py` now uses a `MacroOp` pattern:

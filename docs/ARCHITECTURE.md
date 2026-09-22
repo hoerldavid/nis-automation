@@ -8,7 +8,7 @@
 * `DESIGN_GOALS_AUTOFRAP.md`, `README_draft.md`, `STATUS.md`
 * `docs/` – split documentation
 * `legacy/wingscanner/` – pre-existing wing-scanner project (kept as-is): `automation.py`, `annotation.py`, `resources.py`, `simple_detection.py`, `start_wing_scanner.bat`, calibration JSONs in `res/`, exploratory notebooks, plus `nis_util.py` / `grid_utils.py` shims that re-export the package modules for the legacy code
-* `nis_ar_help_html/` – extracted NIS macro CHM (greppable HTML), source of truth for macro signatures; `nis_manual/` – NIS manual (both gitignored)
+* `nis_manual/` – intended location for the NIS manual: `README.md` describes how to obtain the (copyrighted, gitignored) `.chm` files from a NIS installation and extract them to greppable HTML; `nis_ar_help_html/` – the extracted macro reference HTML (both gitignored)
 
 ### `autofrap/`
 Package with public API re-exports.
