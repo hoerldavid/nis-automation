@@ -1,20 +1,21 @@
 """
-Offline stand-in for the NIS macro layer for dry-running autofrap().
+Offline stand-in for the NIS macro layer for dry-running the autoFRAP pipeline.
 
-autofrap() / autofrap_grid() never touch the NIS executable directly —
-every interaction goes through attribute lookups on the nis_util module
-(nis_util.run_current_nd_experiment(...) and friends).  Installing
+autofrap pipeline functions never touch the NIS executable directly —
+every interaction goes through attribute lookups on the autofrap.microscope.nis module
+(nis.run_current_nd_experiment(...) and friends).  Installing
 FakeNIS replaces exactly those attributes with in-process fakes, so the
-whole pipeline (grid loop, cross-cycle matching, error handling, cleanup)
+whole pipeline (outer+inner loops, cross-cycle matching, error handling, cleanup)
 can be driven offline:
 
-    from autofrap import autofrap
-    from autofrap.fake_nis import FakeNIS
+    from autofrap.pipeline.autofrap import autofrap, autofrap_loop_outer
+    from autofrap.microscope.fake_nis import FakeNIS
 
     with FakeNIS(['a.nd2', 'b.nd2', 'c.nd2']):
-        autofrap.autofrap_multiposition('fake', 'test_acquisitions/dry_run',
-                               positions=None, max_cycles=3,
-                               detection_fun=my_detection_fun)
+        autofrap_loop_outer('fake', 'test_acquisitions/dry_run',
+                            positions=[...], max_cycles=3,
+                            detection_fun=my_detection_fun)
+        # OR autofrap('fake', 'test_acquisitions/dry_run', nx=2, ny=2, ...)
 
 `nis_exe` is ignored — any placeholder string works.
 
@@ -26,7 +27,7 @@ the output file name:
   - all cycles of one FOV copy the same source file
   - the next FOV uses the next source (wrapping if there are more FOVs
     than sources)
-  - standalone autofrap() (timestamp prefix, no fov tag) uses sources[0]
+  - standalone autofrap_loop_inner() (timestamp prefix, no fov tag) uses sources[0]
 
 The FRAP file is created by the save_current_document fake: frap_out=
 'copy' copies the last survey source (a plausible nd2), 'touch' writes
@@ -60,6 +61,7 @@ PATCHED_FUNCTIONS = (
     'delete_all_rois_in_current_document',
     'close_all_docs',
     'checkpoint',
+    'get_opened_documents',
 )
 
 _FOV_RE = re.compile(r'fov(\d+)_')
@@ -234,6 +236,10 @@ class FakeNIS:
             raise RuntimeError(f'ambiguous match for {name!r}: {hits}')
         raise FileNotFoundError(
             f'{name!r} is not among the open documents: {self.open_docs}')
+
+    def _get_opened_documents(self, nis, max_items=24, max_path=260):
+        self._call('get_opened_documents')
+        return self.open_docs
 
     def _save_current_document(self, nis, outfile):
         self._call('save_current_document', outfile)

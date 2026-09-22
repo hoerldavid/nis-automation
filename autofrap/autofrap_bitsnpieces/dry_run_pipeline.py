@@ -25,7 +25,7 @@ from autofrap.microscope import fake_nis
 from autofrap.core.detection import load_detector_file
 from autofrap.core.utils.grid import spiral_positions
 
-SURVEY_GLOB = 'test_acquisitions/autofrap_grid/20260901_160216/fov*/*survey.nd2'
+SURVEY_GLOB = 'test_acquisitions/autofrap_out/*survey.nd2'
 OUT_DIR = 'test_acquisitions/dry_run'
 
 # Spiral traversal settings
@@ -43,6 +43,10 @@ PRESETS = {
     'simple_seg': {
         'detector': 'autofrap/detectors/simple_seg_detector.py',
         'kwargs': {'cell_sigma': 16.0, 'otsu_frac': 0.3, 'min_eroded_extent': 0.90}
+    },
+    'dummy': {
+        'detector': 'autofrap/detectors/dummy_detector.py',
+        'kwargs': {}
     },
 }
 

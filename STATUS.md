@@ -32,18 +32,18 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 
 ## Open TODOs
 
-1. **Understand ROI persistence** – ROIs from `CreatePolygonROI` are `ScopeType.Global`, session-global, picked up by any new acquisition. End-of-cycle `delete_roi` mandatory. Exact new-acquisition inheritance still open. No wiring changes until understood. *Note: functionally less critical now – the pipeline deletes all ROIs before adding new ones each cycle and `cleanup_everything` now reliably removes both ROIs via backward iteration.*
-2. **Detector tuning on real samples** – try `diameter`/`min_size` per sample, consider multi-channel input.
-3. **CLI flag for `allow_interrupt_after_survey`** – parameter exists, not exposed via argparse.
-4. **Stimulation ROI groups S1–S3** – `ChangeROIType(3)` → group 1. No macro API for group selection found. Low priority.
-5. **Pixel ↔ stage coordinate transform for per-tile ROIs** – calibration matrix from `get_rotation_matrix`. Low priority.
-6. **Final cleanup housekeeping** – stale one-offs left as-is per convention.
-7. **User-facing documentation** – `README_draft.md` exists, needs refinement and move to repo root.
+1. **Detector tuning on real samples** – try `diameter`/`min_size` per sample, consider multi-channel input.
+2. **CLI flag for `allow_interrupt_after_survey`** – parameter exists, not exposed via argparse.
+3. **Stimulation ROI groups S1–S3** – `ChangeROIType(3)` → group 1. No macro API for group selection found. Low priority.
+4. **Pixel ↔ stage coordinate transform for per-tile ROIs** – calibration matrix from `get_rotation_matrix`. Low priority.
+5. **Final cleanup housekeeping** – stale one-offs left as-is per convention.
+6. **User-facing documentation** – `README_draft.md` exists, needs refinement and move to repo root.
 
 ## Known gotchas
 
-* FakeNIS patch bypass: direct imports of `batch_run_macro` from `autofrap.microscope.nis` bypass the `nis_util` shim used by `FakeNIS`. Always access batch ops via `nis_util.batch_run_macro` to stay patchable. TODO: refactor imports to avoid direct module imports.
-* Close `.mac` handle before `nis_ar`, or GUI reports “Can't open file for reading”.
+* FakeNIS patching works by modifying the module object (`autofrap.microscope.nis`), not by name matching. Direct function imports (`from module import function`) create independent references that bypass patching. Always access NIS operations via the module namespace (e.g., `nis_util.batch_run_macro()`, `nis_util._OP_MACRO_NAME`) to ensure FakeNIS can patch them.
+* ROI persistence: ROIs from `CreatePolygonROI` are `ScopeType.Global` and session-global, picked up by any new acquisition. The exact inheritance behavior for new acquisitions is still poorly understood, but is mitigated in practice by deleting all ROIs before adding new ones each cycle and using `cleanup_everything` which reliably removes ROIs via backward iteration.
+* Close `.mac` handle before `nis_ar`, or GUI reports "Can't open file for reading".
 * NIS keeps lock on failed `.mac` → `PermissionError` on remove.
 * `Int_SetKeyValue` only numeric; use `Int_SetKeyString` for strings.
 * File paths in macros must be absolute.
@@ -54,6 +54,13 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * `GetROIInfo` color read-back always 0, but colors render correctly.
 
 ## Recent milestones
+* 20260922 – Import refactoring and dry-run improvements:
+  - Moved all imports to top-level in `autofrap/pipeline/autofrap.py` for consistency and Python best practices.
+  - Updated all MacroOp references to use `nis_util._OP_*` pattern instead of direct imports.
+  - Fixed `_inner_loop_stimulation` to extract ROI IDs from dict returned by `batch_run_macro`.
+  - Enhanced FakeNIS: added `get_opened_documents` to PATCHED_FUNCTIONS and implemented fake method.
+  - Updated `dry_run_pipeline.py`: changed SURVEY_GLOB to use `test_acquisitions/autofrap_out/*survey.nd2`, added `dummy` preset using `dummy_detector.py`.
+  - Verified all three presets (dummy, simple_seg, cellpose) work correctly with FakeNIS.
 * 20260918 – Live microscope validation and bug fixes:
   - Fixed `_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT` macro to iterate backwards to avoid skipping ROIs on deletion; stimulation ROI no longer persists after `cleanup_everything`.
   - Fixed `_parse_nd_acq_tabs` fallback usage `sec_cfg.get(tab, fallback='0')` → `sec_cfg.get(tab, '0')` for `SectionProxy` compatibility.

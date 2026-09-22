@@ -55,31 +55,28 @@ requested stop to the point that can act on it.
 """
 import os
 import time
+import argparse
+import signal
+import sys
 
 import numpy as np
+from skimage.measure import regionprops
 
-# NOTE/TODO: for dry-runs, the FakeNIS patcher explicitly patches functions in nis_util,
-# so we have to import it under the old name -> remove once FakeNIS is updated
+# NOTE: For dry-runs, the FakeNIS patcher patches at the nis *module* level,
+# therefore, don't import individual functions directly (always use nis_util.fun())
 import autofrap.microscope.nis as nis_util
-from autofrap.microscope.nis import (
-    _OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT,
-    _OP_ADD_POLYGON_ROI,
-    _OP_CLOSE_CURRENT_DOCUMENT,
-)
-from autofrap.core.detection import build_detector, load_detector_file
+
+from autofrap.core.detection import load_detector_file
 from autofrap.core.image.mask import mask_to_polygon, cell_mask
 from autofrap.core.image.qc import save_qc_overlay
-from skimage.measure import regionprops
 
 
 # cycle-number tag in output file names (<prefix>_cycle01_survey.nd2);
 # spelled out rather than 'c' to avoid the color-channel reading
 CYCLE_PREFIX = 'cycle'
 
-
 # ND Acquisition tab names that are *not* valid for a survey image
-# (multi-position, time-lapse, or multi-position large-image scans
-# are acquisition pipelines, not single-image surveys)
+# (multi-position, time-lapse, or large-image scans)
 _SURVEY_TABS_FORBIDDEN = frozenset({'Time', 'XY', 'Large Image'})
 
 
@@ -122,14 +119,10 @@ def setup_microscope(nis_exe):
     res : tuple
         (xres, yres, pixel_size, magnification)
     """
-    import time
-    from autofrap.microscope.nis import (
-        _OP_POSITION, _OP_RESOLUTION, _OP_ND_ACQ_TABS
-    )
     calls = [
-        (_OP_ND_ACQ_TABS, {}),
-        (_OP_POSITION, {}),
-        (_OP_RESOLUTION, {}),
+        (nis_util._OP_ND_ACQ_TABS, {}),
+        (nis_util._OP_POSITION, {}),
+        (nis_util._OP_RESOLUTION, {}),
     ]
     # short timeout for reads with retry
     last_exc = None
@@ -158,7 +151,6 @@ def move_stage_with_retry(nis_exe, pos_xy):
 
     Retries 3 times with delays 0s, 2s, 4s.
     """
-    import time
     last_err = None
     for attempt, delay in enumerate([0, 2, 4], start=1):
         try:
@@ -205,7 +197,6 @@ def nis_cleanup_everything(nis_exe):
     Delete ROIs and close all open documents in one batched macro.
     Retries on TimeoutError.
     """
-    import time
     last_exc = None
     for attempt, delay in enumerate([0, 2, 4], start=1):
         try:
@@ -217,8 +208,8 @@ def nis_cleanup_everything(nis_exe):
                 print('[cleanup_everything] no open documents')
                 return
             calls = [
-                (_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
-                (_OP_CLOSE_CURRENT_DOCUMENT, {'save_flag': 2}),
+                (nis_util._OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
+                (nis_util._OP_CLOSE_CURRENT_DOCUMENT, {'save_flag': 2}),
             ] * n
             nis_util.batch_run_macro(nis_exe, calls, timeout=20)
             print(f'[cleanup_everything] cleaned {n} document(s)')
@@ -337,7 +328,6 @@ def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
 
 def _inner_loop_do_survey(nis_exe, survey_file, cycle):
     """Run ND survey acquisition and ensure the survey document is current."""
-    import time
     t0 = time.time()
     nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file, progress_bar=True)
     print(f'[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)', flush=True)
@@ -362,9 +352,6 @@ def _inner_loop_select_cell_and_qc(labels, stimulation_mask, viz_image, imaged_c
     """Match detected objects to already-imaged map, pick next cell, build polygons and save QC overlay.
     Returns (cell, cell_poly, stim_poly, n_obj) or (None, None, None, n_obj) if no cell is available.
     """
-    from skimage.measure import regionprops
-    from autofrap.core.image.mask import mask_to_polygon, cell_mask
-    from autofrap.core.image.qc import save_qc_overlay
 
     n_obj = len(np.unique(labels)) - 1
     # match detected objects to already-imaged map
@@ -427,22 +414,19 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     """Create ROIs, run FRAP stimulation and save the timeseries.
     Raises RecoverableError / NonRecoverableError on failure.
     """
-    import time
-    from autofrap.microscope.nis import _OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, _OP_ADD_POLYGON_ROI
-
     roi_calls = [
-        (_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
-        (_OP_ADD_POLYGON_ROI, {'points': cell_poly}),
-        (_OP_ADD_POLYGON_ROI, {'points': stim_poly}),
+        (nis_util._OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
+        (nis_util._OP_ADD_POLYGON_ROI, {'points': cell_poly}),
+        (nis_util._OP_ADD_POLYGON_ROI, {'points': stim_poly}),
     ]
     try:
         roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
-        cell_roi = roi_results['add_polygon_roi_1']
-        stim_roi = roi_results['add_polygon_roi_2']
+        cell_roi = roi_results['add_polygon_roi_1']['id']
+        stim_roi = roi_results['add_polygon_roi_2']['id']
     except TimeoutError:
         roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
-        cell_roi = roi_results['add_polygon_roi_1']
-        stim_roi = roi_results['add_polygon_roi_2']
+        cell_roi = roi_results['add_polygon_roi_1']['id']
+        stim_roi = roi_results['add_polygon_roi_2']['id']
 
     if cell_roi <= 0:
         raise RecoverableError(f'cell ROI creation failed (id={cell_roi})')
@@ -560,12 +544,12 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         if stop_check is not None and stop_check():
             raise AutofrapInterruptedException(
                 f'stop requested by user after {cycle} completed cycle(s)')
+
         cycle += 1
         survey_file = os.path.join(
             out_dir, f'{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_survey.nd2')
         frap_file = os.path.join(
             out_dir, f'{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_frap.nd2')
-        cell_roi = stim_roi = None
 
         try:
 
@@ -613,9 +597,6 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
 
             # 4. run stimulation / FRAP
             _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, cycle)
-
-            # cleanup is deferred to finally via cleanup_everything
-            cell_roi = stim_roi = None
 
             results.append((cycle, cell, survey_file, frap_file))
             # add the stimulated cell's centroid to the already-imaged map
@@ -912,7 +893,6 @@ def build_positions(start_xy, fov, nx=2, ny=2, spacing=1.0,
 
 
 def parse_cli_args(argv=None):
-    import argparse
     _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     _default_detector = os.path.join(
         _repo_root, 'autofrap', 'detectors', 'cellpose_remote_detector.py')
@@ -971,11 +951,8 @@ def parse_cli_args(argv=None):
 
 
 if __name__ == '__main__':
-    import signal
-    import sys
-    from autofrap.core.detection import load_detector_file
 
-    # Ctrl-C: first press requests a clean stop at the next safe
+    # Ctrl-C handling: first press requests a clean stop at the next safe
     # boundary (end of cycle / between FOVs - the current macro call
     # runs to completion, we never kill it); a second press raises
     # KeyboardInterrupt immediately (the finally-cleanup still runs)
@@ -992,7 +969,9 @@ if __name__ == '__main__':
 
     signal.signal(signal.SIGINT, _on_sigint)
 
+
     args = parse_cli_args()
+
 
     print(f'loading detector from: {args.detector}', flush=True)
     detection_fun = load_detector_file(args.detector)
