@@ -421,12 +421,12 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     ]
     try:
         roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
-        cell_roi = roi_results['add_polygon_roi_1']['id']
-        stim_roi = roi_results['add_polygon_roi_2']['id']
+        cell_roi = roi_results['add_polygon_roi_1']
+        stim_roi = roi_results['add_polygon_roi_2']
     except TimeoutError:
         roi_results = nis_util.batch_run_macro(nis_exe, roi_calls)
-        cell_roi = roi_results['add_polygon_roi_1']['id']
-        stim_roi = roi_results['add_polygon_roi_2']['id']
+        cell_roi = roi_results['add_polygon_roi_1']
+        stim_roi = roi_results['add_polygon_roi_2']
 
     if cell_roi <= 0:
         raise RecoverableError(f'cell ROI creation failed (id={cell_roi})')

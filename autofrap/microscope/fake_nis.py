@@ -331,8 +331,7 @@ class FakeNIS:
                 if self.abort_add_roi:
                     raise KeyError('id')
                 self._next_roi += 1
-                # return the ini format expected by MacroOp.parse
-                out[sec] = {'id': self.roi_id}
+                out[sec] = self.roi_id
                 continue
             if op.name == 'delete_all_rois_in_current_document':
                 # NOP for fake – ROIs are session-global, just clear counter
@@ -342,6 +341,12 @@ class FakeNIS:
             if op.name == 'close_all_docs':
                 self.open_docs.clear()
                 self.current = 'Frozen'
+                out[sec] = None
+                continue
+            if op.name == 'close_current_document':
+                save_flag = params.get('save_flag', 2)
+                self._close_current_document(
+                    nis, {0: 'ask', 1: 'yes', 2: 'discard'}.get(save_flag, 'discard'))
                 out[sec] = None
                 continue
             if op.name == 'checkpoint':
