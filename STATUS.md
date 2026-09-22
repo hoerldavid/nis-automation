@@ -20,7 +20,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * Detector files live in `autofrap/detectors/` (dummy, simple-seg, remote Cellpose variants — see the directory for the current list).
 
 **Pipeline**
-* `autofrap.pipeline.autofrap` single FOV, `autofrap_grid` multi-FOV.
+* Entry point `autofrap()` (setup + position build) → `autofrap_loop_outer()` over positions → `autofrap_loop_inner()` per FOV (the original `autofrap()`). `autofrap_grid` / `autofrap_multiposition` are aliases for `autofrap_loop_outer`.
 * Cross-cycle cell tracking: centroid matching against an accumulated “already imaged” map (`centroid_threshold='auto'` ≈ one equivalent diameter per cell), so each cell is stimulated at most once.
 * Run dir naming: `<out>/<stamp>_<name>` with `--name`/`--no-timestamp`. Non-empty dir collision aborts.
 * Error handling: `RecoverableError` → skip FOV, `NonRecoverableError` → abort grid. Best-effort cleanup.

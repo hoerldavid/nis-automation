@@ -20,7 +20,7 @@ can be driven offline:
 `nis_exe` is ignored — any placeholder string works.
 
 "Acquisition" is simulated by copying source nd2 files into the output
-directory.  autofrap_grid always prefixes its files with 'fov<NN>'
+directory.  autofrap_loop_outer always prefixes its files with 'fov<NN>'
 (file_prefix=f'fov{i:02d}'), so the fake derives the current FOV from
 the output file name:
 
@@ -48,8 +48,8 @@ import shutil
 
 from autofrap.microscope import nis as nis_util  # patch target
 
-# the nis_util surface used by autofrap() / autofrap_grid()
-# (check: grep -o "nis_util\.[a-z_]*" autofrap/pipeline.py)
+# the nis_util surface used by autofrap() / autofrap_loop_outer()
+# (check: grep -o "nis_util\.[a-z_]*" autofrap/pipeline/autofrap.py)
 PATCHED_FUNCTIONS = (
     'get_nd_acq_tabs', 'get_position', 'get_resolution', 'set_position',
     'run_current_nd_experiment', 'run_stimulation_experiment',
@@ -181,7 +181,7 @@ class FakeNIS:
         """source file for the acquisition written to `outfile`"""
         m = _FOV_RE.match(os.path.basename(outfile))
         if m:
-            # autofrap_grid names the files fov<NN>_cycle<NN>_...
+            # autofrap_loop_outer names the files fov<NN>_cycle<NN>_...
             return self.sources[(int(m.group(1)) - 1) % len(self.sources)]
         return self.sources[0]
 

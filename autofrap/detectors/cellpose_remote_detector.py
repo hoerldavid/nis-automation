@@ -8,7 +8,7 @@ Channel 0 is loaded from the survey.
 
 Usage::
 
-    autofrap_grid --detector autofrap/detectors/cellpose_remote_detector.py \
+    python -m autofrap.pipeline --detector autofrap/detectors/cellpose_remote_detector.py \
         --nx 2 --ny 2 --detector-arg diameter=70 --detector-arg server_url=http://...
 """
 import os

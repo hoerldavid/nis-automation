@@ -1,5 +1,5 @@
 """
-Example custom detector file for autofrap_grid --detector.
+Example custom detector file for the pipeline's --detector option.
 
 This is a simple detector using the dummy detector (fixed circle +
 rectangle) with a left-half stimulation mask. It demonstrates the
@@ -8,7 +8,7 @@ minimal contract: define ``detection_fun(survey_file)`` and return
 
 Usage::
 
-    autofrap_grid --detector autofrap/autofrap_bitsnpieces/example_detector.py \
+    python -m autofrap.pipeline --detector autofrap/autofrap_bitsnpieces/example_detector.py \
         --nis C:\\Program Files\\NIS-Elements\\nis_ar.exe --nx 1 --ny 1
 
 The file is imported by the runner; it must define a top-level

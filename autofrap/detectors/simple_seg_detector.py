@@ -9,7 +9,7 @@ Built with build_detector for pipeline compatibility:
 
 Usage::
 
-    autofrap_grid --detector autofrap/detectors/simple_seg_detector.py \
+    python -m autofrap.pipeline --detector autofrap/detectors/simple_seg_detector.py \
         --detector-arg cell_sigma=16 --detector-arg otsu_frac=0.3
 """
 from functools import partial

@@ -1,7 +1,7 @@
 # NIS Elements Macro Reference
 
 ## Macro execution pattern
-All wrappers in `nis_util.py` follow:
+All wrappers in `autofrap/microscope/nis.py` follow:
 1. Write temp `.mac` file
 2. `nis_ar.exe -mw <file>` attaches to running GUI, blocks until done
 3. Return values via `Int_SetKeyValue` / `Int_SetKeyString` into temp `.ini`
@@ -65,7 +65,7 @@ Gotchas
 * `save_current_document(outfile)` → `ImageSaveAs(path, 15, 0)` ImType 15 = all layers, ImCompr 0 = lossless
 * `close_current_document(save='discard'|'save'|'ask')` → `CloseCurrentDocument(2)` = discard without dialog
 * `open_image(path)` → `ImageOpen`, makes the file the current document
-* Gotcha: `ImageSaveAs` on the frozen live view (current doc `Frozen`) silently writes nothing — grab a single-frame ND acquisition instead
+* Gotcha: `ImageSaveAs` on the frozen live view (current doc `Frozen`) silently writes nothing (single live observation, 20260901 — no controlled A/B probe yet) — grab a single-frame ND acquisition instead
 
 ### Stimulation (GUI-template-driven)
 * No programmatic define function exists: `_ND_CreateSequentialStimulationExp()` / `_ND_CreateSimultaneousStimulationExp()` only open the GUI window — the stimulation experiment must be pre-configured in the GUI

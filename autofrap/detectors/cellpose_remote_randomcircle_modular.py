@@ -3,7 +3,7 @@ Built-in cellpose detector with QC visualization: remote server on the
 GPU machine, assembled with build_detector.
 
     channel 0 of the survey nd2  ->  cellpose on the server  ->
-    left-half stimulation mask   +   RGB composite of loaded channels
+    random-circle stimulation mask   +   RGB composite of loaded channels
     as the QC overlay background.
 
 The compositor also applies its standard label housekeeping: objects
@@ -18,7 +18,7 @@ Uses ``CELLPOSE_SERVER_URL`` environment variable (default:
 
 Usage::
 
-    autofrap_grid --detector autofrap/detectors/cellpose_remote_halfnucleus_modular.py \
+    python -m autofrap.pipeline --detector autofrap/detectors/cellpose_remote_randomcircle_modular.py \
         --nx 2 --ny 2 --detector-arg diameter=70 --detector-arg server_url=http://... \
         --detector-arg load_channel=all --detector-arg det_channel=0
 

@@ -1,4 +1,4 @@
-# Shipped detector files for autofrap_grid --detector.
+# Shipped detector files for the pipeline's --detector option.
 #
 # Each file defines ``detection_fun(survey_file)`` with the signature
 # ``survey_file -> (labels[, stim_mask[, viz]])``.

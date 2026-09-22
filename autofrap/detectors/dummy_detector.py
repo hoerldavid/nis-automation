@@ -3,7 +3,7 @@ Built-in dummy detector: fixed circle + rectangle, left-half stim mask.
 
 Usage::
 
-    autofrap_grid --detector autofrap/detectors/dummy_detector.py \
+    python -m autofrap.pipeline --detector autofrap/detectors/dummy_detector.py \
         --nis C:\\Program Files\\NIS-Elements\\nis_ar.exe --nx 2 --ny 2
 """
 import numpy as np

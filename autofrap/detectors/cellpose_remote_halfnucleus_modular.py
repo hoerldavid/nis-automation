@@ -18,7 +18,7 @@ Uses ``CELLPOSE_SERVER_URL`` environment variable (default:
 
 Usage::
 
-    autofrap_grid --detector autofrap/detectors/cellpose_remote_halfnucleus_modular.py \
+    python -m autofrap.pipeline --detector autofrap/detectors/cellpose_remote_halfnucleus_modular.py \
         --nx 2 --ny 2 --detector-arg diameter=70 --detector-arg server_url=http://... \
         --detector-arg load_channel=all --detector-arg det_channel=0
 

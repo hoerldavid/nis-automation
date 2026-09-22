@@ -3,20 +3,18 @@
 ## Repository layout
 
 ### Root
-* `nis_util.py` – NIS macro wrappers, `_run_macro` helper. Root-level shim for legacy code; package version lives in `autofrap/microscope/nis.py`
 * `cellpose_server.py` – FastAPI Cellpose inference server, `--device auto|cuda|mps|cpu`. Runs on a remote GPU machine — the microscope PC is CPU-only (its K2200 GPU is unsupported by current PyTorch); GPU inference is much faster than CPU (verified live)
-* `grid_utils.py` – pure grid geometry, `gen_grid`, `spiral_positions`. Root-level shim for legacy code; package version lives in `autofrap/core/utils/grid.py`
 * `pyproject.toml`, `requirements.txt`
 * `DESIGN_GOALS_AUTOFRAP.md`, `README_draft.md`, `STATUS.md`
 * `docs/` – split documentation
-* `legacy/wingscanner/` – pre-existing wing-scanner project (kept as-is): `automation.py`, `annotation.py`, `resources.py`, `simple_detection.py`, `start_wing_scanner.bat`, calibration JSONs in `res/`, exploratory notebooks
+* `legacy/wingscanner/` – pre-existing wing-scanner project (kept as-is): `automation.py`, `annotation.py`, `resources.py`, `simple_detection.py`, `start_wing_scanner.bat`, calibration JSONs in `res/`, exploratory notebooks, plus `nis_util.py` / `grid_utils.py` shims that re-export the package modules for the legacy code
 * `nis_ar_help_html/` – extracted NIS macro CHM (greppable HTML), source of truth for macro signatures; `nis_manual/` – NIS manual (both gitignored)
 
 ### `autofrap/`
 Package with public API re-exports.
 
-* `__init__.py` – public API re-exports for `autofrap()` / `autofrap_grid()`
-* `pipeline/autofrap.py` – `autofrap()` and `autofrap_grid()` (+ CLI)
+* `__init__.py` – public API re-exports (`autofrap()`, `autofrap_loop_outer()`, `grid_positions`, ...); `autofrap_grid` / `autofrap_multiposition` kept as aliases for `autofrap_loop_outer`
+* `pipeline/autofrap.py` – `autofrap()` (entry point: setup + position build), `autofrap_loop_outer()` (loop over positions), `autofrap_loop_inner()` (per-FOV work; the original `autofrap()`); CLI via `python -m autofrap.pipeline`
 * `core/`
   * `core/detection.py` – `build_detector` composer, `load_detector_file`, runtime parameter routing
   * `core/image/segmentation/` – segmentation building blocks: `simple.py` (Otsu+watershed `SimpleSegParams`/`detect_objects`), `remote.py` (Cellpose client), `dummy.py`
@@ -48,7 +46,7 @@ Package with public API re-exports.
 * `docs/ARCHITECTURE.md` – this file
 
 ## Key data flow
-`autofrap_grid` → for each position:
+`autofrap()` → setup + position build → `autofrap_loop_outer()` → per position → `autofrap_loop_inner()` → per cycle:
 1. `set_position` → `run_current_nd_experiment` → survey ND2
 2. `detection_fun(survey_file)` → labels, stim_mask, viz
 3. `next_stimulatable_cell` with centroid matching
@@ -59,4 +57,4 @@ Package with public API re-exports.
 Detector contract: `survey_file -> (labels,) or (labels, stim_mask) or (labels, stim_mask, viz)`
 
 ## Notes
-* Root-level `nis_util.py` / `grid_utils.py` are shims for legacy/bitsnpieces code; new code uses `autofrap.core.*`, `autofrap.io.*`, `autofrap.microscope.*`.
+* Legacy code's `nis_util` / `grid_utils` imports resolve via the shims in `legacy/wingscanner/`; new code uses `autofrap.core.*`, `autofrap.io.*`, `autofrap.microscope.*`.

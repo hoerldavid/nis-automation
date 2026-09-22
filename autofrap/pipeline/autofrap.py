@@ -493,7 +493,7 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
     file_prefix: str, optional
         prefix for the per-cycle file names
         (<file_prefix>_cycle<NN>_survey.nd2, ...); default: a timestamp
-        (YYYYmmdd_HHMMSS) for standalone runs — autofrap_grid passes
+        (YYYYmmdd_HHMMSS) for standalone runs — autofrap_loop_outer passes
         'fov<NN>' per position. Set to '' for plain cycle<NN>_... names.
     stop_check: callable, optional
         zero-arg callable returning True when a clean stop was requested
@@ -752,7 +752,7 @@ def autofrap_loop_outer(nis_exe, out_dir, positions,
     os.makedirs(out_dir, exist_ok=True)
     if positions is None:
         raise NonRecoverableError(
-            'positions must be supplied; generate them outside autofrap_multiposition')
+            'positions must be supplied; generate them outside autofrap()')
     # positions are now required to be pre-computed
     stamp = time.strftime('%Y%m%d_%H%M%S')
     if name is None:
@@ -899,7 +899,7 @@ def parse_cli_args(argv=None):
 
     p = argparse.ArgumentParser(
         description='auto-FRAP over a grid of stage positions '
-                    '(see autofrap_grid)')
+                    '(see autofrap())')
     p.add_argument('--out', '-o', default=_default_out_dir(),
                    help='output directory (a <run_stamp>/ sub-directory is '
                         'created in it) [default: %(default)s]')
