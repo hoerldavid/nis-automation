@@ -10,13 +10,11 @@ import unittest
 import numpy as np
 from functools import partial
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
-from autofrap.core.detection import (
-    build_detector,
-    dummy_detect_objects,
-)
+from autofrap.core.detection import build_detector
+from autofrap.core.image.segmentation import dummy_detect_objects
 
 
 class TestFilterFunction(unittest.TestCase):
@@ -25,7 +23,10 @@ class TestFilterFunction(unittest.TestCase):
     def _make_detector(self, **kwargs):
         """Helper: build a detector from dummy_detect_objects."""
         load_fun = lambda f: np.random.randint(0, 65535, (100, 100), dtype=np.uint16)
-        return build_detector(load_fun, dummy_detect_objects, **kwargs)
+        # visualization_fun=False: the test is about filter_function, and
+        # the (default) visualization would turn the return into a 3-tuple
+        return build_detector(load_fun, dummy_detect_objects,
+                              visualization_fun=False, **kwargs)
 
     def test_filter_function_keeps_selected_labels(self):
         """filter_function keeps labels in the returned set."""
@@ -86,6 +87,7 @@ class TestFilterFunction(unittest.TestCase):
             return np.zeros((50, 60), dtype=np.uint16)
 
         det = build_detector(load_with_shape, dummy_detect_objects,
+                             visualization_fun=False,
                              filter_function=capture_filter)
         det(None)  # survey_file is ignored by load_with_shape
 
@@ -110,6 +112,7 @@ class TestFilterFunction(unittest.TestCase):
             ], axis=0)
 
         det = build_detector(load_multi_channel, dummy_detect_objects,
+                             visualization_fun=False,
                              filter_function=keep_high_expression)
         labels, = det(None)
         unique = np.unique(labels)

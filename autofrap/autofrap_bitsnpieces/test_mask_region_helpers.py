@@ -3,7 +3,11 @@ Tests for mask_utils one-stimulation-region-per-label helpers (TODO #29).
 
 run: python autofrap/autofrap_bitsnpieces/test_mask_region_helpers.py
 """
+import os
 import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, ROOT)
 
 import numpy as np
 

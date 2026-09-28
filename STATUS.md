@@ -37,7 +37,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * **CLI flag for `allow_interrupt_after_survey`** – parameter exists, not exposed via argparse.
 * **Stimulation ROI groups S1–S3** – `ChangeROIType(3)` → group 1. No macro API for group selection found. Low priority.
 * **Pixel ↔ stage coordinate transform for per-tile ROIs** – calibration matrix from `get_rotation_matrix`. Low priority.
-* **Final cleanup housekeeping** – stale one-offs left as-is per convention.
+* **bitsnpieces cleanup** – stale fossils removed (20260928); the remaining one-offs all run against current code (some need the scope, the cellpose server, or data that lives on other machines — see their docstrings).
 * **User-facing documentation** – `README_draft.md` exists, needs refinement and move to repo root.
 
 ## Known gotchas
@@ -47,7 +47,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * Other NIS-specific gotchas (macro file handles, `Int_SetKeyValue`, absolute paths, `CloseCurrentDocument` dialog, `ND_DefineExperiment` save switch, `Frozen` live view, ...): `docs/NIS_REFERENCE.md` § Gotchas.
 
 ## Recent sessions
-* 20260928 – Consecutive-failure error policy replaces the Recoverable/NonRecoverable routing; generic `run_with_retries` helper added (`autofrap/core/utils/retry.py`). Policy + timeout assumption documented in the pipeline module docstring. Follow-up: test scripts consolidated (`dry_run_pipeline.py` is now a thin wrapper around the real CLI, new `test_offline_pipeline.py` assertion suite, FakeNIS failure table replaces the old knobs, `Frozen` special-casing removed from the fake document state machine); `--out` default is now cwd-relative `autofrap_out`, abspassed before NIS (NIS macros resolve relative paths against the executable's directory).
+* 20260928 – Consecutive-failure error policy replaces the Recoverable/NonRecoverable routing; generic `run_with_retries` helper added (`autofrap/core/utils/retry.py`). Policy + timeout assumption documented in the pipeline module docstring. Follow-up: test scripts consolidated (`dry_run_pipeline.py` is now a thin wrapper around the real CLI, new `test_offline_pipeline.py` assertion suite, FakeNIS failure table replaces the old knobs, `Frozen` special-casing removed from the fake document state machine); `--out` default is now cwd-relative `autofrap_out`, abspassed before NIS (NIS macros resolve relative paths against the executable's directory). Then a full `autofrap_bitsnpieces` sweep: 7 stale fossils deleted (the `nis_util_old.py` snapshot pair, the superseded `overview_scan.py`, `test_cellpose.py`, the ephemeral-data `test_nd2_stage_position.py`, the calmutils pair), and 11 scripts fixed to the current layout (root `nis_util`/`grid_utils` imports, one-level-shallow `ROOT`s, the new default-visualization contract) — all 10 offline-runnable tests green.
 * 20260922 – Documentation rework: one fact, one home — `docs/SESSION_HISTORY.md` becomes a pure session log (fossil sections merged/removed), AGENTS.md codifies the documentation structure.
 * 20260922 – Import refactoring, FakeNIS improvements, dry-run enhancements (top-level imports, `_OP_*` access pattern, dry-run presets verified).
 * 20260918 – Live microscope validation + bug fixes (batched-op double-parses, backward ROI deletion, ND Acquisition doc activation safeguard).

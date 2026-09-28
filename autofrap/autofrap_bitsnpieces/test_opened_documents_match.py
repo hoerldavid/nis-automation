@@ -10,7 +10,7 @@ import sys
 # repo root (for nis_util) — this script lives two levels down in autofrap/
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import nis_util
+from autofrap.microscope import nis as nis_util
 
 failures = 0
 
@@ -28,19 +28,26 @@ B = r'C:\data\run1\fov01_cycle01_frap.nd2'
 C = r'D:\other\same_name.nd2'
 DOCS = [A, B]
 
+# the two checks marked Windows-only below rely on Windows os.path
+# semantics (normcase lowercases, '\' is the separator) - on POSIX
+# they cannot pass and would test the platform, not the matcher
+WINDOWS = os.name == 'nt'
+
 # exact full-name match (the normal case)
 check('exact', nis_util._match_opened_document(A, DOCS), A)
 
 # case-insensitive (Windows paths)
-check('case', nis_util._match_opened_document(A.lower(), DOCS), A)
+if WINDOWS:
+    check('case', nis_util._match_opened_document(A.lower(), DOCS), A)
 
 # base-name match, unambiguous
 check('basename', nis_util._match_opened_document(
     os.path.basename(A), DOCS), A)
 
 # base-name match across different directories
-check('basename-other-dir', nis_util._match_opened_document(
-    r'X:\elsewhere\fov01_cycle01_survey.nd2', DOCS), A)
+if WINDOWS:
+    check('basename-other-dir', nis_util._match_opened_document(
+        r'X:\elsewhere\fov01_cycle01_survey.nd2', DOCS), A)
 
 # base-name match is ambiguous -> None (two entries share the base name)
 check('ambiguous', nis_util._match_opened_document(

@@ -3,10 +3,11 @@ one-off contract test for build_detector()'s visualization_fun
 (run: python autofrap/autofrap_bitsnpieces/test_detect_viz.py)
 
 Synthetic data only, no nd2 / server needed. Checks the return-tuple
-positions (2 = mask, 3 = viz, fixed) for all four combinations of
-stim_mask_fun / visualization_fun, and that a failing visualization
-degrades to no viz with a warning instead of raising (the labels/mask
-contract checks must still raise).
+positions (2 = mask, 3 = viz, fixed) for all combinations of
+stim_mask_fun / visualization_fun (visualization_fun=False disables the
+default visualization), and that a failing visualization degrades to
+no viz with a warning instead of raising (the labels/mask contract
+checks must still raise).
 """
 import os
 import sys
@@ -19,6 +20,7 @@ import numpy as np
 
 from autofrap.core import detection
 from autofrap.core.image import mask as mask_utils
+from autofrap.core.image.segmentation import dummy_detect_objects
 
 FAILURES = []
 
@@ -38,18 +40,24 @@ def loadrgb(f):
     return np.zeros((3, 64, 48), dtype=np.uint16)  # (c, y, x)
 
 
-det = detection.dummy_detect_objects
+det = dummy_detect_objects
 maskfun = lambda labels, image: mask_utils.half_object_stim_mask(labels)
 
-# 1. no mask, no viz -> (labels,)  [the 1-tuple autofrap() requires]
+# 0. visualization_fun omitted -> default visualization is produced
 res = detection.build_detector(load2d, det)('x')
+check('default viz: 3-tuple (labels, None, viz)',
+      len(res) == 3 and res[1] is None and res[2].shape == (64, 48))
+
+# 1. no mask, no viz -> (labels,)  [the 1-tuple autofrap() requires]
+res = detection.build_detector(load2d, det, visualization_fun=False)('x')
 check('no mask/no viz: 1-tuple', isinstance(res, tuple) and len(res) == 1)
 check('no mask/no viz: labels shape', res[0].shape == (64, 48))
 check('no mask/no viz: labels integer',
       np.issubdtype(res[0].dtype, np.integer))
 
 # 2. mask, no viz -> (labels, mask)
-res = detection.build_detector(load2d, det, stim_mask_fun=maskfun)('x')
+res = detection.build_detector(load2d, det, stim_mask_fun=maskfun,
+                               visualization_fun=False)('x')
 check('mask/no viz: 2-tuple', isinstance(res, tuple) and len(res) == 2)
 check('mask/no viz: mask shape+dtype',
       res[1].shape == (64, 48) and res[1].dtype == bool)

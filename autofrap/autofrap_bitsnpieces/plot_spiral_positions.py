@@ -11,7 +11,7 @@ sys.path.insert(0, ROOT)
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from grid_utils import spiral_positions
+from autofrap.core.utils.grid import spiral_positions
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
