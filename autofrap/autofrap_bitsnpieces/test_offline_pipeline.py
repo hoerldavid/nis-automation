@@ -12,6 +12,8 @@ Sections:
                         failures, stage-move failures, detection failures
   D. clean stop       - summary printed, AutofrapInterruptedException
                         re-raised (CLI exit 130)
+  E. detector contract - detection_fun return shapes: accepted forms
+                        and wrong-arity rejection
 
 run: python autofrap/autofrap_bitsnpieces/test_offline_pipeline.py
 """
@@ -21,6 +23,8 @@ import io
 import os
 import sys
 import tempfile
+
+import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
@@ -272,6 +276,35 @@ with tempfile.TemporaryDirectory() as TMP:
     log = buf.getvalue()
     check('D1 clean stop: re-raised after the summary',
           raised is True and 'Grid stopped by user: 1/5' in log)
+
+    # --------------------------------------------------------------- #
+    # E. detector output contract: accepted shapes and rejections
+    # --------------------------------------------------------------- #
+    labels64 = np.zeros((64, 64), dtype=np.int32)
+    yy, xx = np.ogrid[:64, :64]
+    labels64[(yy - 32) ** 2 + (xx - 32) ** 2 <= 64] = 1  # one circle, cell 1
+    mask64 = labels64 > 0
+    viz64 = labels64.astype(np.float32)
+
+    for n, (name, det) in enumerate([
+            ('bare label map (ndarray)', lambda f: labels64),
+            ('1-tuple (labels,)', lambda f: (labels64,)),
+            ('2-tuple (labels, mask)', lambda f: (labels64, mask64)),
+            ('3-tuple (labels, mask, viz)', lambda f: (labels64, mask64, viz64)),
+            ('1-list [labels]', lambda f: [labels64]),
+    ], 1):
+        fake = FakeNIS([src1])
+        results, _ = run_outer(os.path.join(TMP, f'e{n}'), 'shape', fake,
+                               POS2[:1], detection_fun=det)
+        check(f'E{n} {name} accepted',
+              results[0][4] is not None and len(results[0][4]) == 1)
+
+    # 4-tuple: wrong arity (the str case is covered by C9)
+    fake = FakeNIS([src1])
+    results, log = run_outer(os.path.join(TMP, 'e6'), 'shape4', fake, POS2[:1],
+                             detection_fun=lambda f: (labels64, mask64, viz64, None))
+    check('E6 4-tuple rejected',
+          results[0][4] is None and 'detection_fun returned tuple' in log)
 
 # A4: no patch leaked outside any of the contexts above
 leaked = [n for n in originals if getattr(nis_util, n) is not originals[n]]
