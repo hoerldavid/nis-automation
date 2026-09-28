@@ -8,8 +8,8 @@ Auto-FRAP pipeline — package interface.
 
 from autofrap.pipeline.autofrap import (  # noqa: E402,F401
     AutofrapError,
-    RecoverableError,
-    NonRecoverableError,
+    AbortRunError,
+    AutofrapInterruptedException,
     autofrap,
     autofrap_loop_outer,
     grid_positions,
