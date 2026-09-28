@@ -34,13 +34,38 @@ The FRAP file is created by the save_current_document fake: frap_out=
 an empty file.  The pipeline's trust-but-verify checks are
 filesystem-based (os.path.isfile on the outputs, normcase comparisons of
 document paths), so the fakes pass them naturally: the copied surveys
-really are on disk, and a small document state machine (open list +
-current document, 'Frozen' = the always-open live view) mirrors NIS's
-open / activate / save / close semantics.
+really are on disk, and a small document state machine mirrors NIS's
+open / activate / save / close semantics: open_docs holds every open
+document (file paths or unsaved titles like 'ND Acquisition') and
+current is always one of them - or '' when no document is open (the
+live view is not modelled as a special always-open document).
 
-The failure flags (fail_survey, fail_save, fail_move, ...) mirror the
-knobs of the inline FakeNIS in test_autofrap_errors.py for offline
-error-path tests.
+Error injection: the failures= constructor argument is a dict mapping
+an op name (any name that appears in the call log, e.g. 'set_position')
+to a failure spec:
+
+  - exception instance   -> every call of that op raises it
+  - list of specs        -> consumed one per call, in order (once the
+                            list is exhausted the op succeeds again)
+  - 'skip'              -> the op runs and is logged but has no effect
+                            (simulates NIS silently failing to save /
+                            switch documents / create ROIs / move)
+  - callable(call_no, *args, **kwargs)
+                         -> evaluated per call; return an exception
+                            instance, 'skip', or None (proceed)
+
+    with FakeNIS(srcs, failures={
+        'set_position': [KeyError('pos')],   # first move only
+        'run_current_nd_experiment':
+            lambda n, outfile, **kw:
+                TimeoutError('macro timed out')
+                if 'fov02_' in (outfile or '') else None,
+        'save_current_document': OSError('disk full'),  # every save
+    }):
+        ...
+
+Batched ops are logged as individual op calls and hit the same table,
+so failures apply to batched and direct calls alike.
 """
 import os
 import re
@@ -66,6 +91,10 @@ PATCHED_FUNCTIONS = (
 
 _FOV_RE = re.compile(r'fov(\d+)_')
 
+# sentinel returned by _failure_for for 'skip' specs: the op runs and
+# is logged, but has no effect
+_SKIP = object()
+
 
 class FakeNIS:
     """
@@ -85,23 +114,27 @@ class FakeNIS:
         pixel_size * xres / magnification per FOV
     frap_out: 'copy' or 'touch'
         how the FRAP file is created on save_current_document
-    fail_survey, fail_save, fail_move, roi_id, open_broken,
-    abort_add_roi:
-        failure knobs for error-path tests (fail_move fails only the
-        first stage move, mirroring test_autofrap_errors.py)
+    roi_id: int, default 1
+        ROI id returned by add_polygon_roi (<= 0 makes the
+        pipeline's 'ROI creation failed' check fire)
+    failures: dict, optional
+        failure table mapping op name -> failure spec (see the module
+        docstring for the spec grammar)
 
     Attributes
     ----------
     calls: list of (name, args)
         every fake call, in order
-    open_docs, current:
-        the fake document state machine
+    open_docs: list
+        every open document (file paths or unsaved titles)
+    current: str
+        the active document - always one of open_docs, or '' when no
+document is open
     """
 
     def __init__(self, sources, position=(0.0, 0.0, 0.0),
                  resolution=(1024, 1024, 13.0, 100.0), frap_out='copy',
-                 fail_survey=False, fail_save=False, fail_move=False,
-                 roi_id=1, open_broken=False, abort_add_roi=False):
+                 roi_id=1, failures=None):
         sources = [os.path.abspath(s) for s in sources]
         if not sources:
             raise ValueError('sources: give at least one nd2 file')
@@ -115,16 +148,13 @@ class FakeNIS:
         self.position = tuple(position)
         self.resolution = tuple(resolution)
         self.frap_out = frap_out
-        self.fail_survey = fail_survey
-        self.fail_save = fail_save
-        self.fail_move = fail_move
         self.roi_id = roi_id
-        self.open_broken = open_broken
-        self.abort_add_roi = abort_add_roi
+        self.failures = dict(failures or {})
+        self._validate_failures()
         # state
         self.calls = []
         self.open_docs = []          # open documents (paths or titles)
-        self.current = 'Frozen'      # the always-open live view
+        self.current = ''            # '' = no current document
         self._next_roi = 0
         self._last_source = None     # source of the last survey acquisition
         self._orig = {}
@@ -154,27 +184,74 @@ class FakeNIS:
         """args of all recorded calls to `name`"""
         return [args for n, args in self.calls if n == name]
 
+    # ------------------------------------------------------------ #
+    # failure injection                                            #
+    # ------------------------------------------------------------ #
+    @staticmethod
+    def _check_spec(spec, name):
+        if isinstance(spec, BaseException) or spec == 'skip' or callable(spec):
+            return
+        raise ValueError(
+            f"failures[{name!r}]: expected an exception instance, "
+            f"'skip', or a callable; got {spec!r}")
+
+    def _validate_failures(self):
+        for name, spec in self.failures.items():
+            if name not in PATCHED_FUNCTIONS:
+                raise ValueError(
+                    f"failures: unknown op {name!r} - use an op name from "
+                    "the call log (e.g. 'set_position', 'save_current_document')")
+            if isinstance(spec, list):
+                for item in spec:
+                    self._check_spec(item, name)
+            else:
+                self._check_spec(spec, name)
+
+    def _failure_for(self, name, *args, **kwargs):
+        """Consult the failures table for op `name` (this call).
+
+        Returns None if the op should run normally, the _SKIP sentinel
+        if it should run without effect, and raises the configured
+        exception otherwise.
+        """
+        spec = self.failures.get(name)
+        if spec is None:
+            return None
+        if isinstance(spec, list):
+            if not spec:
+                return None
+            spec = spec.pop(0)
+        elif callable(spec):
+            spec = spec(len(self.calls_of(name)) - 1, *args, **kwargs)
+            if spec is None:
+                return None
+        if spec == 'skip':
+            return _SKIP
+        raise spec
+
     # ------------------------------ setup ------------------------------ #
     def _get_nd_acq_tabs(self, nis):
         self._call('get_nd_acq_tabs')
+        self._failure_for('get_nd_acq_tabs')
         return {'Time': False, 'XY': False, 'Z': False,
                 'Lambda': False, 'Large Image': False}
 
     def _get_position(self, nis):
         self._call('get_position')
+        self._failure_for('get_position')
         return self.position
 
     def _get_resolution(self, nis):
         self._call('get_resolution')
+        self._failure_for('get_resolution')
         return self.resolution
 
     def _set_position(self, nis, pos_xy=None, pos_z=None, pos_piezo=None,
                       relative_xy=False, relative_z=False,
                       relative_piezo=False):
         self._call('set_position', pos_xy)
-        if self.fail_move:
-            self.fail_move = False  # fail only the first move
-            raise KeyError('pos')
+        if self._failure_for('set_position', pos_xy) is _SKIP:
+            return  # the stage did not move
 
     # ----------------------------- acquisition ------------------------- #
     def _source_for(self, outfile):
@@ -188,8 +265,10 @@ class FakeNIS:
     def _run_current_nd_experiment(self, nis, outfile=None,
                                    open_after=True, progress_bar=True):
         self._call('run_current_nd_experiment', outfile)
-        if self.fail_survey or outfile is None:
+        if self._failure_for('run_current_nd_experiment', outfile) is _SKIP:
             return  # NIS did not save: the pipeline's isfile check fails
+        if outfile is None:
+            return
         self._last_source = self._source_for(outfile)
         shutil.copy(self._last_source, outfile)
         if open_after:
@@ -197,6 +276,8 @@ class FakeNIS:
 
     def _run_stimulation_experiment(self, nis):
         self._call('run_stimulation_experiment')
+        if self._failure_for('run_stimulation_experiment') is _SKIP:
+            return
         # the result stays open as the current (unsaved) document
         self._open('ND Acquisition')
 
@@ -208,22 +289,28 @@ class FakeNIS:
 
     def _get_current_document(self, nis):
         self._call('get_current_document')
-        return self.current
+        self._failure_for('get_current_document')
+        return self.current  # '' if no document is open
 
     def _open_image(self, nis, image_path):
         self._call('open_image', image_path)
-        if self.open_broken:
+        if self._failure_for('open_image', image_path) is _SKIP:
             return  # stay on the current document (pipeline check fails)
         self._open(image_path)
 
     def _close_current_document(self, nis, save='discard'):
         self._call('close_current_document', save)
+        if self._failure_for('close_current_document', save) is _SKIP:
+            return  # the document stays open
         if self.current in self.open_docs:
             self.open_docs.remove(self.current)
-        self.current = 'Frozen'
+        # NIS moves focus to another open document, if any
+        self.current = self.open_docs[0] if self.open_docs else ''
 
     def _activate_opened_document(self, nis, name):
         self._call('activate_opened_document', name)
+        if self._failure_for('activate_opened_document', name) is _SKIP:
+            return None  # silent activation failure
         # same matching semantics as the real wrapper (nis_util)
         doc = nis_util._match_opened_document(name, self.open_docs)
         if doc is not None:
@@ -239,50 +326,62 @@ class FakeNIS:
 
     def _get_opened_documents(self, nis, max_items=24, max_path=260):
         self._call('get_opened_documents')
+        self._failure_for('get_opened_documents')
         return self.open_docs
 
     def _save_current_document(self, nis, outfile):
         self._call('save_current_document', outfile)
-        if self.fail_save:
+        if self._failure_for('save_current_document', outfile) is _SKIP:
             return  # ImageSaveAs wrote nothing
         if self.frap_out == 'copy':
             shutil.copy(self._last_source or self.sources[0], outfile)
         else:
             open(outfile, 'wb').close()
-        # ImageSaveAs rebinds the current document to the file
+        # ImageSaveAs rebinds the current document to the file (or
+        # opens a new one if nothing was open)
         if self.current in self.open_docs:
             self.open_docs[self.open_docs.index(self.current)] = outfile
+        else:
+            self.open_docs.append(outfile)
         self.current = outfile
 
     # ------------------------------- ROIs ------------------------------ #
     def _add_polygon_roi(self, nis, points, color='green'):
         self._call('add_polygon_roi', len(points))
-        if self.abort_add_roi:
-            raise KeyError('id')  # simulate an empty ini read-back
+        if self._failure_for('add_polygon_roi', len(points)) is _SKIP:
+            return -1  # no ROI created: the pipeline's id<=0 check fires
         self._next_roi += 1
         return self.roi_id
 
     def _set_roi_type(self, nis, roi_id, roi_type):
         self._call('set_roi_type', roi_id, roi_type)
+        self._failure_for('set_roi_type', roi_id, roi_type)
 
     def _delete_roi(self, nis, roi_id):
         self._call('delete_roi', roi_id)
+        self._failure_for('delete_roi', roi_id)
 
     # ---------------------------- optical conf ------------------------- #
     def _set_optical_configuration(self, nis, oc_name):
         self._call('set_optical_configuration', oc_name)
+        self._failure_for('set_optical_configuration', oc_name)
 
     def _delete_all_rois_in_current_document(self, nis):
         self._call('delete_all_rois_in_current_document')
+        if self._failure_for('delete_all_rois_in_current_document') is _SKIP:
+            return  # ROIs stay
         self._next_roi = 0
 
     def _close_all_docs(self, nis):
         self._call('close_all_docs')
+        if self._failure_for('close_all_docs') is _SKIP:
+            return  # documents stay open
         self.open_docs.clear()
-        self.current = 'Frozen'
+        self.current = ''
 
     def _checkpoint(self, nis, key='ok', value=1):
         self._call('checkpoint', key, value)
+        self._failure_for('checkpoint', key, value)
 
     # ---------------------------- batch runner ------------------------- #
     def _batch_run_macro(self, nis, calls, timeout=20):
@@ -290,18 +389,17 @@ class FakeNIS:
         out = {}
         for i, (op, params) in enumerate(calls):
             sec = f"{op.name}_{i}"
-            # reads – return stored fake state
+            # ops – delegate to the per-op fakes for call logging, failure
+            # injection and state effects
             if op.name == 'position':
-                out[sec] = self.position
+                out[sec] = self._get_position(nis)
                 continue
             if op.name == 'resolution':
-                out[sec] = self.resolution
+                out[sec] = self._get_resolution(nis)
                 continue
             if op.name == 'nd_acq_tabs':
-                out[sec] = {'Time': False, 'XY': False, 'Z': False,
-                            'Lambda': False, 'Large Image': False}
+                out[sec] = self._get_nd_acq_tabs(nis)
                 continue
-            # setters – delegate to existing fakes for call logging / failure
             if op.name == 'set_position':
                 pos_xy = None
                 if 'x' in params and 'y' in params:
@@ -322,25 +420,15 @@ class FakeNIS:
                 out[sec] = None
                 continue
             if op.name == 'add_polygon_roi':
-                # delegate to existing fake add_polygon_roi
-                # params contains points and color
-                points = params.get('points', [])
-                color = params.get('color', 'green')
-                # simulate call
-                self._call('add_polygon_roi', len(points))
-                if self.abort_add_roi:
-                    raise KeyError('id')
-                self._next_roi += 1
-                out[sec] = self.roi_id
+                out[sec] = self._add_polygon_roi(
+                    nis, params.get('points', []), params.get('color', 'green'))
                 continue
             if op.name == 'delete_all_rois_in_current_document':
-                # NOP for fake – ROIs are session-global, just clear counter
-                self._next_roi = 0
+                self._delete_all_rois_in_current_document(nis)
                 out[sec] = None
                 continue
             if op.name == 'close_all_docs':
-                self.open_docs.clear()
-                self.current = 'Frozen'
+                self._close_all_docs(nis)
                 out[sec] = None
                 continue
             if op.name == 'close_current_document':
@@ -350,6 +438,8 @@ class FakeNIS:
                 out[sec] = None
                 continue
             if op.name == 'checkpoint':
+                self._checkpoint(
+                    nis, params.get('key', 'ok'), params.get('value', 1))
                 out[sec] = True
                 continue
             # acquisition ops – simulate side effects

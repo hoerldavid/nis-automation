@@ -847,13 +847,6 @@ def autofrap_loop_outer(nis_exe, out_dir, positions,
     return results
 
 
-def _default_out_dir():
-    """repo root (this file lives one level down in autofrap/) +
-    test_acquisitions/autofrap_grid"""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(root, 'test_acquisitions', 'autofrap_grid')
-
-
 def build_positions(start_xy, fov, nx=2, ny=2, spacing=1.0,
                     spiral=False, max_positions=None):
     """Generate stage positions for grid or centre-out spiral.
@@ -905,9 +898,11 @@ def parse_cli_args(argv=None):
     p = argparse.ArgumentParser(
         description='auto-FRAP over a grid of stage positions '
                     '(see autofrap())')
-    p.add_argument('--out', '-o', default=_default_out_dir(),
+    p.add_argument('--out', '-o', default='autofrap_out',
                    help='output directory (a <run_stamp>/ sub-directory is '
-                        'created in it) [default: %(default)s]')
+                        'created in it); resolved against the current '
+                        'working directory and passed to NIS as an '
+                        'absolute path [default: %(default)s]')
     p.add_argument('--nis', default=r'C:\Program Files\NIS-Elements\nis_ar.exe',
                    help='path to nis_ar.exe [default: %(default)s]')
     p.add_argument('--nx', type=int, default=2,
@@ -958,8 +953,14 @@ def parse_cli_args(argv=None):
     return args
 
 
-if __name__ == '__main__':
+def main(argv=None):
+    """CLI entry point: parse arguments, load the detector, run
+    autofrap() and translate its exit conditions into exit codes:
 
+      0   run finished (fully or partially)
+      1   AbortRunError (configuration / resource problem)
+      130 AutofrapInterruptedException (clean user stop)
+    """
     # Ctrl-C handling: first press requests a clean stop at the next safe
     # boundary (end of cycle / between FOVs - the current macro call
     # runs to completion, we never kill it); a second press raises
@@ -977,9 +978,10 @@ if __name__ == '__main__':
 
     signal.signal(signal.SIGINT, _on_sigint)
 
-
-    args = parse_cli_args()
-
+    args = parse_cli_args(argv)
+    # NIS macros resolve relative paths against the NIS executable's
+    # directory - the pipeline must hand them absolute paths
+    args.out = os.path.abspath(args.out)
 
     print(f'loading detector from: {args.detector}', flush=True)
     detection_fun = load_detector_file(args.detector)
@@ -1015,3 +1017,7 @@ if __name__ == '__main__':
     except AbortRunError as e:
         print(f'\nERROR: {e}')
         sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

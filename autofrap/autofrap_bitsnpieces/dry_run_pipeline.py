@@ -1,108 +1,93 @@
 """
-one-off offline dry run of the full autofrap_grid pipeline: FakeNIS
-stands in for the scope (survey/FRAP files are copies of real survey
-nd2s from the 20260901 grid run), detection is real cellpose via the
-remote server (CELLPOSE_SERVER_URL; on the Mac: --device mps).
+Offline dry run of the real autoFRAP CLI with FakeNIS standing in for the
+scope: survey/FRAP "acquisitions" are copies of real survey nd2 files.
+
+Everything the pipeline CLI offers works as-is (--spiral, --max-cycles,
+--detector-arg, --max-consecutive-failures, Ctrl-C clean stop, ...) -
+this wrapper only adds:
+
+  * FakeNIS patching, sourcing "acquired" surveys from --sources
+  * detector presets for convenience (--preset)
+  * dry-run defaults: --out test_acquisitions/dry_run, --name dryrun
+    (both overridable by passing the same flags)
 
 Run from the repo root:
-    CELLPOSE_SERVER_URL=http://localhost:8000 \
-        python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py
 
-Expect: 4 FOV x 3 cycles, ~24 cells per FOV at diameter=70; per cycle a
-survey .nd2, a FRAP .nd2 (copy of the survey source) and a survey QC png.
+    python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py --preset dummy
+        offline: dummy detector, default 2x2 grid, 1 cycle per FOV
+    python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py \
+        --preset simple_seg --spiral --max-positions 5 --max-cycles 3
+    python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py \
+        --preset cellpose --detector-arg server_url=http://localhost:9000
+        (needs the cellpose server; the preset already sets a default)
 """
+import argparse
 import glob
 import os
 import sys
 
 # Ensure the repo root is on sys.path
-_here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if _here not in sys.path:
-    sys.path.insert(0, _here)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# repo root is 2 levels up
+_ROOT = os.path.dirname(os.path.dirname(_HERE))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-import autofrap
-from autofrap.microscope import fake_nis
-from autofrap.core.detection import load_detector_file
-from autofrap.core.utils.grid import spiral_positions
-
-SURVEY_GLOB = 'test_acquisitions/autofrap_out/*survey.nd2'
-OUT_DIR = 'test_acquisitions/dry_run'
-
-# Spiral traversal settings
-SPIRAL = True  # set False to use default grid
-SPIRAL_MAX_POS = 5  # number of positions to generate
-SPIRAL_FOV = 133.1  # µm, approximate FOV size for this sample
-SPIRAL_SPACING = 1.0  # FOV units between spiral layers
-START_XY = (0.0, 0.0)  # current stage position (µm) – FakeNIS centre
+from autofrap.microscope.fake_nis import FakeNIS
+from autofrap.pipeline.autofrap import main as pipeline_main
 
 PRESETS = {
-    'cellpose': {
-        'detector': 'autofrap/detectors/cellpose_remote_halfnucleus_modular.py',
-        'kwargs': {'diameter': 70, 'server_url': 'http://localhost:9000'}
-    },
-    'simple_seg': {
-        'detector': 'autofrap/detectors/simple_seg_detector.py',
-        'kwargs': {'cell_sigma': 16.0, 'otsu_frac': 0.3, 'min_eroded_extent': 0.90}
-    },
-    'dummy': {
-        'detector': 'autofrap/detectors/dummy_detector.py',
-        'kwargs': {}
-    },
+    'cellpose': [
+        '--detector', os.path.join(_ROOT, 'autofrap', 'detectors',
+                                   'cellpose_remote_halfnucleus_modular.py'),
+        '--detector-arg', 'diameter=70',
+        '--detector-arg', 'server_url=http://localhost:9000',
+    ],
+    'simple_seg': [
+        '--detector', os.path.join(_ROOT, 'autofrap', 'detectors',
+                                   'simple_seg_detector.py'),
+        '--detector-arg', 'cell_sigma=16.0',
+        '--detector-arg', 'otsu_frac=0.3',
+        '--detector-arg', 'min_eroded_extent=0.90',
+    ],
+    'dummy': [
+        '--detector', os.path.join(_ROOT, 'autofrap', 'detectors',
+                                   'dummy_detector.py'),
+    ],
 }
 
+
 def main():
-    import argparse
-    p = argparse.ArgumentParser()
-    p.add_argument('--preset', choices=list(PRESETS.keys()), default='simple_seg',
-                   help='detector preset to use')
-    p.add_argument('--detector',
-                   help='override detector file, overrides --preset')
-    args = p.parse_args()
+    p = argparse.ArgumentParser(
+        description='offline dry run of the autoFRAP CLI (FakeNIS)',
+        epilog='all arguments not listed here are forwarded verbatim to '
+               'the pipeline CLI (python autofrap/pipeline/autofrap.py --help)')
+    p.add_argument('--preset', choices=sorted(PRESETS), default='dummy',
+                   help='detector preset: expands to --detector / '
+                        '--detector-arg (default: %(default)s)')
+    p.add_argument('--sources',
+                   default='test_acquisitions/autofrap_out/*survey.nd2',
+                   help='glob of nd2 files FakeNIS copies as the '
+                        '"acquired" surveys (default: %(default)s)')
+    p.add_argument('--out', '-o', default='test_acquisitions/dry_run',
+                   help='output directory (default: %(default)s)')
+    p.add_argument('--name', default='dryrun',
+                   help='experiment name (default: %(default)s)')
+    args, forwarded = p.parse_known_args()
 
-    sources = sorted(glob.glob(SURVEY_GLOB))
-    assert sources, f'no survey files found for {SURVEY_GLOB}'
-    print(f'{len(sources)} sources: {[os.path.basename(s) for s in sources]}')
-    os.makedirs(OUT_DIR, exist_ok=True)
+    sources = sorted(glob.glob(args.sources))
+    assert sources, f'no survey sources found for {args.sources!r}'
+    print(f'{len(sources)} sources: '
+          f'{", ".join(os.path.basename(s) for s in sources)}')
 
-    # -----------------------------------------------------------------
-    # Generate the position list (grid or spiral) before the FakeNIS context.
-    # -----------------------------------------------------------------
-    if SPIRAL:
-        positions = spiral_positions(START_XY, fov=SPIRAL_FOV, spacing=SPIRAL_SPACING,
-                                    max_positions=SPIRAL_MAX_POS)
-    else:
-        positions = None
+    argv = PRESETS[args.preset] + ['--out', args.out, '--name', args.name] \
+        + forwarded
 
-    # Resolve detector and kwargs from preset or explicit override
-    if args.detector:
-        detector_path = args.detector
-        detector_kwargs = {}
-    else:
-        preset = PRESETS[args.preset]
-        detector_path = preset['detector']
-        detector_kwargs = preset['kwargs']
-
-    with fake_nis.FakeNIS(sources) as fake:
-        det = load_detector_file(detector_path)
-        results = autofrap.autofrap_multiposition(
-            'fake', OUT_DIR,
-            positions=positions, max_cycles=3,
-            detection_fun=det,
-            name='dryrun',
-            **detector_kwargs)
-
-    # autofrap_multiposition results: (i, x, y, fov_dir, fov_results | None)
-    n_fov = sum(1 for r in results if r[4] is not None)
-    n_cycles = sum(len(r[4]) for r in results if r[4] is not None)
-    print(f'{n_cycles} cycles over {n_fov} FOVs')
-    for i, x, y, fov_dir, fov_results in results:
-
-        if fov_results is None:
-            print(f'fov {i}: no results')
-            continue
-        for cycle, cell, survey, frap in fov_results:
-            print(f'fov{i:02d} c{cycle:02d} cell {cell}: '
-                  f'{os.path.basename(survey)} -> {os.path.basename(frap)}')
+    with FakeNIS(sources):
+        # main() raises SystemExit(0/1/130), which propagates through
+        # FakeNIS.__exit__ (patch restored) and becomes this process's
+        # exit code
+        pipeline_main(argv)
 
 
 if __name__ == '__main__':
