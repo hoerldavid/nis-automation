@@ -1,6 +1,12 @@
 # autoFRAP – NIS-Elements automation
 
-autoFRAP automates multi-FOV, multi-cycle FRAP experiments on Nikon microscopes controlled by NIS Elements. It acquires a survey image, detects objects, selects one object per cycle, creates a stimulation mask for that object and acquires the FRAP time series. See DESIGN_GOALS_AUTOFRAP.md for the full workflow – the framework supports more than half-nucleus stimulation, e.g. organelle detection, expression filtering, random circles, clusters, etc.
+autoFRAP automates multi-FOV, multi-cycle FRAP experiments on Nikon
+microscopes controlled by NIS Elements. It acquires a survey image,
+detects objects, selects one object per cycle, creates a stimulation
+mask for that object and acquires the FRAP time series. See
+DESIGN_GOALS_AUTOFRAP.md for the full workflow – the framework
+supports more than half-nucleus stimulation, e.g. organelle
+detection, expression filtering, random circles, clusters, etc.
 
 ## Install
 
@@ -13,27 +19,35 @@ cd autofrap
 pip install -e .
 ```
 
+Dependencies are declared in `pyproject.toml`.
+
 ### Microscope workstation
 
-This is where the pipeline runs.
+This is where the pipeline runs. Prerequisites: NIS Elements running
+with the NIS-Elements Automation macro interface enabled, `nis_ar` on
+PATH, and a Python environment with the package installed.
 
 ```bash
-export CELLPOSE_SERVER_URL=http://<server>:8000  # only if using Cellpose remote detector
 python -m autofrap.pipeline --help
 ```
 
-### Cellpose server
+### Cellpose server (optional)
 
-Run on a separate machine with GPU / Apple Silicon.
+Only needed for the `cellpose_remote_*` detector files; all other
+detectors run fully local. Run on a separate machine with GPU / Apple
+Silicon:
 
 ```bash
 pip install cellpose
 python /path/to/repo/cellpose_server.py --device auto --host 0.0.0.0 --port 8000
 ```
 
-`cellpose_server.py` lives in the repository root. The built-in Cellpose detectors read `CELLPOSE_SERVER_URL` at import time; set it on the workstation.
+`cellpose_server.py` lives in the repository root. On the workstation,
+point the detector at the server (read at import time):
 
-Dependencies are declared in `pyproject.toml`.
+```bash
+export CELLPOSE_SERVER_URL=http://<server>:8000
+```
 
 ## Quick start – dry run with FakeNIS
 
@@ -46,18 +60,16 @@ python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py --preset simple_seg
 Presets:
 * `dummy` → `autofrap/detectors/example_detector.py` (dummy objects, for testing)
 * `simple_seg` → `autofrap/detectors/simple_seg_detector.py` (Otsu + watershed, local, no server)
-* `cellpose` → `autofrap/detectors/cellpose_remote_halfnucleus_modular.py` with `diameter=70`
+* `cellpose` → `autofrap/detectors/cellpose_remote_halfnucleus_modular.py` with `diameter=70` (needs the server)
 
-The dry run is designed to work with arbitrary existing ND2 files. The test script uses a hardcoded survey glob, but the pipeline itself accepts any source list. It copies source ND2s as surveys/FRAPs and writes QC PNGs.
+The dry run is designed to work with arbitrary existing ND2 files. The
+test script uses a hardcoded survey glob, but the pipeline itself
+accepts any source list. It copies source ND2s as surveys/FRAPs and
+writes QC PNGs.
 
 ## Run on the microscope
 
-Prerequisites on the workstation:
-* NIS Elements running, NIS-Elements Automation macro interface enabled
-* `nis_ar` on PATH
-* Python environment with the package installed
-
-Example 2×2 grid, 3 cycles per FOV:
+Example 2×2 grid, 3 cycles per FOV, local Otsu+watershed detector:
 
 ```bash
 python -m autofrap.pipeline \
@@ -66,12 +78,22 @@ python -m autofrap.pipeline \
   --spacing 1.0 \
   --max-cycles 3 \
   --name grid_run \
+  --detector autofrap/detectors/simple_seg_detector.py
+```
+
+The Cellpose detector files work the same way (server running and
+`CELLPOSE_SERVER_URL` set, see above), with the segmentation
+parameters passed via `--detector-arg`:
+
+```bash
   --detector autofrap/detectors/cellpose_remote_halfnucleus_modular.py \
   --detector-arg diameter=70 \
   --detector-arg min_size=50
 ```
 
-`--name` sets the experiment name; the run directory is created under `--out` with a timestamp prefix, e.g. `20260901_123456_grid_run/`. See `--help` for all options.
+`--name` sets the experiment name; the run directory is created under
+`--out` with a timestamp prefix, e.g. `20260901_123456_grid_run/`. See
+`--help` for all options.
 
 Key arguments:
 * `--out` output root, per-FOV subdirs created automatically
@@ -79,8 +101,8 @@ Key arguments:
 * `--spacing` FOV spacing in FOV units
 * `--max-positions` / `--num-positions` hard cap on number of positions visited; applies to both grid and spiral modes
 * `--max-cycles` cycles per FOV
-* `--detector` path to detector module
-* `--detector-arg key=value` forwarded to the detector via `build_detector`
+* `--detector` path to the detector module (required – see below)
+* `--detector-arg key=value` tuning parameters forwarded to the detector (repeatable)
 
 ### Spiral visit order
 
@@ -98,42 +120,33 @@ python -m autofrap.pipeline \
   --detector-arg min_eroded_extent=0.90
 ```
 
-`--spiral` generates a centre-out spiral via `autofrap.core.utils.grid.spiral_positions`. Use `--max-positions` / `--num-positions` to set the number of positions to visit; if omitted it falls back to `--nx * --ny`. The same flag also caps a regular grid: e.g. `--nx 5 --ny 5 --max-positions 20` visits the first 20 positions of the 5×5 grid in row-major order. Example: `--spiral --max-positions 13` visits the centre plus 12 surrounding positions.
+`--spiral` generates a centre-out spiral via
+`autofrap.core.utils.grid.spiral_positions`. Use `--max-positions` /
+`--num-positions` to set the number of positions to visit; if omitted
+it falls back to `--nx * --ny`. The same flag also caps a regular
+grid: e.g. `--nx 5 --ny 5 --max-positions 20` visits the first 20
+positions of the 5×5 grid in row-major order. Example:
+`--spiral --max-positions 13` visits the centre plus 12 surrounding
+positions.
 
 ## Detectors
 
-You provide a detector `.py` file that defines a `detection_fun`. The pipeline imports the file and calls `detection_fun(survey_file, **kwargs)` for each survey image.
+Every run needs `--detector`: a `.py` file that defines
+`detection_fun(survey_file) -> labels (, stim_mask (, viz))` — the
+object labels for the survey image, optionally the per-cell FRAP
+regions and a QC picture. The pipeline imports the file and calls it
+once per survey image.
 
-The function must return labels and optionally a stimulation mask and a visualization image:
+`autofrap/detectors/` contains ready-made detectors for the common
+cases (local Otsu+watershed, remote-Cellpose variants with different
+stimulation masks, a dummy for testing) — the "Built-in detectors"
+table in `WRITING_DETECTOR.md` says what each one does and when to
+use it.
 
-```
-survey_file -> (labels,) or (labels, stim_mask) or (labels, stim_mask, viz)
-```
-
-`labels` is a 2D int array, `stim_mask` is a 2D bool array with at most one connected region per cell, `viz` is a 2D grayscale or RGB(A) image for the QC overlay.
-
-The built-in detectors are just examples of this contract. You can use the Cellpose remote detector or the local simple Otsu+watershed detector, or write your own.
-
-`build_detector` composes load → detect → mask → viz and routes CLI parameters to sub-functions via `parameter_map`. With `parameter_map='auto'` each sub-function receives the arguments it can accept; explicit mappings can be provided to avoid name collisions, see `autofrap/core/detection.py`.
-
-Built-in detectors live in `autofrap/detectors/` (dummy, local Otsu+watershed, and remote-Cellpose variants with different stimulation masks) — see the directory for the current list.
-
-Authoring a detector:
-```python
-from autofrap.core.detection import build_detector
-from functools import partial
-
-def load_fun(path): ...
-def detect_fun(image, **kw): ...
-
-detection_fun = build_detector(
-    load_fun=load_fun,
-    detector_fun=detect_fun,
-    stim_mask_fun=half_object_stim_mask,
-    visualization_fun=lambda img: img,
-    parameter_map='auto'
-)
-```
+To write your own, start with `WRITING_DETECTOR.md`: it walks through
+the contract, the building blocks in `autofrap/core/` (load → detect
+→ mask → filter → viz), and shows how to assemble a detector with
+`build_detector` instead of writing one from scratch.
 
 ## Output
 
@@ -146,8 +159,15 @@ The pipeline returns to start position on completion or abort.
 
 ## Notes
 
-* Survey files can be multi-channel. `load_fun` returns `(c, y, x)` and detection functions can use any channel(s); the visualization is the only `(y, x, 3/4)` array.
-* The microscope workstation must have both an ND-Acquisition template for the survey image and an ND-Stimulation template for the FRAP time series defined in NIS Elements GUI.
-* For real runs, ensure the ND acquisition template is a single image with one or more channels, no Time/XY/Large Image tabs.
+* Survey files can be multi-channel. `load_fun` returns `(c, y, x)`
+  and detection functions can use any channel(s); the visualization is
+  the only `(y, x, 3/4)` array.
+* The microscope workstation must have both an ND-Acquisition template
+  for the survey image and an ND-Stimulation template for the FRAP
+  time series defined in NIS Elements GUI.
+* For real runs, ensure the ND acquisition template is a single image
+  with one or more channels, no Time/XY/Large Image tabs.
 
-See `STATUS.md` for the current state and open TODOs.
+See `STATUS.md` for the current state and open TODOs,
+`docs/ARCHITECTURE.md` for the code layout, and
+`DESIGN_GOALS_AUTOFRAP.md` for the experiment workflow.
