@@ -73,19 +73,10 @@ according to the ``parameter_map`` setting (see
 accept them via ``**kwargs`` or by name.
 """
 import warnings
-import inspect
 
 from autofrap.core.image.mask import relabel_by_distance, shuffle_labels
 from autofrap.core.image.qc import default_visualization as _default_visualization
 import numpy as np
-
-def _accepts_kwargs(func):
-    """Check if a function accepts variable keyword arguments (**kwargs)."""
-    try:
-        sig = inspect.signature(func)
-        return any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
-    except (ValueError, TypeError):
-        return False
 
 def _warn_multi_region(labels, stimulation_mask):
     """
@@ -253,7 +244,7 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         Best effort: any failure (exception or wrong output shape, e.g. a
         2-channel image) only warns and drops the visualization - it is
         cosmetic and must not break the run.
-    parameter_map: str or dict or None, optional
+    parameter_map: dict or None, optional
         Controls how extra keyword arguments are routed to the
         sub-functions (``load_fun``, ``detector_fun``, etc.) when
         ``detection_fun`` is called with additional keyword arguments
@@ -261,10 +252,6 @@ def build_detector(load_fun, detector_fun, relabel='distance',
 
         - ``None`` (default): no extra arguments are passed to any
           sub-function.
-        - ``'auto'``: each sub-function receives the extra arguments
-          that it can actually accept — i.e. the ones whose names
-          appear in its signature, or all of them if it accepts
-          ``**kwargs``.
         - ``dict``: an explicit mapping of the form
           ``{<build_detector_arg_name>: {<runtime_key>: <internal_name>}}``.
           Only the listed runtime keys are passed, and they are
@@ -288,31 +275,25 @@ def build_detector(load_fun, detector_fun, relabel='distance',
     """
     if relabel not in ('distance', 'shuffle', None):
         raise ValueError(f'unknown relabel mode {relabel!r}')
+    if parameter_map is not None and not isinstance(parameter_map, dict):
+        raise ValueError(
+            f"parameter_map must be None or an explicit dict, got "
+            f"{parameter_map!r} - the 'auto' mode was removed; use an "
+            'explicit {step: {runtime_key: internal_name}} mapping '
+            '(see WRITING_DETECTOR.md)')
 
-    def _route(func, arg_name, runtime_kwargs):
+    def _route(arg_name, runtime_kwargs):
         """Extract the subset of runtime_kwargs for a sub-function."""
         if parameter_map is None or not runtime_kwargs:
             return {}
-
-        # TODO: remove auto? might only cause confusion?
-        if parameter_map == 'auto':
-            if _accepts_kwargs(func):
-                return runtime_kwargs
-            try:
-                sig = inspect.signature(func)
-                return {k: v for k, v in runtime_kwargs.items()
-                        if k in sig.parameters}
-            except (ValueError, TypeError):
-                return {}
-        # explicit dict mapping
         func_map = parameter_map.get(arg_name, {})
         return {func_map[rk]: rv for rk, rv in runtime_kwargs.items()
                 if rk in func_map}
 
     def _detect(survey_file, **runtime_kwargs):
         
-        image = load_fun(survey_file, **_route(load_fun, 'load_fun', runtime_kwargs))
-        labels = detector_fun(image, **_route(detector_fun, 'detector_fun', runtime_kwargs))
+        image = load_fun(survey_file, **_route('load_fun', runtime_kwargs))
+        labels = detector_fun(image, **_route('detector_fun', runtime_kwargs))
         
         # check detection output - should be integer label map with same yx shape as input
         if labels.ndim != 2:
@@ -329,8 +310,7 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         # filter_function; labels not in the set are zeroed.
         if filter_function is not None:
             good = filter_function(
-                labels, image, **_route(filter_function, 'filter_function',
-                                        runtime_kwargs))
+                labels, image, **_route('filter_function', runtime_kwargs))
             # np.isin needs a list (sets produce object-dtype arrays
             # that don't match integer label maps).
             labels = np.isin(labels, list(good)) * labels
@@ -349,8 +329,7 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         mask = None
         if stim_mask_fun is not None:
             mask = stim_mask_fun(
-                labels, image, **_route(stim_mask_fun, 'stim_mask_fun',
-                                        runtime_kwargs))
+                labels, image, **_route('stim_mask_fun', runtime_kwargs))
             if mask.ndim != 2 or mask.shape != labels.shape:
                 raise ValueError(
                     f'stimulation mask must be 2D with the labels '
@@ -368,8 +347,7 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         else:
             viz = _apply_and_check_viz(
                 visualization_fun, image, labels.shape,
-                **_route(visualization_fun, 'visualization_fun',
-                         runtime_kwargs))
+                **_route('visualization_fun', runtime_kwargs))
 
         if mask is None and viz is None:
             return (labels,)

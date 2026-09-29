@@ -226,10 +226,7 @@ loaded and selecting channel 1 would fail. This is also how you tune,
 e.g., the Cellpose `diameter` for a new sample without touching the
 file — and the renaming is what makes detect-in-channel-0,
 mask-in-channel-1 possible: all three functions have a `channel`
-parameter, but each `--detector-arg` key is routed to exactly one step. (There is also a `parameter_map='auto'` mode that
-passes each key to every step whose function accepts it — fine for a
-quick tweak, but it cannot give different steps different values, so
-we don't use it here. Without any `parameter_map`, `--detector-arg`
+parameter, but each `--detector-arg` key is routed to exactly one step. (Without any `parameter_map`, `--detector-arg`
 keys are not routed anywhere.)
 
 ## 5. Testing your detector before a live run
