@@ -109,6 +109,16 @@ Important ROI behavior
 ### FOV
 `FOV = xres * pixel_size / magnification`
 
+## Pixel ↔ stage transform (stitched overviews)
+
+For NIS-stitched large images (`Stg_LargeImageScanArea`), the pixel → stage map is affine: `stage = M @ px + t`. Retro-analysis of the legacy wing-scanner overview calibrations (`legacy/wingscanner/res/*.json`, `create_overview_calibration.ipynb`; details: `docs/SESSION_HISTORY.md` 20261002):
+
+* **M (linear part)** = uniform scale (pixel size, incl. binning) × flip × camera/stage rotation — a property of the imaging chain (camera port + OC), identical for any stage position. In the legacy calibs it was exactly scale + x-flip (+ 0.55° rotation for the gray camera).
+* **t (origin)** follows a corner-anchoring rule: image pixel (0,0) sits at `(left, top) + (Δx, Δy)` of the requested rectangle, with (Δx, Δy) constant per OC/binning and ≈ half a tile (i.e. the first stitch tile is centered on the (left, top) corner). Verified across 3 slides × 2 cameras of the legacy unit to ~1 µm (color) / ~20 µm (gray, hover-readout precision).
+* Consequence: for any rectangle + OC the transform is `stage = M @ px + (left + fov_x/2, top − fov_y/2)` if Δ = FOV/2 holds — fully programmatic, no manual GUI calibration.
+* **Per-unit caveat**: `get_rotation_matrix` (`Get_CalibrationAngleMatrix`) values are per microscope unit — the wing-scanner unit is not the current one, so only same-unit comparisons of the fitted M against the calibration matrix are meaningful. Current unit (from `inspect_microscope.ipynb`): ≈ 180° flip + 0.78° residual.
+* **Planned live test (current unit, not yet run)**: `do_large_image_scan` over a known rect at a known OC → (a) read stage positions from the nd2 metadata (`autofrap/nd2_helpers.py::stage_position`; also check whether a stitched nd2 stores per-tile or single positions) and confirm first-tile centering on (left, top) + Δ = FOV/2; (b) fit the affine from image↔stage points and compare its linear part to `get_rotation_matrix` × pixel size. Until then, treat the anchor rule as legacy-unit evidence only.
+
 ## To do X, use macro Y
 
 * Save survey image after ND run → `save_current_document`
