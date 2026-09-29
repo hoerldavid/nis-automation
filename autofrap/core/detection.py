@@ -412,11 +412,13 @@ def load_detector_file(path):
     A simple detector file (see ``autofrap/detectors/example_detector.py``):
 
         # my_detector.py
+        from autofrap.io.nd2 import read_channel
         from autofrap.core.image.segmentation import dummy_detect_objects
         from autofrap.core.image.mask import half_object_stim_mask
 
         def detection_fun(f):
-            labels = dummy_detect_objects(np.zeros((100, 100)))
+            image = read_channel(f, channel=0)
+            labels = dummy_detect_objects(image)
             mask = half_object_stim_mask(labels)
             return labels, mask
 
