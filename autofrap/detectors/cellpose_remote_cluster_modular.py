@@ -22,11 +22,14 @@ Usage::
         --nx 2 --ny 2 --detector-arg diameter=70 --detector-arg server_url=http://... \
         --detector-arg load_channel=all --detector-arg det_channel=0
 
---detector-arg values are routed via parameter_map='auto':
-  load_channel -> load function channel selection for read_channel
+--detector-arg values are routed via an explicit parameter_map:
+  load_channel -> channel selection for loading (read_channel)
   det_channel  -> channel selection for remote_detect_objects
+  filter_channel -> channel selection for the intensity filter
   server_url   -> cellpose server URL
-  diameter, min_size, ... -> cellpose eval kwargs
+  diameter, min_size, cellprob_threshold, flow_threshold,
+  max_size_fraction -> cellpose eval kwargs
+  threshold, metric -> intensity filter settings
 """
 import os
 
@@ -59,7 +62,19 @@ detection_fun = build_detector(
     stim_mask_fun=lambda labels, image: cluster_stim_mask(labels, image, channel=2),
     visualization_fun=default_visualization,
     filter_function=_filter_intensity,
-    parameter_map='auto',  # --detector-arg load_channel=..., det_channel=..., server_url=..., diameter=...
+    parameter_map={
+        'load_fun':        {'load_channel': 'load_channel'},
+        'detector_fun':    {'det_channel': 'det_channel',
+                            'server_url': 'server_url',
+                            'diameter': 'diameter',
+                            'min_size': 'min_size',
+                            'cellprob_threshold': 'cellprob_threshold',
+                            'flow_threshold': 'flow_threshold',
+                            'max_size_fraction': 'max_size_fraction'},
+        'filter_function': {'filter_channel': 'channel',
+                            'threshold': 'threshold',
+                            'metric': 'metric'},
+    },
 )
 
 

@@ -36,7 +36,9 @@ detection_fun = build_detector(
     detector_fun=_detect_simple,
     stim_mask_fun=lambda labels, image: half_object_stim_mask(labels),
     visualization_fun=lambda image: image,
-    parameter_map='auto',
+    parameter_map={'detector_fun': {'cell_sigma': 'cell_sigma',
+                                    'otsu_frac': 'otsu_frac',
+                                    'min_eroded_extent': 'min_eroded_extent'}},
 )
 
 
