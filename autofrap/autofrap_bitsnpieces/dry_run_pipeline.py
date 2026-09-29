@@ -52,7 +52,7 @@ PRESETS = {
     ],
     'dummy': [
         '--detector', os.path.join(_ROOT, 'autofrap', 'detectors',
-                                   'dummy_detector.py'),
+                                   'example_detector.py'),
     ],
 }
 

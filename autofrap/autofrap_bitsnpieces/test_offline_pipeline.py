@@ -36,7 +36,7 @@ from autofrap.microscope.fake_nis import FakeNIS, PATCHED_FUNCTIONS
 import autofrap.microscope.nis as nis_util
 
 detection_fun = load_detector_file(
-    os.path.join(ROOT, 'autofrap', 'detectors', 'dummy_detector.py'))
+    os.path.join(ROOT, 'autofrap', 'detectors', 'example_detector.py'))
 
 n_failures = 0
 
