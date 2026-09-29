@@ -22,5 +22,7 @@ test_data/
 # macOS
 .DS_Store
 nis_manual/nis_help_html/
-nis_manual/*.chm
-nis_manual/*.CHM
+
+# NIS manual extracts (copyrighted - keep out of git)
+*.chm
+*.CHM
