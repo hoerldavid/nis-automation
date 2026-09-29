@@ -111,7 +111,7 @@ Important ROI behavior
 
 ## Pixel ↔ stage transform (stitched overviews)
 
-For NIS-stitched large images (`Stg_LargeImageScanArea`), the pixel → stage map is affine: `stage = M @ px + t`. Retro-analysis of the legacy wing-scanner overview calibrations (`legacy/wingscanner/res/*.json`, `create_overview_calibration.ipynb`; details: `docs/SESSION_HISTORY.md` 20261002):
+For NIS-stitched large images (`Stg_LargeImageScanArea`), the pixel → stage map is affine: `stage = M @ px + t`. Retro-analysis of the legacy wing-scanner overview calibrations (`legacy/wingscanner/res/*.json`, `create_overview_calibration.ipynb`; details: `docs/SESSION_HISTORY.md` 20260929):
 
 * **M (linear part)** = uniform scale (pixel size, incl. binning) × flip × camera/stage rotation — a property of the imaging chain (camera port + OC), identical for any stage position. In the legacy calibs it was exactly scale + x-flip (+ 0.55° rotation for the gray camera).
 * **t (origin)** follows a corner-anchoring rule: image pixel (0,0) sits at `(left, top) + (Δx, Δy)` of the requested rectangle, with (Δx, Δy) constant per OC/binning and ≈ half a tile (i.e. the first stitch tile is centered on the (left, top) corner). Verified across 3 slides × 2 cameras of the legacy unit to ~1 µm (color) / ~20 µm (gray, hover-readout precision).
