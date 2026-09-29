@@ -114,9 +114,20 @@ Reading it back against the steps above:
 * **step 5 (`stim_mask_fun`)** — bleaches the left half of each cell.
 * step 3 (filter) is not used, so all cells/nuclei detected by Cellpose are candidates for FRAP and no `visualization_fun` is given → the automatic default picture is used for the QC overlay.
 
-The built-in files in `autofrap/detectors/` (e.g.
-`cellpose_remote_cluster_modular.py`) are real-world variants of this
-template — read one when you want a copy-paste starting point.
+### Built-in detectors
+
+The `--detector` argument is required, so every run picks one of the
+ready-made detector files in `autofrap/detectors/` (or your own):
+
+| file | what it does | when to use |
+|---|---|---|
+| `cellpose_remote_halfnucleus_modular.py` | Cellpose (server) + left-half bleach + intensity filter (ch0 mean > 450) | standard nuclear FRAP; `--detector-arg threshold=0` switches the filter off |
+| `cellpose_remote_cluster_modular.py` | Cellpose (server) + bleach of bright subcellular clusters in channel 2 + intensity filter (ch0 mean > 550) | punctate targets; cells without a cluster are skipped |
+| `cellpose_remote_randomcircle_modular.py` | Cellpose (server) + one random circle per cell (25% of its area) + intensity filter (ch0 mean > 550) | when the bleach position should vary between cells |
+| `simple_seg_detector.py` | local Otsu + watershed nuclei segmentation (no server) + left-half bleach | no cellpose server available, or simple nuclei |
+| `example_detector.py` | dummy objects (fixed circle + rectangle) + left-half bleach | testing the pipeline without a real detector |
+
+Read any of them when you want a copy-paste starting point.
 
 ## 3. The building blocks
 

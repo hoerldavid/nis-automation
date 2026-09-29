@@ -30,13 +30,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, ROOT)
 
 from autofrap.pipeline import autofrap as af
-from autofrap.core.detection import load_detector_file
 from autofrap.microscope import fake_nis  # noqa: F401  (imported for parity)
 from autofrap.microscope.fake_nis import FakeNIS, PATCHED_FUNCTIONS
+from autofrap.core.image.segmentation import dummy_detect_objects
+from autofrap.core.image.mask import half_object_stim_mask
 import autofrap.microscope.nis as nis_util
 
-detection_fun = load_detector_file(
-    os.path.join(ROOT, 'autofrap', 'detectors', 'example_detector.py'))
+
+def detection_fun(survey_file):
+    """Detection stub for pipeline tests: the fake survey sources are
+    opaque bytes, so the detector must not read the survey file — a
+    fixed canvas with two objects (circle + rectangle) and a left-half
+    mask. (Detector *files* are covered by test_load_detector_file.)"""
+    image = np.zeros((512, 512), dtype=np.uint16)
+    labels = dummy_detect_objects(image)
+    return labels, half_object_stim_mask(labels)
 
 n_failures = 0
 

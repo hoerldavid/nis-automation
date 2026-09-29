@@ -9,8 +9,9 @@ Per cycle:
   1. run the current ND experiment, saved to
      <file_prefix>_cycle<NN>_survey.nd2 (file_prefix defaults to a
      timestamp for standalone runs; autofrap_loop_outer passes 'fov<NN>')
-  2. detect objects in the survey image (detection_fun — by default
-     cellpose on the GPU server via cellpose_server.py) — returns
+  2. detect objects in the survey image (detection_fun — required,
+     e.g. one of the built-ins in autofrap/detectors/, see
+     WRITING_DETECTOR.md) — returns
      (labels[, stimulation_mask[, visualization]]): only the label
      map is required (a bare label map is accepted); without a
      stimulation mask the whole cell is FRAPed, the visualization is
@@ -242,6 +243,11 @@ def autofrap(nis_exe, out_dir,
     through to autofrap_loop_outer (see there, e.g.
     max_consecutive_failures for the grid failure policy).
     """
+    if detection_fun is None:
+        raise AbortRunError(
+            'detection_fun is required - pass a detector file via '
+            '--detector (see autofrap/detectors/ and WRITING_DETECTOR.md)')
+
     # setup microscope
     start_pos, res = setup_microscope(nis_exe)
     fov = nis_util.get_fov_from_res(res)
@@ -891,10 +897,6 @@ def build_positions(start_xy, fov, nx=2, ny=2, spacing=1.0,
 
 
 def parse_cli_args(argv=None):
-    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _default_detector = os.path.join(
-        _repo_root, 'autofrap', 'detectors', 'cellpose_remote_detector.py')
-
     p = argparse.ArgumentParser(
         description='auto-FRAP over a grid of stage positions '
                     '(see autofrap())')
@@ -929,9 +931,10 @@ def parse_cli_args(argv=None):
                         'grid and spiral visit orders. For spiral mode, if omitted it defaults '
                         'to --nx * --ny; for grid mode it truncates the generated NxM grid '
                         '[default: None]')
-    p.add_argument('--detector', default=_default_detector,
+    p.add_argument('--detector', required=True,
                    help='path to a .py file defining detection_fun '
-                        '[default: %(default)s]')
+                        '(required; built-ins in autofrap/detectors/, '
+                        'see WRITING_DETECTOR.md)')
     p.add_argument('--detector-arg', action='append', default=[],
                    metavar='KEY=VALUE',
                    help='extra parameter to pass to the detector, '

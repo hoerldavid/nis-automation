@@ -44,7 +44,7 @@ python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py --preset simple_seg
 ```
 
 Presets:
-* `dummy` → `autofrap/detectors/dummy_detector.py` (fixed shapes, for testing)
+* `dummy` → `autofrap/detectors/example_detector.py` (dummy objects, for testing)
 * `simple_seg` → `autofrap/detectors/simple_seg_detector.py` (Otsu + watershed, local, no server)
 * `cellpose` → `autofrap/detectors/cellpose_remote_halfnucleus_modular.py` with `diameter=70`
 
@@ -66,7 +66,7 @@ python -m autofrap.pipeline \
   --spacing 1.0 \
   --max-cycles 3 \
   --name grid_run \
-  --detector autofrap/detectors/cellpose_remote_detector.py \
+  --detector autofrap/detectors/cellpose_remote_halfnucleus_modular.py \
   --detector-arg diameter=70 \
   --detector-arg min_size=50
 ```
