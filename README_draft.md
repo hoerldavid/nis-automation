@@ -42,12 +42,9 @@ pip install cellpose
 python /path/to/repo/cellpose_server.py --device auto --host 0.0.0.0 --port 8000
 ```
 
-`cellpose_server.py` lives in the repository root. On the workstation,
-point the detector at the server (read at import time):
-
-```bash
-export CELLPOSE_SERVER_URL=http://<server>:8000
-```
+`cellpose_server.py` lives in the repository root. The detector files default to `DEFAULT_CELLPOSE_SERVER_URL` (defined
+at the top of each file — edit it there if the server moves), or pass
+it per run with `--detector-arg server_url=http://<server>:8000`.
 
 ## Quick start – dry run with FakeNIS
 
@@ -81,9 +78,8 @@ python -m autofrap.pipeline \
   --detector autofrap/detectors/simple_seg_detector.py
 ```
 
-The Cellpose detector files work the same way (server running and
-`CELLPOSE_SERVER_URL` set, see above), with the segmentation
-parameters passed via `--detector-arg`:
+The Cellpose detector files work the same way (server running, see
+above), with the segmentation parameters passed via `--detector-arg`:
 
 ```bash
   --detector autofrap/detectors/cellpose_remote_halfnucleus_modular.py \

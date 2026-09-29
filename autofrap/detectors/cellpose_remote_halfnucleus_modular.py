@@ -12,9 +12,8 @@ are renumbered 1..N by increasing centroid distance to the image center
 (relabel='distance') -- so the cell closest to the center is
 stimulated first.
 
-Uses ``CELLPOSE_SERVER_URL`` environment variable (default:
-``http://10.163.69.12:8000``), or an explicit ``server_url`` passed via
-``--detector-arg server_url=...``.
+Server URL: ``DEFAULT_CELLPOSE_SERVER_URL`` below (edit it there if
+the server moves), or per run via ``--detector-arg server_url=...``.
 
 Usage::
 
@@ -31,7 +30,6 @@ Usage::
   max_size_fraction -> cellpose eval kwargs
   threshold, metric -> intensity filter settings
 """
-import os
 
 from autofrap.io.nd2 import read_channel
 from autofrap.core.detection import build_detector
@@ -48,9 +46,8 @@ def _load(survey_file, load_channel=SURVEY_CHANNEL):
     return read_channel(survey_file, channel=load_channel)
 
 
-def _remote_detect(image, server_url=None, det_channel=0, **kwargs):
-    if server_url is None:
-        server_url = os.environ.get('CELLPOSE_SERVER_URL', DEFAULT_CELLPOSE_SERVER_URL)
+def _remote_detect(image, server_url=DEFAULT_CELLPOSE_SERVER_URL,
+                   det_channel=0, **kwargs):
     return remote_detect_objects(image, server_url=server_url, channel=det_channel, **kwargs)
 
 def _filter_intensity(labels, image, channel=0, threshold=450, metric='mean'):
