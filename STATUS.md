@@ -34,7 +34,6 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 ## Open TODOs
 
 * **Detector tuning on real samples** – try `diameter`/`min_size` per sample, consider multi-channel input.
-* **CLI flag for `allow_interrupt_after_survey`** – parameter exists, not exposed via argparse.
 * **Stimulation ROI groups S1–S3** – `ChangeROIType(3)` → group 1. No macro API for group selection found. Low priority.
 * **Pixel ↔ stage coordinate transform for per-tile ROIs** – legacy wing-scanner calibrations retro-analyzed (20260929): one common linear part (scale × flip × rotation) + corner-anchored origin rule (`NIS_REFERENCE.md` § Pixel ↔ stage transform). Open until the planned live test on the current unit confirms the anchor rule (Δ = FOV/2, first tile at (left, top)) via nd2 stage-position metadata and matches the fitted M against `get_rotation_matrix` (per-unit values). Low priority.
 * **bitsnpieces cleanup** – stale fossils removed (20260928); the remaining one-offs all run against current code (some need the scope, the cellpose server, or data that lives on other machines — see their docstrings).

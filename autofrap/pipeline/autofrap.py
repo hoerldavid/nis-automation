@@ -940,6 +940,9 @@ def parse_cli_args(argv=None):
                    help='extra parameter to pass to the detector, '
                         'e.g. --detector-arg diameter=30 '
                         '(repeatable)')
+    p.add_argument('--allow-interrupt-after-survey', action='store_true',
+                   help='allow Ctrl-C to stop after survey + detection '
+                        '(opt-in; otherwise waits for end of cycle)')
     p.add_argument('--name',
                    help='experiment name: the run directory is named '
                         '<timestamp>_<name> (or <name> with --no-timestamp) '
@@ -1011,6 +1014,7 @@ def main(argv=None):
             frap_oc=args.frap_oc,
             name=args.name, use_timestamp=not args.no_timestamp,
             stop_check=lambda: _stop['requested'],
+            allow_interrupt_after_survey=args.allow_interrupt_after_survey,
             max_consecutive_failures=args.max_consecutive_failures,
             return_to_start=not args.no_return,
             **detector_kwargs
