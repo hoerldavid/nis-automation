@@ -72,6 +72,7 @@ re-establishes a known state before the next FOV. The residual risk that
 a timed-out macro is still executing inside NIS when the next cycle
 starts is accepted by design.
 """
+
 import os
 import time
 import argparse
@@ -91,14 +92,13 @@ from autofrap.core.image.mask import mask_to_polygon, cell_mask, next_stimulatab
 from autofrap.core.image.qc import save_qc_overlay
 from autofrap.core.utils.retry import run_with_retries
 
-
 # cycle-number tag in output file names (e.g. <prefix>_cycle01_survey.nd2);
 # spelled out rather than 'c' to avoid the color-channel reading
-CYCLE_PREFIX = 'cycle'
+CYCLE_PREFIX = "cycle"
 
 # ND Acquisition tab names that are *not* valid for a survey image
 # (multi-position, time-lapse, or large-image scans)
-_SURVEY_TABS_FORBIDDEN = frozenset({'Time', 'XY', 'Large Image'})
+_SURVEY_TABS_FORBIDDEN = frozenset({"Time", "XY", "Large Image"})
 
 
 def _check_nd_acq_template(tabs):
@@ -120,13 +120,15 @@ def _check_nd_acq_template(tabs):
     AbortRunError
         survey template is misconfigured (Time/XY/Large Image active)
     """
-    forbidden = {tab for tab, active in tabs.items()
-                 if active and tab in _SURVEY_TABS_FORBIDDEN}
+    forbidden = {
+        tab for tab, active in tabs.items() if active and tab in _SURVEY_TABS_FORBIDDEN
+    }
     if forbidden:
         raise AbortRunError(
-            'survey ND template is misconfigured: '
+            "survey ND template is misconfigured: "
             f'{", ".join(sorted(forbidden))} tab(s) active — '
-            'a survey must be a single image with no loop')
+            "a survey must be a single image with no loop"
+        )
     return tabs
 
 
@@ -155,22 +157,25 @@ def setup_microscope(nis_exe):
     try:
         results = run_with_retries(
             lambda: nis_util.batch_run_macro(nis_exe, calls, timeout=10),
-            'setup_microscope',
-            retry_on=(KeyError, OSError, TimeoutError, RuntimeError))
+            "setup_microscope",
+            retry_on=(KeyError, OSError, TimeoutError, RuntimeError),
+        )
     except (KeyError, OSError, TimeoutError, RuntimeError) as e:
-        raise AbortRunError(
-            f'microscope setup failed after retries: {e!r}') from e
-    _check_nd_acq_template(results['nd_acq_tabs_0'])
-    return results['position_1'], results['resolution_2']
+        raise AbortRunError(f"microscope setup failed after retries: {e!r}") from e
+    _check_nd_acq_template(results["nd_acq_tabs_0"])
+    return results["position_1"], results["resolution_2"]
 
 
 def move_stage_with_retry(nis_exe, pos_xy):
+    
     # TODO: do a set_pos + get_pos batch
     # check if we reached destination (+- a few micron tolerance)?
+    
     run_with_retries(
         lambda: nis_util.set_position(nis_exe, pos_xy=pos_xy),
-        'move_stage',
-        retry_on=(KeyError, OSError, TimeoutError))
+        "move_stage",
+        retry_on=(KeyError, OSError, TimeoutError),
+    )
 
 
 def cleanup_run(nis_exe, start_pos, return_to_start=True):
@@ -184,14 +189,14 @@ def cleanup_run(nis_exe, start_pos, return_to_start=True):
     if return_to_start and start_pos is not None:
         try:
             move_stage_with_retry(nis_exe, start_pos[:2])
-            print(f'moved back to start ({start_pos[0]:+.2f}, {start_pos[1]:+.2f})')
+            print(f"moved back to start ({start_pos[0]:+.2f}, {start_pos[1]:+.2f})")
         except Exception as e:
-            print(f'!!! could not return to start: {e!r}', flush=True)
+            print(f"!!! could not return to start: {e!r}", flush=True)
 
     try:
         nis_cleanup_everything(nis_exe)
     except Exception as e:
-        print(f'!!! cleanup_everything failed: {e!r}', flush=True)
+        print(f"!!! cleanup_everything failed: {e!r}", flush=True)
 
 
 def nis_cleanup_everything(nis_exe):
@@ -199,40 +204,48 @@ def nis_cleanup_everything(nis_exe):
     Delete ROIs and close all open documents in one batched macro.
     Retries on TimeoutError; any failure is logged, not raised.
     """
+
     def _cleanup():
         docs = nis_util.get_opened_documents(nis_exe)
         n = len(docs)
         if n == 0:
-            print('[cleanup_everything] no open documents')
+            print("[cleanup_everything] no open documents")
             return
         calls = [
             (nis_util._OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
-            (nis_util._OP_CLOSE_CURRENT_DOCUMENT, {'save_flag': 2}),
+            (nis_util._OP_CLOSE_CURRENT_DOCUMENT, {"save_flag": 2}),
         ] * n
         nis_util.batch_run_macro(nis_exe, calls, timeout=20)
-        print(f'[cleanup_everything] cleaned {n} document(s)')
+        print(f"[cleanup_everything] cleaned {n} document(s)")
 
     try:
-        run_with_retries(_cleanup, 'cleanup_everything', retry_on=TimeoutError)
+        run_with_retries(_cleanup, "cleanup_everything", retry_on=TimeoutError)
     except Exception as e:
         # TODO: re-raise so it gets caught in autoFRAP loop and registered as a failure?
-        print(f'!!! cleanup_everything failed: {e!r}', flush=True)
+        print(f"!!! cleanup_everything failed: {e!r}", flush=True)
 
 
-def autofrap(nis_exe, out_dir,
-            nx=2, ny=2, spacing=1.0,
-            spiral=False, max_positions=None,
-            max_cycles=None,
-            detection_fun=None,
-            frap_oc='FRAPPA',
-            centroid_threshold='auto',
-            fov_subdirs=False,
-            name=None, use_timestamp=True,
-            stop_check=None,
-            allow_interrupt_after_survey=False,
-            max_consecutive_failures=3,
-            return_to_start=True,
-            **detector_kwargs):
+def autofrap(
+    nis_exe,
+    out_dir,
+    nx=2,
+    ny=2,
+    spacing=1.0,
+    spiral=False,
+    max_positions=None,
+    max_cycles=None,
+    detection_fun=None,
+    frap_oc="FRAPPA",
+    centroid_threshold="auto",
+    fov_subdirs=False,
+    name=None,
+    use_timestamp=True,
+    stop_check=None,
+    allow_interrupt_after_survey=False,
+    max_consecutive_failures=3,
+    return_to_start=True,
+    **detector_kwargs,
+):
     """Outermost autoFRAP entry point.
 
     Performs setup, builds positions from grid parameters, runs the outer
@@ -242,36 +255,41 @@ def autofrap(nis_exe, out_dir,
     """
     if detection_fun is None:
         raise AbortRunError(
-            'detection_fun is required - pass a detector file via '
-            '--detector (see autofrap/detectors/ and WRITING_DETECTOR.md)')
+            "detection_fun is required - pass a detector file via "
+            "--detector (see autofrap/detectors/ and WRITING_DETECTOR.md)"
+        )
 
     # setup microscope
     start_pos, res = setup_microscope(nis_exe)
     fov = nis_util.get_fov_from_res(res)
     positions = build_positions(
-        start_pos[:2], fov,
-        nx=nx, ny=ny, spacing=spacing,
-        spiral=spiral, max_positions=max_positions
+        start_pos[:2],
+        fov,
+        nx=nx,
+        ny=ny,
+        spacing=spacing,
+        spiral=spiral,
+        max_positions=max_positions,
     )
     try:
-        results = autofrap_loop_outer(
-            nis_exe, out_dir, positions,
+        autofrap_loop_outer(
+            nis_exe,
+            out_dir,
+            positions,
             max_cycles=max_cycles,
             detection_fun=detection_fun,
             frap_oc=frap_oc,
             centroid_threshold=centroid_threshold,
             fov_subdirs=fov_subdirs,
-            name=name, use_timestamp=use_timestamp,
+            name=name,
+            use_timestamp=use_timestamp,
             stop_check=stop_check,
             allow_interrupt_after_survey=allow_interrupt_after_survey,
             max_consecutive_failures=max_consecutive_failures,
-            **detector_kwargs
+            **detector_kwargs,
         )
     finally:
         cleanup_run(nis_exe, start_pos, return_to_start=return_to_start)
-
-
-    return results
 
 
 class AutofrapError(Exception):
@@ -298,11 +316,11 @@ def _inner_loop_do_survey(nis_exe, survey_file, cycle):
     """Run ND survey acquisition and ensure the survey document is current."""
     t0 = time.time()
     nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file, progress_bar=True)
-    print(f'[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)', flush=True)
+    print(f"[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)", flush=True)
     if not os.path.isfile(survey_file):
         raise AutofrapError(
-            f'survey file missing after the ND run: {survey_file} '
-            '(NIS did not save it - check the GUI / disk)'
+            f"survey file missing after the ND run: {survey_file} "
+            "(NIS did not save it - check the GUI / disk)"
         )
     # ensure survey document is current
     doc = nis_util.get_current_document(nis_exe)
@@ -310,13 +328,20 @@ def _inner_loop_do_survey(nis_exe, survey_file, cycle):
         nis_util.open_image(nis_exe, survey_file)
         doc = nis_util.get_current_document(nis_exe)
     if os.path.normcase(doc) != os.path.normcase(survey_file):
-        raise AutofrapError(
-            f'could not open {survey_file} (current document: {doc})'
-        )
+        raise AutofrapError(f"could not open {survey_file} (current document: {doc})")
     return survey_file
 
 
-def _inner_loop_select_cell_and_qc(labels, stimulation_mask, viz_image, imaged_centroids, centroid_threshold, cycle, out_dir, file_prefix):
+def _inner_loop_select_cell_and_qc(
+    labels,
+    stimulation_mask,
+    viz_image,
+    imaged_centroids,
+    centroid_threshold,
+    cycle,
+    out_dir,
+    file_prefix,
+):
     """Match detected objects to already-imaged map, pick next cell, build polygons and save QC overlay.
     Returns (cell, cell_poly, stim_poly, n_obj) or (None, None, None, n_obj) if no cell is available.
     """
@@ -327,12 +352,12 @@ def _inner_loop_select_cell_and_qc(labels, stimulation_mask, viz_image, imaged_c
         matched = set()
         for rp in regionprops(labels):
             cy, cx = rp.centroid
-            if centroid_threshold == 'auto':
+            if centroid_threshold == "auto":
                 radius = rp.equivalent_diameter_area
             else:
                 radius = centroid_threshold
             for iy, ix in imaged_centroids:
-                if (cy - iy)**2 + (cx - ix)**2 < radius**2:
+                if (cy - iy) ** 2 + (cx - ix) ** 2 < radius**2:
                     matched.add(rp.label)
                     break
     else:
@@ -341,8 +366,8 @@ def _inner_loop_select_cell_and_qc(labels, stimulation_mask, viz_image, imaged_c
     cell = next_stimulatable_cell(labels, matched, stimulation_mask)
     if cell is None:
         print(
-            f'[c{cycle:02d}] {n_obj} objects, all stimulated or no '
-            'stimulation mask -> stop'
+            f"[c{cycle:02d}] {n_obj} objects, all stimulated or no "
+            "stimulation mask -> stop"
         )
         return None, None, None, n_obj
 
@@ -353,27 +378,32 @@ def _inner_loop_select_cell_and_qc(labels, stimulation_mask, viz_image, imaged_c
         if cell_poly and stim_poly:
             break
         skipped.add(cell)
-        print(f'[c{cycle:02d}] cell {cell}: no polygon, skipping')
+        print(f"[c{cycle:02d}] cell {cell}: no polygon, skipping")
         cell = next_stimulatable_cell(labels, matched | skipped, stimulation_mask)
         if cell is None:
             print(
-                f'[c{cycle:02d}] all {n_obj} objects have no '
-                'polygon -> move to next FOV'
+                f"[c{cycle:02d}] all {n_obj} objects have no "
+                "polygon -> move to next FOV"
             )
             return None, None, None, n_obj
 
-    print(f'[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}')
+    print(f"[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}")
     # QC overlay before stimulation
     try:
         save_qc_overlay(
-            viz_image, labels,
-            os.path.join(out_dir, f'{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_survey_qc.png'),
-            stimulation_mask=stimulation_mask, cell_id=cell,
-            cell_poly=cell_poly, stim_poly=stim_poly,
-            caption=f'{CYCLE_PREFIX}{cycle:02d} cell {cell}'
+            viz_image,
+            labels,
+            os.path.join(
+                out_dir, f"{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_survey_qc.png"
+            ),
+            stimulation_mask=stimulation_mask,
+            cell_id=cell,
+            cell_poly=cell_poly,
+            stim_poly=stim_poly,
+            caption=f"{CYCLE_PREFIX}{cycle:02d} cell {cell}",
         )
     except Exception as e:
-        print(f'[c{cycle:02d}] WARNING: QC overlay failed: {e!r}', flush=True)
+        print(f"[c{cycle:02d}] WARNING: QC overlay failed: {e!r}", flush=True)
 
     return cell, cell_poly, stim_poly, n_obj
 
@@ -385,21 +415,24 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     """
     roi_calls = [
         (nis_util._OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
-        (nis_util._OP_ADD_POLYGON_ROI, {'points': cell_poly}),
-        (nis_util._OP_ADD_POLYGON_ROI, {'points': stim_poly}),
+        (nis_util._OP_ADD_POLYGON_ROI, {"points": cell_poly}),
+        (nis_util._OP_ADD_POLYGON_ROI, {"points": stim_poly}),
     ]
     # one immediate retry on timeout; the batch is safe to repeat
     # (it starts by deleting all ROIs of the current document)
     roi_results = run_with_retries(
         lambda: nis_util.batch_run_macro(nis_exe, roi_calls),
-        'create ROIs', retry_on=TimeoutError, delays=(0, 0))
-    cell_roi = roi_results['add_polygon_roi_1']
-    stim_roi = roi_results['add_polygon_roi_2']
+        "create ROIs",
+        retry_on=TimeoutError,
+        delays=(0, 0),
+    )
+    cell_roi = roi_results["add_polygon_roi_1"]
+    stim_roi = roi_results["add_polygon_roi_2"]
 
     if cell_roi <= 0:
-        raise AutofrapError(f'cell ROI creation failed (id={cell_roi})')
+        raise AutofrapError(f"cell ROI creation failed (id={cell_roi})")
     if stim_roi <= 0:
-        raise AutofrapError(f'stim ROI creation failed (id={stim_roi})')
+        raise AutofrapError(f"stim ROI creation failed (id={stim_roi})")
 
     # TODO: make part of roi creation batch (needs id from previous step in macro?)
     nis_util.set_roi_type(nis_exe, stim_roi, 3)
@@ -408,12 +441,12 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     nis_util.set_optical_configuration(nis_exe, frap_oc)
     t0 = time.time()
     nis_util.run_stimulation_experiment(nis_exe)
-    print(f'[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)', flush=True)
+    print(f"[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)", flush=True)
 
     # safeguard: move GUI focus off the survey / FRAP documents to an unsaved ND Acquisition
     # to avoid accidental user interaction with ROIs while the next cycle prepares
     try:
-        nis_util.activate_document(nis_exe, 'ND Acquisition')
+        nis_util.activate_document(nis_exe, "ND Acquisition")
     except Exception:
         # ND Acquisition should always be present; ignore if activation fails
         pass
@@ -421,15 +454,23 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     nis_util.save_current_document(nis_exe, frap_file)
     if not os.path.isfile(frap_file):
         raise AutofrapError(
-            f'FRAP file missing after save_current_document: '
-            f'{frap_file} (ImageSaveAs wrote nothing)'
+            f"FRAP file missing after save_current_document: "
+            f"{frap_file} (ImageSaveAs wrote nothing)"
         )
 
 
-def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
-             frap_oc='FRAPPA', centroid_threshold='auto',
-             file_prefix=None, stop_check=None,
-             allow_interrupt_after_survey=False, **detector_kwargs):
+def autofrap_loop_inner(
+    nis_exe,
+    out_dir,
+    max_cycles=None,
+    detection_fun=None,
+    frap_oc="FRAPPA",
+    centroid_threshold="auto",
+    file_prefix=None,
+    stop_check=None,
+    allow_interrupt_after_survey=False,
+    **detector_kwargs,
+):
     """
     run the auto-FRAP loop
 
@@ -501,7 +542,7 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
 
     os.makedirs(out_dir, exist_ok=True)
     if file_prefix is None:
-        file_prefix = time.strftime('%Y%m%d_%H%M%S')
+        file_prefix = time.strftime("%Y%m%d_%H%M%S")
     imaged_centroids = []  # list of (y, x) tuples — centroids of stimulated cells
     results = []
 
@@ -511,38 +552,41 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
         # deleted, documents closed) — nothing is left to clean up
         if stop_check is not None and stop_check():
             raise AutofrapInterruptedException(
-                f'stop requested by user after {cycle} completed cycle(s)')
+                f"stop requested by user after {cycle} completed cycle(s)"
+            )
 
         cycle += 1
         survey_file = os.path.join(
-            out_dir, f'{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_survey.nd2')
+            out_dir, f"{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_survey.nd2"
+        )
         frap_file = os.path.join(
-            out_dir, f'{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_frap.nd2')
+            out_dir, f"{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_frap.nd2"
+        )
 
         try:
 
             # 1. acquire survey image
             _inner_loop_do_survey(nis_exe, survey_file, cycle)
 
-            # run detection function 
+            # run detection function
             try:
                 det = detection_fun(survey_file, **detector_kwargs)
             except Exception as e:
                 # a detection failure is one failed FOV: the grid run
                 # continues (the consecutive-failure policy decides
                 # whether to abort)
-                raise AutofrapError(
-                    f'detection failed on {survey_file}: {e!r}') from e
+                raise AutofrapError(f"detection failed on {survey_file}: {e!r}") from e
 
             # 2. unpack detector output
             # a bare label map is accepted (normalized to a 1-tuple);
             # otherwise: a 1-3 tuple/list (labels[, mask[, viz]])
             if isinstance(det, np.ndarray):
                 det = (det,)
-            if (not isinstance(det, (tuple, list)) or not 1 <= len(det) <= 3):
+            if not isinstance(det, (tuple, list)) or not 1 <= len(det) <= 3:
                 raise AutofrapError(
-                    f'detection_fun returned {type(det).__name__}; expected '
-                    '(labels[, stimulation_mask[, visualization]])')
+                    f"detection_fun returned {type(det).__name__}; expected "
+                    "(labels[, stimulation_mask[, visualization]])"
+                )
             labels = det[0]
             stimulation_mask = det[1] if len(det) > 1 else None
             viz_image = det[2] if len(det) > 2 else None
@@ -550,23 +594,31 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             # safe stop point P2: survey acquired + detected, no ROIs
             # created yet (the finally-cleanup just closes the survey
             # document) — opt-in, end-of-cycle is the default
-            if (allow_interrupt_after_survey and stop_check is not None
-                    and stop_check()):
+            if allow_interrupt_after_survey and stop_check is not None and stop_check():
                 raise AutofrapInterruptedException(
-                    f'stop requested by user after survey + detection '
-                    f'of cycle {cycle}')
+                    f"stop requested by user after survey + detection "
+                    f"of cycle {cycle}"
+                )
 
             # 3. find next cell and create QC image
             cell, cell_poly, stim_poly, _ = _inner_loop_select_cell_and_qc(
-                labels, stimulation_mask, viz_image, imaged_centroids,
-                centroid_threshold, cycle, out_dir, file_prefix
+                labels,
+                stimulation_mask,
+                viz_image,
+                imaged_centroids,
+                centroid_threshold,
+                cycle,
+                out_dir,
+                file_prefix,
             )
             if cell is None:
                 # no stimulatable cell or no viable polygon; move to next FOV
                 break
 
             # 4. run stimulation / FRAP
-            _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, cycle)
+            _inner_loop_stimulation(
+                nis_exe, frap_file, frap_oc, cell_poly, stim_poly, cycle
+            )
 
             results.append((cycle, cell, survey_file, frap_file))
             # add the stimulated cell's centroid to the already-imaged map
@@ -584,18 +636,28 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
             except Exception:
                 pass
 
-    print(f'\nDone: {len(results)} cell(s) stimulated in {cycle} cycle(s), output in {out_dir}')
+    print(
+        f"\nDone: {len(results)} cell(s) stimulated in {cycle} cycle(s), output in {out_dir}"
+    )
     return results
 
 
-def autofrap_loop_outer(nis_exe, out_dir, positions,
-                  max_cycles=None,
-                  detection_fun=None, frap_oc='FRAPPA',
-                  centroid_threshold='auto',
-                  fov_subdirs=False, name=None, use_timestamp=True,
-                  stop_check=None, allow_interrupt_after_survey=False,
-                  max_consecutive_failures=3,
-                  **detector_kwargs):
+def autofrap_loop_outer(
+    nis_exe,
+    out_dir,
+    positions,
+    max_cycles=None,
+    detection_fun=None,
+    frap_oc="FRAPPA",
+    centroid_threshold="auto",
+    fov_subdirs=False,
+    name=None,
+    use_timestamp=True,
+    stop_check=None,
+    allow_interrupt_after_survey=False,
+    max_consecutive_failures=3,
+    **detector_kwargs,
+):
     """
     Go over multiple stage positions / FOVs and run one or more autoFRAP cycles at each.
 
@@ -625,7 +687,7 @@ def autofrap_loop_outer(nis_exe, out_dir, positions,
     positions: list of (x, y)
         precomputed stage positions in visit order; the list is generated
         outside (e.g. via :func:`grid_positions` for a plain NxM grid or
-        :func:`spiral_positions` for a centre‑out spiral).
+        :func:`spiral_positions` for a centre-out spiral).
     return_to_start: bool
         move back to the starting position after the last FOV
     max_cycles, detection_fun, frap_oc, centroid_threshold:
@@ -676,118 +738,138 @@ def autofrap_loop_outer(nis_exe, out_dir, positions,
         a clean stop was requested; the unvisited positions (including
         the current one) do not appear in results
     """
-    if name is not None and not all(c.isalnum() or c in '._-'
-                                    for c in name):
+    if name is not None and not all(c.isalnum() or c in "._-" for c in name):
         raise AbortRunError(
             f'invalid experiment name {name!r}: only letters, digits, "_", "." '
-            'and "-" are allowed')
+            'and "-" are allowed'
+        )
     os.makedirs(out_dir, exist_ok=True)
     if positions is None:
         raise AbortRunError(
-            'positions must be supplied; generate them outside autofrap()')
+            "positions must be supplied; generate them outside autofrap()"
+        )
     # positions are now required to be pre-computed
-    stamp = time.strftime('%Y%m%d_%H%M%S')
+    stamp = time.strftime("%Y%m%d_%H%M%S")
     if name is None:
         run_name = stamp
     else:
-        run_name = f'{stamp}_{name}' if use_timestamp else name
+        run_name = f"{stamp}_{name}" if use_timestamp else name
     run_dir = os.path.join(out_dir, run_name)
     if os.path.isdir(run_dir) and os.listdir(run_dir):
         raise AbortRunError(
-            f'run directory {run_dir} already exists and is non-empty - '
-            'choose a different name or move the old run')
+            f"run directory {run_dir} already exists and is non-empty - "
+            "choose a different name or move the old run"
+        )
     os.makedirs(run_dir, exist_ok=True)
 
-    print(f'grid: {len(positions)} position(s)')
+    print(f"grid: {len(positions)} position(s)")
     results = []
     aborted = None
     stopped = False
     stopped_exc = None
     consecutive_failures = 0
     for i, (x, y) in enumerate(positions, 1):
-            fov_dir = (os.path.join(run_dir, f'fov{i:02d}')
-                       if fov_subdirs else run_dir)
-            print(f'\n=== [{i}/{len(positions)}] ({x:+.1f}, {y:+.1f}) um '
-                  f'-> {fov_dir} (fov{i:02d})',
-                  flush=True)
+        fov_dir = os.path.join(run_dir, f"fov{i:02d}") if fov_subdirs else run_dir
+        print(
+            f"\n=== [{i}/{len(positions)}] ({x:+.1f}, {y:+.1f}) um "
+            f"-> {fov_dir} (fov{i:02d})",
+            flush=True,
+        )
 
-            try:
-                # move with retry; a failed move counts as a FOV failure
-                move_stage_with_retry(nis_exe, (x, y))
+        try:
+            # move with retry; a failed move counts as a FOV failure
+            move_stage_with_retry(nis_exe, (x, y))
 
-                # set_position blocks until the stage has arrived (verified
-                # on scope 20260909) - no settling wait needed
-                fov_results = autofrap_loop_inner(
-                    nis_exe, fov_dir, max_cycles=max_cycles,
-                    detection_fun=detection_fun,
-                    frap_oc=frap_oc,
-                    centroid_threshold=centroid_threshold,
-                    file_prefix=f'fov{i:02d}', stop_check=stop_check,
-                    allow_interrupt_after_survey=allow_interrupt_after_survey,
-                    **detector_kwargs)
-            except AutofrapInterruptedException as e:
-                # user stop: not a failure, the FOV's state is clean (its
-                # finally-cleanup already ran); stop the grid - the
-                # unvisited positions (incl. this one) are simply not
-                # in results
-                stopped_exc = e
-                stopped = True
-                break
-            except Exception as e:
-                # stage move or FOV failure: skip this position and abort
-                # the grid once max_consecutive_failures FOVs fail in a
-                # row (the failure is then systemic - disk full, NIS
-                # wedged, detector down)
-                consecutive_failures += 1
-                fov_results = None
-                if consecutive_failures >= max_consecutive_failures:
-                    print(f'!!! FOV {i} failed: {e!r} - '
-                          f'{consecutive_failures} consecutive failure(s), '
-                          'aborting the grid run', flush=True)
-                    aborted = i
-                else:
-                    print(f'!!! FOV {i} failed ({consecutive_failures}/'
-                          f'{max_consecutive_failures} consecutive): {e!r} '
-                          f'- moving on to the next position', flush=True)
+            # set_position blocks until the stage has arrived (verified
+            # on scope 20260909) - no settling wait needed
+            fov_results = autofrap_loop_inner(
+                nis_exe,
+                fov_dir,
+                max_cycles=max_cycles,
+                detection_fun=detection_fun,
+                frap_oc=frap_oc,
+                centroid_threshold=centroid_threshold,
+                file_prefix=f"fov{i:02d}",
+                stop_check=stop_check,
+                allow_interrupt_after_survey=allow_interrupt_after_survey,
+                **detector_kwargs,
+            )
+        except AutofrapInterruptedException as e:
+            # user stop: not a failure, the FOV's state is clean (its
+            # finally-cleanup already ran); stop the grid - the
+            # unvisited positions (incl. this one) are simply not
+            # in results
+            stopped_exc = e
+            stopped = True
+            break
+        except Exception as e:
+            # stage move or FOV failure: skip this position and abort
+            # the grid once max_consecutive_failures FOVs fail in a
+            # row (the failure is then systemic - disk full, NIS
+            # wedged, detector down)
+            consecutive_failures += 1
+            fov_results = None
+            if consecutive_failures >= max_consecutive_failures:
+                print(
+                    f"!!! FOV {i} failed: {e!r} - "
+                    f"{consecutive_failures} consecutive failure(s), "
+                    "aborting the grid run",
+                    flush=True,
+                )
+                aborted = i
             else:
-                # a completed FOV (even with zero cycles) proves NIS,
-                # detection and disk work - reset the failure counter
-                consecutive_failures = 0
+                print(
+                    f"!!! FOV {i} failed ({consecutive_failures}/"
+                    f"{max_consecutive_failures} consecutive): {e!r} "
+                    f"- moving on to the next position",
+                    flush=True,
+                )
+        else:
+            # a completed FOV (even with zero cycles) proves NIS,
+            # detection and disk work - reset the failure counter
+            consecutive_failures = 0
 
-            results.append((i, x, y, fov_dir, fov_results))
-            if aborted is not None:
-                break
+        results.append((i, x, y, fov_dir, fov_results))
+        if aborted is not None:
+            break
 
     # TODO: this is the only time we make use of the results list
     # for printing (x of N positions done) we could just use a counter here in the outer loop
     # printing n_cells here is not really necessary, we could just print some stats in inner loop
     # Thus, remove the results passing from this, inner_loop and wrapper?
-    # May cause problems for FakeNIS dry runs if that relies on results, but for production use it's not necessary. 
+    # May cause problems for FakeNIS dry runs if that relies on results, but for production use it's not necessary.
 
     n_ok = sum(1 for r in results if r[4] is not None)
     n_cells = sum(len(r[4]) for r in results if r[4] is not None)
     if stopped:
         n_not = len(positions) - len(results)
-        print(f'\nGrid stopped by user: {n_ok}/{len(positions)} FOV(s) done, '
-              f'{n_cells} cell(s) stimulated, {n_not} FOV(s) not visited, '
-              f'output in {run_dir}')
+        print(
+            f"\nGrid stopped by user: {n_ok}/{len(positions)} FOV(s) done, "
+            f"{n_cells} cell(s) stimulated, {n_not} FOV(s) not visited, "
+            f"output in {run_dir}"
+        )
         # re-raise after the summary so the CLI exits with 130
         raise stopped_exc
     elif aborted is not None:
         n_not = len(positions) - aborted + 1
-        print(f'\nGrid ABORTED at FOV {aborted} '
-              f'({max_consecutive_failures} consecutive failures): '
-              f'{n_ok}/{len(results)} visited FOV(s) ok, '
-              f'{n_cells} cell(s) stimulated, {n_not} FOV(s) not '
-              f'visited, output in {run_dir}')
+        print(
+            f"\nGrid ABORTED at FOV {aborted} "
+            f"({max_consecutive_failures} consecutive failures): "
+            f"{n_ok}/{len(results)} visited FOV(s) ok, "
+            f"{n_cells} cell(s) stimulated, {n_not} FOV(s) not "
+            f"visited, output in {run_dir}"
+        )
     else:
-        print(f'\nGrid done: {n_ok}/{len(positions)} FOV(s), {n_cells} cell(s) '
-              f'stimulated, output in {run_dir}')
+        print(
+            f"\nGrid done: {n_ok}/{len(positions)} FOV(s), {n_cells} cell(s) "
+            f"stimulated, output in {run_dir}"
+        )
     return results
 
 
-def build_positions(start_xy, fov, nx=2, ny=2, spacing=1.0,
-                    spiral=False, max_positions=None):
+def build_positions(
+    start_xy, fov, nx=2, ny=2, spacing=1.0, spiral=False, max_positions=None
+):
     """Generate stage positions for grid or centre-out spiral.
 
     Parameters
@@ -812,82 +894,135 @@ def build_positions(start_xy, fov, nx=2, ny=2, spacing=1.0,
     """
     if spiral:
         max_pos = max_positions if max_positions is not None else nx * ny
-        # spiral_positions expects a scalar FOV; use mean of x/y for rectangular FOVs
-        fov_scalar = float(fov[0]) if isinstance(fov, (list, tuple)) else float(fov)
-        if isinstance(fov, (list, tuple)) and len(fov) > 1:
-            fov_scalar = (float(fov[0]) + float(fov[1])) / 2.0
-        positions = spiral_positions(start_xy, fov=fov_scalar, spacing=spacing,
-                                     max_positions=max_pos)
+        positions = spiral_positions(
+            start_xy, fov=fov, max_positions=max_pos, spacing=spacing
+        )
     else:
         positions = grid_positions(start_xy, fov=fov, nx=nx, ny=ny, spacing=spacing)
 
     if max_positions is not None:
         if max_positions < 1:
-            raise ValueError('--max-positions must be >= 1')
+            raise ValueError("--max-positions must be >= 1")
         positions = positions[:max_positions]
     return positions
 
 
 def parse_cli_args(argv=None):
     p = argparse.ArgumentParser(
-        description='auto-FRAP over a grid of stage positions '
-                    '(see autofrap())')
-    p.add_argument('--out', '-o', default='autofrap_out',
-                   help='output directory (a <run_stamp>/ sub-directory is '
-                        'created in it); resolved against the current '
-                        'working directory and passed to NIS as an '
-                        'absolute path [default: %(default)s]')
-    p.add_argument('--nis', default=r'C:\Program Files\NIS-Elements\nis_ar.exe',
-                   help='path to nis_ar.exe [default: %(default)s]')
-    p.add_argument('--nx', type=int, default=2,
-                   help='grid size in x (1 = single FOV) [default: %(default)s]')
-    p.add_argument('--ny', type=int, default=2,
-                   help='grid size in y (1 = single FOV) [default: %(default)s]')
-    p.add_argument('--spacing', type=float, default=1.0,
-                   help='grid spacing in units of FOV (1 = touching) '
-                        '[default: %(default)s]')
-    p.add_argument('--max-cycles', type=int, default=1,
-                   help='max FRAP cycles per FOV [default: %(default)s]')
-    p.add_argument('--frap-oc', default='FRAPPA',
-                   help='optical configuration name to use for FRAP stimulation [default: %(default)s]')
-    p.add_argument('--until-done', action='store_true',
-                   help='run until all cells of a FOV are stimulated '
-                        '(ignore --max-cycles)')
-    p.add_argument('--no-return', action='store_true',
-                   help="don't move back to the start position after the run")
-    p.add_argument('--spiral', action='store_true',
-                   help='use a centre-out square spiral instead of a plain NxM grid; '
-                        '--max-positions sets the number of positions, otherwise nx*ny is used')
-    p.add_argument('--max-positions', '--num-positions', type=int, default=None,
-                   help='maximum number of positions to visit, applied as a hard cap to both '
-                        'grid and spiral visit orders. For spiral mode, if omitted it defaults '
-                        'to --nx * --ny; for grid mode it truncates the generated NxM grid '
-                        '[default: None]')
-    p.add_argument('--detector', required=True,
-                   help='path to a .py file defining detection_fun '
-                        '(required; built-ins in autofrap/detectors/, '
-                        'see WRITING_DETECTOR.md)')
-    p.add_argument('--detector-arg', action='append', default=[],
-                   metavar='KEY=VALUE',
-                   help='extra parameter to pass to the detector, '
-                        'e.g. --detector-arg diameter=30 '
-                        '(repeatable)')
-    p.add_argument('--allow-interrupt-after-survey', action='store_true',
-                   help='allow Ctrl-C to stop after survey + detection '
-                        '(opt-in; otherwise waits for end of cycle)')
-    p.add_argument('--name',
-                   help='experiment name: the run directory is named '
-                        '<timestamp>_<name> (or <name> with --no-timestamp) '
-                        '[default: <timestamp>]')
-    p.add_argument('--no-timestamp', action='store_true',
-                   help='name the run directory exactly --name (requires '
-                        '--name)')
-    p.add_argument('--max-consecutive-failures', type=int, default=3,
-                   help='abort the grid run after this many consecutive '
-                        'FOV failures [default: %(default)s]')
+        description="auto-FRAP over a grid of stage positions " "(see autofrap())"
+    )
+    p.add_argument(
+        "--out",
+        "-o",
+        default="autofrap_out",
+        help="output directory (a <run_stamp>/ sub-directory is "
+        "created in it); resolved against the current "
+        "working directory and passed to NIS as an "
+        "absolute path [default: %(default)s]",
+    )
+    p.add_argument(
+        "--nis",
+        default=r"C:\Program Files\NIS-Elements\nis_ar.exe",
+        help="path to nis_ar.exe [default: %(default)s]",
+    )
+    p.add_argument(
+        "--nx",
+        type=int,
+        default=2,
+        help="grid size in x (1 = single FOV) [default: %(default)s]",
+    )
+    p.add_argument(
+        "--ny",
+        type=int,
+        default=2,
+        help="grid size in y (1 = single FOV) [default: %(default)s]",
+    )
+    p.add_argument(
+        "--spacing",
+        type=float,
+        default=1.0,
+        help="grid spacing in units of FOV (1 = touching) " "[default: %(default)s]",
+    )
+    p.add_argument(
+        "--max-cycles",
+        type=int,
+        default=1,
+        help="max FRAP cycles per FOV [default: %(default)s]",
+    )
+    p.add_argument(
+        "--frap-oc",
+        default="FRAPPA",
+        help="optical configuration name to use for FRAP stimulation [default: %(default)s]",
+    )
+    p.add_argument(
+        "--until-done",
+        action="store_true",
+        help="run until all cells of a FOV are stimulated " "(ignore --max-cycles)",
+    )
+    p.add_argument(
+        "--no-return",
+        action="store_true",
+        help="don't move back to the start position after the run",
+    )
+    p.add_argument(
+        "--spiral",
+        action="store_true",
+        help="use a centre-out square spiral instead of a plain NxM grid; "
+        "--max-positions sets the number of positions, otherwise nx*ny is used",
+    )
+    p.add_argument(
+        "--max-positions",
+        "--num-positions",
+        type=int,
+        default=None,
+        help="maximum number of positions to visit, applied as a hard cap to both "
+        "grid and spiral visit orders. For spiral mode, if omitted it defaults "
+        "to --nx * --ny; for grid mode it truncates the generated NxM grid "
+        "[default: None]",
+    )
+    p.add_argument(
+        "--detector",
+        required=True,
+        help="path to a .py file defining detection_fun "
+        "(required; built-ins in autofrap/detectors/, "
+        "see WRITING_DETECTOR.md)",
+    )
+    p.add_argument(
+        "--detector-arg",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="extra parameter to pass to the detector, "
+        "e.g. --detector-arg diameter=30 "
+        "(repeatable)",
+    )
+    p.add_argument(
+        "--allow-interrupt-after-survey",
+        action="store_true",
+        help="allow Ctrl-C to stop after survey + detection "
+        "(opt-in; otherwise waits for end of cycle)",
+    )
+    p.add_argument(
+        "--name",
+        help="experiment name: the run directory is named "
+        "<timestamp>_<name> (or <name> with --no-timestamp) "
+        "[default: <timestamp>]",
+    )
+    p.add_argument(
+        "--no-timestamp",
+        action="store_true",
+        help="name the run directory exactly --name (requires " "--name)",
+    )
+    p.add_argument(
+        "--max-consecutive-failures",
+        type=int,
+        default=3,
+        help="abort the grid run after this many consecutive "
+        "FOV failures [default: %(default)s]",
+    )
     args = p.parse_args(argv)
     if args.no_timestamp and not args.name:
-        p.error('--no-timestamp requires --name')
+        p.error("--no-timestamp requires --name")
     return args
 
 
@@ -903,14 +1038,17 @@ def main(argv=None):
     # boundary (end of cycle / between FOVs - the current macro call
     # runs to completion, we never kill it); a second press raises
     # KeyboardInterrupt immediately (the finally-cleanup still runs)
-    _stop = {'requested': False, 'count': 0}
+    _stop = {"requested": False, "count": 0}
 
     def _on_sigint(signum, frame):
-        _stop['count'] += 1
-        if _stop['count'] == 1:
-            _stop['requested'] = True
-            print('\nCtrl-C: stopping after the current cycle '
-                  '(press again to interrupt immediately)', flush=True)
+        _stop["count"] += 1
+        if _stop["count"] == 1:
+            _stop["requested"] = True
+            print(
+                "\nCtrl-C: stopping after the current cycle "
+                "(press again to interrupt immediately)",
+                flush=True,
+            )
         else:
             raise KeyboardInterrupt
 
@@ -921,42 +1059,47 @@ def main(argv=None):
     # directory - the pipeline must hand them absolute paths
     args.out = os.path.abspath(args.out)
 
-    print(f'loading detector from: {args.detector}', flush=True)
+    print(f"loading detector from: {args.detector}", flush=True)
     detection_fun = load_detector_file(args.detector)
 
     detector_kwargs = {}
     for arg in args.detector_arg:
-        if '=' not in arg:
-            print(f'ERROR: --detector-arg expects KEY=VALUE, got: {arg!r}')
+        if "=" not in arg:
+            print(f"ERROR: --detector-arg expects KEY=VALUE, got: {arg!r}")
             sys.exit(1)
-        key, val = arg.split('=', 1)
+        key, val = arg.split("=", 1)
         try:
-            val = float(val) if '.' in val else int(val)
+            val = float(val) if "." in val else int(val)
         except ValueError:
             pass
         detector_kwargs[key] = val
 
     try:
         autofrap(
-            args.nis, args.out,
-            nx=args.nx, ny=args.ny, spacing=args.spacing,
-            spiral=args.spiral, max_positions=args.max_positions,
+            args.nis,
+            args.out,
+            nx=args.nx,
+            ny=args.ny,
+            spacing=args.spacing,
+            spiral=args.spiral,
+            max_positions=args.max_positions,
             max_cycles=None if args.until_done else args.max_cycles,
             detection_fun=detection_fun,
             frap_oc=args.frap_oc,
-            name=args.name, use_timestamp=not args.no_timestamp,
-            stop_check=lambda: _stop['requested'],
+            name=args.name,
+            use_timestamp=not args.no_timestamp,
+            stop_check=lambda: _stop["requested"],
             allow_interrupt_after_survey=args.allow_interrupt_after_survey,
             max_consecutive_failures=args.max_consecutive_failures,
             return_to_start=not args.no_return,
-            **detector_kwargs
+            **detector_kwargs,
         )
     except AutofrapInterruptedException:
         sys.exit(130)
     except AbortRunError as e:
-        print(f'\nERROR: {e}')
+        print(f"\nERROR: {e}")
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

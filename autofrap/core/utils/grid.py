@@ -1,52 +1,15 @@
 """
-Pure grid-geometry helpers for tiled acquisitions (no NIS / hardware
-dependency).
-
-Moved out of nis_util.py: gen_grid is not NIS-specific; it is used by
-the old wing-scanner code at the repo root (automation.py,
-NIS_Macro_Acquisition.ipynb).
+Grid-geometry helpers for tiled acquisitions.
 """
 from math import ceil
 
 
-def spiral_positions(position, fov, spacing, max_positions=None):
+def spiral_positions(position, fov, max_positions, spacing=1.0):
     """
     Generate stage positions in a square spiral around a center point.
 
     Positions are spaced by ``spacing`` FOV units, starting at
-    ``position`` and spiraling outward counter-clockwise.  This provides
-    a center-out visit order that visits nearby cells before distant
-    ones — useful for experiments where time matters (e.g. cell
-    viability degrades over time).
-
-    Parameters
-    ----------
-    position : array-like (x, y[, z])
-        Starting position (µm); the spiral center.
-    fov : float
-        Field of view size in µm (assumes square FOV; for rectangular
-        FOV, pass the mean of fov_x and fov_y).
-    spacing : float
-        Distance between adjacent positions in FOV units:
-        1 = touching, <1 = overlapping, >1 = gap.
-    max_positions : int, optional
-        Maximum number of positions to generate.  None = unlimited
-        (spiral grows until the caller stops iterating).
-
-    Returns
-    -------
-    positions : list of 2-tuples (x, y)
-        Stage coordinates in µm.
-
-    Examples
-    --------
-    5x5 FOV grid (spacing=1):
-
-        positions = spiral_positions(start, fov, 1.0, max_positions=25)
-
-    With overlap (spacing=0.8, 13 positions):
-
-        positions = spiral_positions(start, fov, 0.8)
+    ``position`` and spiraling outward counter-clockwise.
 
     The first few positions form this pattern (n = layer number):
 
@@ -54,51 +17,95 @@ def spiral_positions(position, fov, spacing, max_positions=None):
         n=1   8 positions around center
         n=2   16 positions around n=1
         ...
-    """
-    x0, y0 = position[:2]
-    step = spacing * fov
 
-    positions = []
-    count = 0
+    Parameters
+    ----------
+    position : array-like (x, y)
+        Starting position; the spiral center.
+    fov : fov: (fov_x, fov_y)
+        field of view per axis
+    max_positions : int
+        Maximum number of positions to generate.
+    spacing : float, optional
+        Distance between adjacent positions in FOV units:
+        1 (default) = touching, <1 = overlapping, >1 = gap.
+
+    Returns
+    -------
+    positions : list of 2-tuples (x, y)
+        Stage coordinates.
+    """
+
+    gen = _spiral_positions_generator(position, fov, spacing)
+    return [next(gen) for _ in range(max_positions)]
+
+
+def _spiral_positions_generator(position, fov, spacing=1.0): 
+    """
+    Generator for (infinite) spiral positions.
+    """
+    
+    fov_x, fov_y = fov
+    x0, y0 = position
+    step_x = spacing * fov_x
+    step_y = spacing * fov_y
 
     # Layer 0: just the center
-    positions.append((x0, y0))
-    count += 1
-    if max_positions is not None and count >= max_positions:
-        return positions
+    yield (x0, y0)
 
     # Layers 1, 2, 3, ...
     n = 1
     while True:
         # Right edge, going up: (n, -(n-1)) → (n, n)
         for y in range(-(n - 1), n + 1):
-            if max_positions is not None and count >= max_positions:
-                return positions
-            positions.append((x0 + n * step, y0 + y * step))
-            count += 1
+            yield (x0 + n * step_x, y0 + y * step_y)
 
         # Top edge, going left: (n-1, n) → (-n, n)
         for x in range(n - 1, -n - 1, -1):
-            if max_positions is not None and count >= max_positions:
-                return positions
-            positions.append((x0 + x * step, y0 + n * step))
-            count += 1
+            yield (x0 + x * step_x, y0 + n * step_y)
 
         # Left edge, going down: (-n, n-1) → (-n, -n)
         for y in range(n - 1, -n - 1, -1):
-            if max_positions is not None and count >= max_positions:
-                return positions
-            positions.append((x0 - n * step, y0 + y * step))
-            count += 1
+            yield (x0 - n * step_x, y0 + y * step_y)
 
         # Bottom edge, going right: (-n+1, -n) → (n, -n)
         for x in range(-n + 1, n + 1):
-            if max_positions is not None and count >= max_positions:
-                return positions
-            positions.append((x0 + x * step, y0 - n * step))
-            count += 1
+            yield (x0 + x * step_x, y0 - n * step_y)
 
         n += 1
+
+
+def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
+    """
+    compute a grid of stage positions centered on the given position
+
+    Parameters
+    ----------
+    position: (x, y)
+        center of the grid
+    fov: (fov_x, fov_y)
+        field of view per axis
+    nx, ny: int
+        number of grid positions in x and y
+    spacing: float
+        distance between neighboring positions in units of FOV size:
+        1 -> touching (non-overlapping) FOVs,
+        <1 -> overlapping FOVs,
+        >1 -> non-overlapping FOVs with a gap
+
+    Returns
+    -------
+    positions: list of 2-tuples
+        (x, y) stage positions, row-major order
+    """
+    fov_x, fov_y = fov
+    x0, y0 = position
+    step_x = spacing * fov_x
+    step_y = spacing * fov_y
+
+    return [(x0 + (i - (nx - 1) / 2) * step_x,
+             y0 + (j - (ny - 1) / 2) * step_y)
+            for j in range(ny) for i in range(nx)]
 
 
 def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True):
@@ -165,37 +172,3 @@ def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True)
         res.extend(row)
 
     return res, tilesX, tilesY, overlap
-
-
-def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
-    """
-    compute a grid of stage positions centered on the given position
-
-    Parameters
-    ----------
-    position: (x, y)
-        center of the grid (e.g. the current stage position)
-    fov: (fov_x, fov_y)
-        field of view per axis (see nis_util.get_fov_from_res)
-    nx, ny: int
-        number of grid positions in x and y
-    spacing: float
-        distance between neighboring positions in units of FOV size:
-        1 -> touching (non-overlapping) FOVs,
-        <1 -> overlapping FOVs,
-        >1 -> non-overlapping FOVs with a gap
-
-    Returns
-    -------
-    positions: list of 2-tuples
-        (x, y) stage positions, row-major order
-    """
-    fov_x, fov_y = fov
-    x0, y0 = position
-    step_x = spacing * fov_x
-    step_y = spacing * fov_y
-
-    return [(x0 + (i - (nx - 1) / 2) * step_x,
-             y0 + (j - (ny - 1) / 2) * step_y)
-            for j in range(ny) for i in range(nx)]
-
