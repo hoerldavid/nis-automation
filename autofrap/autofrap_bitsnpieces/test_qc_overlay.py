@@ -20,7 +20,7 @@ import tifffile
 from autofrap.core import detection
 from autofrap.core.image import mask as mask_utils
 from autofrap.core.image.qc import save_qc_overlay
-from autofrap.pipeline.autofrap import next_stimulatable_cell
+from autofrap.core.image.mask import next_stimulatable_cell
 TEST_DATA = os.path.join(ROOT, 'test_data')
 IMAGE = os.path.join(TEST_DATA, '0013_ch1.tif')
 LABELS = os.path.join(TEST_DATA, '0013_ch1_cp_masks.tif')

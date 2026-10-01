@@ -166,3 +166,36 @@ def gen_grid(fov, min_, max_, overlap, snake, half_fov_offset=True, center=True)
 
     return res, tilesX, tilesY, overlap
 
+
+def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
+    """
+    compute a grid of stage positions centered on the given position
+
+    Parameters
+    ----------
+    position: (x, y)
+        center of the grid (e.g. the current stage position)
+    fov: (fov_x, fov_y)
+        field of view per axis (see nis_util.get_fov_from_res)
+    nx, ny: int
+        number of grid positions in x and y
+    spacing: float
+        distance between neighboring positions in units of FOV size:
+        1 -> touching (non-overlapping) FOVs,
+        <1 -> overlapping FOVs,
+        >1 -> non-overlapping FOVs with a gap
+
+    Returns
+    -------
+    positions: list of 2-tuples
+        (x, y) stage positions, row-major order
+    """
+    fov_x, fov_y = fov
+    x0, y0 = position
+    step_x = spacing * fov_x
+    step_y = spacing * fov_y
+
+    return [(x0 + (i - (nx - 1) / 2) * step_x,
+             y0 + (j - (ny - 1) / 2) * step_y)
+            for j in range(ny) for i in range(nx)]
+

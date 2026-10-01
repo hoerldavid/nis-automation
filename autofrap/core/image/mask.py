@@ -716,3 +716,34 @@ def cell_mask(labels, cell_id, stimulation_mask=None):
     if stimulation_mask is None:
         return labels == cell_id
     return (labels == cell_id) & stimulation_mask
+
+
+def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
+    """
+    Find the next unstimulated cell (smallest label first).
+
+    Iterates over labels in sorted order. For each candidate label
+    that is not in the stimulated set, checks whether it has any pixels
+    in the stimulation mask (if one is given); candidates without
+    stimulation-eligible pixels are skipped.
+
+    Parameters
+    ----------
+    labels: 2D np.ndarray
+        label map (0 = background, 1..N = objects)
+    stimulated: set of int
+        already-stimulated cell IDs
+    stimulation_mask: 2D np.ndarray, optional
+        binary mask of areas eligible for photostimulation; if given,
+        cells without any pixels in it are skipped
+
+    Returns
+    -------
+    cell_id: int or None
+        the next stimulatable cell, or None if none found
+    """
+    for lbl in sorted(np.unique(labels).tolist()):
+        if lbl > 0 and lbl not in stimulated:
+            if stimulation_mask is None or np.any((labels == lbl) & stimulation_mask):
+                return lbl
+    return None

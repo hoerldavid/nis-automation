@@ -85,13 +85,14 @@ from skimage.measure import regionprops
 # therefore, don't import individual functions directly (always use nis_util.fun())
 import autofrap.microscope.nis as nis_util
 
+from autofrap.core.utils.grid import grid_positions, spiral_positions
 from autofrap.core.detection import load_detector_file
-from autofrap.core.image.mask import mask_to_polygon, cell_mask
+from autofrap.core.image.mask import mask_to_polygon, cell_mask, next_stimulatable_cell
 from autofrap.core.image.qc import save_qc_overlay
 from autofrap.core.utils.retry import run_with_retries
 
 
-# cycle-number tag in output file names (<prefix>_cycle01_survey.nd2);
+# cycle-number tag in output file names (e.g. <prefix>_cycle01_survey.nd2);
 # spelled out rather than 'c' to avoid the color-channel reading
 CYCLE_PREFIX = 'cycle'
 
@@ -164,12 +165,8 @@ def setup_microscope(nis_exe):
 
 
 def move_stage_with_retry(nis_exe, pos_xy):
-    """Move stage with retry on timeout / KeyError / OSError.
-
-    Retries 3 times with delays 0s, 2s, 4s; re-raises the last error
-    (the grid loop treats it as a failed FOV).
-    """
-    # TODO: do a set_pos + get_pos batch, check if we reached destination (+- a few micron tolerance)?
+    # TODO: do a set_pos + get_pos batch
+    # check if we reached destination (+- a few micron tolerance)?
     run_with_retries(
         lambda: nis_util.set_position(nis_exe, pos_xy=pos_xy),
         'move_stage',
@@ -177,7 +174,7 @@ def move_stage_with_retry(nis_exe, pos_xy):
 
 
 def cleanup_run(nis_exe, start_pos, return_to_start=True):
-    """Best-effort cleanup after a grid run.
+    """Best-effort cleanup after an autoFRAP run.
 
     * Optionally move back to start position with retry.
     * Delete all ROIs in current document.
@@ -191,7 +188,6 @@ def cleanup_run(nis_exe, start_pos, return_to_start=True):
         except Exception as e:
             print(f'!!! could not return to start: {e!r}', flush=True)
 
-    # Idempotent cleanup
     try:
         nis_cleanup_everything(nis_exe)
     except Exception as e:
@@ -219,6 +215,7 @@ def nis_cleanup_everything(nis_exe):
     try:
         run_with_retries(_cleanup, 'cleanup_everything', retry_on=TimeoutError)
     except Exception as e:
+        # TODO: re-raise so it gets caught in autoFRAP loop and registered as a failure?
         print(f'!!! cleanup_everything failed: {e!r}', flush=True)
 
 
@@ -295,38 +292,6 @@ class AutofrapInterruptedException(AutofrapError):
     boundary (end of a cycle, or after survey + detection when
     ``allow_interrupt_after_survey`` is set), so the ``finally`` cleanup
     runs from a known state; the grid stops (it is not a failure)"""
-
-
-# TODO: move to mask functions?
-def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
-    """
-    Find the next unstimulated cell (smallest label first).
-
-    Iterates over labels in sorted order. For each candidate label
-    that is not in the stimulated set, checks whether it has any pixels
-    in the stimulation mask (if one is given); candidates without
-    stimulation-eligible pixels are skipped.
-
-    Parameters
-    ----------
-    labels: 2D np.ndarray
-        label map (0 = background, 1..N = objects)
-    stimulated: set of int
-        already-stimulated cell IDs
-    stimulation_mask: 2D np.ndarray, optional
-        binary mask of areas eligible for photostimulation; if given,
-        cells without any pixels in it are skipped
-
-    Returns
-    -------
-    cell_id: int or None
-        the next stimulatable cell, or None if none found
-    """
-    for lbl in sorted(np.unique(labels).tolist()):
-        if lbl > 0 and lbl not in stimulated:
-            if stimulation_mask is None or np.any((labels == lbl) & stimulation_mask):
-                return lbl
-    return None
 
 
 def _inner_loop_do_survey(nis_exe, survey_file, cycle):
@@ -436,8 +401,10 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     if stim_roi <= 0:
         raise AutofrapError(f'stim ROI creation failed (id={stim_roi})')
 
+    # TODO: make part of roi creation batch (needs id from previous step in macro?)
     nis_util.set_roi_type(nis_exe, stim_roi, 3)
 
+    # TODO: set OC + run experiment batch?
     nis_util.set_optical_configuration(nis_exe, frap_oc)
     t0 = time.time()
     nis_util.run_stimulation_experiment(nis_exe)
@@ -619,40 +586,6 @@ def autofrap_loop_inner(nis_exe, out_dir, max_cycles=None, detection_fun=None,
 
     print(f'\nDone: {len(results)} cell(s) stimulated in {cycle} cycle(s), output in {out_dir}')
     return results
-
-
-# TODO: move to core.utils.grid?
-def grid_positions(position, fov, nx=2, ny=2, spacing=1.0):
-    """
-    compute a grid of stage positions centered on the given position
-
-    Parameters
-    ----------
-    position: (x, y)
-        center of the grid (e.g. the current stage position)
-    fov: (fov_x, fov_y)
-        field of view per axis (see nis_util.get_fov_from_res)
-    nx, ny: int
-        number of grid positions in x and y
-    spacing: float
-        distance between neighboring positions in units of FOV size:
-        1 -> touching (non-overlapping) FOVs,
-        <1 -> overlapping FOVs,
-        >1 -> non-overlapping FOVs with a gap
-
-    Returns
-    -------
-    positions: list of 2-tuples
-        (x, y) stage positions, row-major order
-    """
-    fov_x, fov_y = fov
-    x0, y0 = position
-    step_x = spacing * fov_x
-    step_y = spacing * fov_y
-
-    return [(x0 + (i - (nx - 1) / 2) * step_x,
-             y0 + (j - (ny - 1) / 2) * step_y)
-            for j in range(ny) for i in range(nx)]
 
 
 def autofrap_loop_outer(nis_exe, out_dir, positions,
@@ -878,7 +811,6 @@ def build_positions(start_xy, fov, nx=2, ny=2, spacing=1.0,
     positions : list of (x, y)
     """
     if spiral:
-        from autofrap.core.utils.grid import spiral_positions
         max_pos = max_positions if max_positions is not None else nx * ny
         # spiral_positions expects a scalar FOV; use mean of x/y for rectangular FOVs
         fov_scalar = float(fov[0]) if isinstance(fov, (list, tuple)) else float(fov)
