@@ -1,5 +1,5 @@
 """
-Grid-geometry helpers for tiled acquisitions.
+Grid-geometry helpers for tiled / multiposition acquisitions.
 """
 from math import ceil
 

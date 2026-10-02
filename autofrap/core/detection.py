@@ -1,128 +1,109 @@
 """
-Object detection for the grid survey pipeline.
+Modular object detection / FRAP region generation.
 
-autofrap() calls a detection_fun: survey_file -> (labels[,
-stimulation_mask[, visualization]]) or a bare label map, where
-labels is a 2D integer array of the same (y, x) shape as the image
-(0 = background, 1..N = objects); without a mask the whole cell is
-FRAPed. The mask
-holds at most one connected region per cell (cells without a region
-are skipped downstream); picking *which* region a cell gets is the
-detector's job (DESIGN_GOALS_AUTOFRAP.md, step 6).
+autofrap() calls a detection_fun: survey_file_path -> (labels[,stimulation_mask[, visualization]]),
+where labels is an integer label map of the same (y, x) shape as the image
+(0 = background, 1..N = objects) and stimulation_mask a binary array indicating wich parts to FRAP - without a mask the whole cell is
+FRAPed. the 2D/RGB(A) visualization image is used as the background for QC visualization of detected regions.
 
-build_detector() composes such a detection_fun from parts and applies
-the stable housekeeping + contract checks (composition contract and
-examples in its docstring). Parts:
-
-  - autofrap.io.nd2.read_channel    read one survey channel (2D)
-  - autofrap.core.image.segmentation.dummy_detect_objects        fixed circle + rectangle (testing,
-                                no dependencies)
-  - autofrap.core.image.segmentation.remote_detect_objects       cellpose on a separate server
-                                (cellpose_server.py); this machine
-                                only ships the image over HTTP
-  - autofrap.core.image.mask.half_object_stim_mask  left half of each object (pass as
-                                stim_mask_fun=lambda labels, image:
-                                half_object_stim_mask(labels))
-  - autofrap.core.image.mask.random_circle_stim_mask  one random circle per object,
-                                covering a fixed area fraction (pass as
-                                stim_mask_fun=lambda labels, image:
-                                random_circle_stim_mask(labels))
-  - autofrap.core.image.mask.cluster_stim_mask  small bright clusters within each
-                                object (Otsu per object + size/contrast
-                                filters); uniform / diffuse objects get
-                                no pixels (pass as
-                                stim_mask_fun=cluster_stim_mask)
-  - visualization_fun           image -> 2D grayscale or (y, x, 3/4)
-                                RGB(A) for the QC overlay (e.g.
-                                lambda image: image, or a channel
-                                picker for a multi-channel load)
-  - filter_function             (labels, image) -> set/list of "good"
-                                label IDs; labels not in this set
-                                are zeroed out (e.g. expression
-                                filtering — see below)
+build_detector() composes such a detection_fun from parts
+this detector also applies housekeeping + contract checks.
 
 Image convention: multi-channel images are (c, y, x) (scientific
 format); the only (y, x, 3/4) array in the pipeline is the RGB(A)
 visualization (display format).
-
-Writing your own detector: pass your own detector_fun / load_fun /
-stim_mask_fun / visualization_fun to build_detector() for anything
-that fits image -> labels (+ mask / viz as above); for a fully custom
-survey_file -> (labels[, mask[, viz]]) callable (e.g. a visualization
-that depends on the labels, or an input that is not a survey nd2
-file), pass it straight to autofrap() instead.
-
-filter_function is called *after* the detector and *before*
-clear_border/relabelling — it works on the raw detector IDs so the
-caller can use the exact label map from the detector (e.g. reference
-the detector's label IDs when computing per-cell marker intensity).
-
-**Custom detector file** (for ``python -m autofrap.pipeline --detector FILE``):
-any ``.py`` file that defines ``detection_fun`` — a callable with
-the ``build_detector`` return signature
-(`survey_file -> (labels[, mask[, viz]])`). The runner imports the
-file and uses ``detection_fun`` directly. See
-``autofrap/detectors/example_detector.py``.
-
-**Extra detector parameters** (``--detector-arg key=value``):
-the runner passes additional keyword arguments to ``detection_fun``
-at call time (``detection_fun(survey_file, **kwargs)``). A function
-assembled by ``build_detector`` routes them to its sub-functions
-according to the ``parameter_map`` setting (see
-:func:`build_detector`); a fully custom ``detection_fun`` can simply
-accept them via ``**kwargs`` or by name.
 """
+
 import warnings
+import importlib.util
+import os
+
+import numpy as np
+from skimage.measure import label, regionprops
 
 from autofrap.core.image.mask import relabel_by_distance, shuffle_labels
 from autofrap.core.image.qc import default_visualization as _default_visualization
-import numpy as np
+
 
 def _warn_multi_region(labels, stimulation_mask):
     """
     Warn about cells whose stimulation mask has more than one connected
-    region. This is a detector contract violation (see the detect docstring)
-    and results in warning, not an error: downstream mask_to_polygon still works
-    and implicitly selects the largest region.
-
-    Connectivity is 4-neighborhood (cross), the same convention
+    region. Connectivity is 4-neighborhood (cross), the same convention
     find_contours uses for boundaries during polygon generation.
+
+    Only warns, as downstream mask_to_polygon still works and implicitly selects the largest region.
     """
-    from skimage.measure import label
-    for cell_id in np.unique(labels)[1:]:
-        cell_stim = stimulation_mask & (labels == cell_id)
-        if not cell_stim.any():
+
+    for region in regionprops(labels):
+        cell_stim_mask = stimulation_mask[region.slice]
+        if not cell_stim_mask.any():
             continue  # no FRAP region: allowed, the cell is skipped
-        n_regions = label(cell_stim, connectivity=1).max()
+        n_regions = label(cell_stim_mask, connectivity=1).max()
         if n_regions > 1:
             warnings.warn(
-                f'cell {cell_id} has {n_regions} connected FRAP regions '
-                '(detector contract: at most one); the largest region '
-                'will be used', stacklevel=2)
+                f"cell {region.label} has {n_regions} connected FRAP regions "
+                "(detector contract: at most one); the largest region "
+                "will be used",
+                stacklevel=2,
+            )
 
 
-def build_detector(load_fun, detector_fun, relabel='distance',
-                   clear_border=True, filter_function=None,
-                   stim_mask_fun=None, visualization_fun=None,
-                   parameter_map=None):
+def _apply_and_check_viz(visualization_fun, image, shape, **kwargs):
     """
-    compose a detection_fun for autofrap()
+    Run visualization_fun and check that the output is 2D or RGB(A).
+    On failure warn and return None -> visualization will be plotted on blank background.
+    """
+    try:
+        viz = visualization_fun(image, **kwargs)
+    except Exception as e:
+        warnings.warn(
+            f"visualization_fun failed: {e!r}; continuing without a visualization",
+            stacklevel=2,
+        )
+        return None
+    ok = isinstance(viz, np.ndarray) and (
+        (viz.ndim == 2 and viz.shape == shape)
+        or (viz.ndim == 3 and viz.shape[:2] == shape and viz.shape[2] in (3, 4))
+    )
+    if not ok:
+        warnings.warn(
+            f"visualization_fun returned {type(viz).__name__} of "
+            f'shape {getattr(viz, "shape", None)}; expected 2D '
+            f"{shape} or RGB(A) ({shape[0]}, {shape[1]}, 3/4); "
+            "continuing without a visualization",
+            stacklevel=2,
+        )
+        return None
+    return viz
+
+
+def build_detector(
+    load_fun,
+    detector_fun,
+    relabel="distance",
+    clear_border=True,
+    filter_function=None,
+    stim_mask_fun=None,
+    visualization_fun=None,
+    parameter_map=None,
+):
+    """
+    Compose a detection_fun for autofrap()
 
     The experiment-specific parts - which data to load, which
-    detector to run, which areas are FRAP-eligible, how the image is
+    detector to run, which labels to keep, which areas are FRAP-eligible, how the image is
     shown in the QC overlay - are passed in as callables;
-    build_detector() applies only the stable housekeeping and the
+    build_detector() composes into one detection funtion with housekeeping and the
     contract checks:
 
         image   = load_fun(survey_file)         2D (y, x) or (c, y, x)
         labels  = detector_fun(image)           2D (y, x), int
+        good_labels = filter_function(labels, image)    set of int
         mask    = stim_mask_fun(labels, image)  2D (if given)
         viz     = visualization_fun(image)      2D or (y, x, 3/4)
                                                   (if given)
 
     Housekeeping on labels, in this order:
-      - filter_function (if given): keep only the label IDs returned
-        by the callable; labels not in the set are zeroed
       - clear_border=True: discard objects touching the image border
         (clear_border removes the whole label, not just the border
         pixels) and renumber to a gap-free 1..N
@@ -139,7 +120,7 @@ def build_detector(load_fun, detector_fun, relabel='distance',
     Returns
     -------
     detection_fun: callable
-        survey_file -> (labels[, stimulation_mask[, viz]]): the
+        survey_file_path -> (labels[, stimulation_mask[, viz]]): the
         positions are fixed (2 = mask, 3 = viz), so with a viz but no
         mask the result is (labels, None, viz). (labels,) if nothing
         else is given (whole-cell FRAP downstream).
@@ -156,24 +137,6 @@ def build_detector(load_fun, detector_fun, relabel='distance',
                        stim_mask_fun=lambda labels, image:
                            half_object_stim_mask(labels),
                        visualization_fun=lambda image: image)
-
-    Multi-channel: detect cells in channel 0, keep only the ones
-    expressing the marker in channel 1, FRAP the whole cell, show
-    channel 0 in the overlay:
-
-        def load(f):
-            return np.stack([autofrap.io.nd2.read_channel(f, 0),
-                             autofrap.io.nd2.read_channel(f, 1)],
-                            axis=0)  # (c, y, x)
-
-        def detect_expressing(img):
-            from autofrap.core.image.segmentation import remote_detect_objects
-            labels = remote_detect_objects(img[..., 0], server_url=...)
-            expressing = per-cell means of img[..., 1] above threshold
-            return np.where(expressing, labels, 0)
-
-        build_detector(load, detect_expressing, relabel=None,
-                       visualization_fun=lambda image: image[0])
 
     Expression filter (keep only cells with marker intensity above
     threshold — filter_function gets the raw detector labels + the
@@ -273,67 +236,75 @@ def build_detector(load_fun, detector_fun, relabel='distance',
             # -> my_load(f, channel=0)
             # -> my_detect(img, channel=1)
     """
-    if relabel not in ('distance', 'shuffle', None):
-        raise ValueError(f'unknown relabel mode {relabel!r}')
+    if relabel not in ("distance", "shuffle", None):
+        raise ValueError(f"unknown relabel mode {relabel!r}")
     if parameter_map is not None and not isinstance(parameter_map, dict):
         raise ValueError(
-            f"parameter_map must be None or an explicit dict, got "
+            "parameter_map must be None or an explicit dict, got "
             f"{parameter_map!r} - the 'auto' mode was removed; use an "
-            'explicit {step: {runtime_key: internal_name}} mapping '
-            '(see WRITING_DETECTOR.md)')
+            "explicit {step: {runtime_key: internal_name}} mapping "
+            "(see WRITING_DETECTOR.md)"
+        )
 
-    def _route(arg_name, runtime_kwargs):
+    def _route(function_name, runtime_kwargs):
         """Extract the subset of runtime_kwargs for a sub-function."""
         if parameter_map is None or not runtime_kwargs:
             return {}
-        func_map = parameter_map.get(arg_name, {})
-        return {func_map[rk]: rv for rk, rv in runtime_kwargs.items()
-                if rk in func_map}
+        param_name_map_for_fun = parameter_map.get(function_name, {})
+        return {
+            param_name_map_for_fun[rk]: rv
+            for rk, rv in runtime_kwargs.items()
+            if rk in param_name_map_for_fun
+        }
 
     def _detect(survey_file, **runtime_kwargs):
-        
-        image = load_fun(survey_file, **_route('load_fun', runtime_kwargs))
-        labels = detector_fun(image, **_route('detector_fun', runtime_kwargs))
-        
+
+        image = load_fun(survey_file, **_route("load_fun", runtime_kwargs))
+        labels = detector_fun(image, **_route("detector_fun", runtime_kwargs))
+
         # check detection output - should be integer label map with same yx shape as input
         if labels.ndim != 2:
             raise ValueError(
-                f'detector_fun returned {labels.ndim}D labels, '
-                'expected 2D (y, x)')
+                f"detector_fun returned {labels.ndim}D labels, expected 2D (y, x)"
+            )
         if not np.issubdtype(labels.dtype, np.integer):
-            raise ValueError(f'labels must be integer, got {labels.dtype}')
+            raise ValueError(f"labels must be integer, got {labels.dtype}")
         if labels.shape != image.shape[-2:]:  # 2D (y, x) or (c, y, x)
-            raise ValueError(f'labels/image shape mismatch: '
-                             f'{labels.shape} vs {image.shape}')
+            raise ValueError(
+                f"labels/image shape mismatch: {labels.shape} vs {image.shape}"
+            )
 
         # filter: keep only labels in the set returned by
         # filter_function; labels not in the set are zeroed.
         if filter_function is not None:
             good = filter_function(
-                labels, image, **_route('filter_function', runtime_kwargs))
+                labels, image, **_route("filter_function", runtime_kwargs)
+            )
             # np.isin needs a list (sets produce object-dtype arrays
             # that don't match integer label maps).
             labels = np.isin(labels, list(good)) * labels
 
         if clear_border:
-            from skimage.segmentation import (clear_border as _clear,
-                                              relabel_sequential)
+            from skimage.segmentation import clear_border as _clear, relabel_sequential
+
             labels = _clear(labels)
             labels, _, _ = relabel_sequential(labels)  # (l, fwd, inv)
 
-        if relabel == 'distance':
+        if relabel == "distance":
             labels = relabel_by_distance(labels)
-        elif relabel == 'shuffle':
+        elif relabel == "shuffle":
             labels = shuffle_labels(labels)
 
         mask = None
         if stim_mask_fun is not None:
             mask = stim_mask_fun(
-                labels, image, **_route('stim_mask_fun', runtime_kwargs))
+                labels, image, **_route("stim_mask_fun", runtime_kwargs)
+            )
             if mask.ndim != 2 or mask.shape != labels.shape:
                 raise ValueError(
-                    f'stimulation mask must be 2D with the labels '
-                    f'shape, got {getattr(mask, "shape", None)}')
+                    f"stimulation mask must be 2D with the labels "
+                    f'shape, got {getattr(mask, "shape", None)}'
+                )
             mask = mask.astype(bool)
             _warn_multi_region(labels, mask)
 
@@ -342,12 +313,14 @@ def build_detector(load_fun, detector_fun, relabel='distance',
         if visualization_fun is False:
             viz = None
         elif visualization_fun is None:
-            viz = _apply_and_check_viz(
-                _default_visualization, image, labels.shape)
+            viz = _apply_and_check_viz(_default_visualization, image, labels.shape)
         else:
             viz = _apply_and_check_viz(
-                visualization_fun, image, labels.shape,
-                **_route('visualization_fun', runtime_kwargs))
+                visualization_fun,
+                image,
+                labels.shape,
+                **_route("visualization_fun", runtime_kwargs),
+            )
 
         if mask is None and viz is None:
             return (labels,)
@@ -360,42 +333,12 @@ def build_detector(load_fun, detector_fun, relabel='distance',
     return _detect
 
 
-def _apply_and_check_viz(visualization_fun, image, shape, **kwargs):
-    """
-    Run visualization_fun and check that the output can be used by downstream plotting. 
-    On failure (exception or wrong shape) warn and return None.
-
-    The visualization is cosmetic (QC overlay only) and must not break the run.
-    Therefore a bad visualization_fun result is a warning, not an
-    error, unlike the labels/mask contract checks.
-    """
-    try:
-        viz = visualization_fun(image, **kwargs)
-    except Exception as e:
-        warnings.warn(
-            f'visualization_fun failed: {e!r}; continuing without a '
-            'visualization', stacklevel=2)
-        return None
-    ok = (isinstance(viz, np.ndarray)
-          and ((viz.ndim == 2 and viz.shape == shape)
-               or (viz.ndim == 3 and viz.shape[:2] == shape
-                   and viz.shape[2] in (3, 4))))
-    if not ok:
-        warnings.warn(
-            f'visualization_fun returned {type(viz).__name__} of '
-            f'shape {getattr(viz, "shape", None)}; expected 2D '
-            f'{shape} or RGB(A) ({shape[0]}, {shape[1]}, 3/4); '
-            'continuing without a visualization', stacklevel=2)
-        return None
-    return viz
-
-
 def load_detector_file(path):
     """
-    import a user-supplied detector file and return its ``detection_fun``
+    Import a user-supplied detector .py file and return its ``detection_fun``
 
     The file must define ``detection_fun: survey_file -> (labels[, mask[, viz]])``
-    with the same return signature as :func:`build_detector`.
+    (same return signature as functions assembled by :func:`build_detector`.)
 
     Parameters
     ----------
@@ -426,19 +369,18 @@ def load_detector_file(path):
 
         python -m autofrap.pipeline --detector my_detector.py ...
     """
-    import importlib.util
-    import os
 
     name = os.path.splitext(os.path.basename(path))[0]
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise ValueError(f'could not load detector file: {path}')
+        raise ValueError(f"could not load detector file: {path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
-    detection_fun = getattr(mod, 'detection_fun', None)
+    detection_fun = getattr(mod, "detection_fun", None)
     if detection_fun is None or not callable(detection_fun):
         raise ValueError(
             f'detector file {path} must define a callable "detection_fun"; '
-            f'found {type(detection_fun).__name__}')
+            f"found {type(detection_fun).__name__}"
+        )
     return detection_fun

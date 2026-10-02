@@ -252,6 +252,7 @@ document is open
         self._call('set_position', pos_xy)
         if self._failure_for('set_position', pos_xy) is _SKIP:
             return  # the stage did not move
+        self.position = pos_xy + (pos_z, )
 
     # ----------------------------- acquisition ------------------------- #
     def _source_for(self, outfile):
