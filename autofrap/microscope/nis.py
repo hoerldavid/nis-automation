@@ -114,6 +114,12 @@ _OP_SET_OPTICAL_CONFIGURATION = MacroOp(
     parse=None
 )
 
+_OP_RUN_STIMULATION_EXPERIMENT = MacroOp(
+    name="run_stimulation_experiment",
+    build=lambda params, sec: 'ND_RunSequentialStimulationExp();',
+    parse=None
+)
+
 _OP_CHECKPOINT = MacroOp(
     name="checkpoint",
     build=lambda params, sec: f'Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","{params.get("key","ok")}",{params.get("value",1)});',
@@ -166,6 +172,47 @@ _OP_ADD_POLYGON_ROI = MacroOp(
         + f'\nInt_SetKeyValue("{INI_PLACEHOLDER}","{sec}","id",CreatePolygonROI(pts,{len(params["points"])},{params.get("color",0)}));'
     ),
     parse=_parse_add_polygon_roi
+)
+
+
+def _parse_create_and_set_stim_roi(sec_cfg):
+    return int(sec_cfg['id'])
+
+_OP_CREATE_AND_SET_STIM_ROI = MacroOp(
+    name="create_and_set_stim_roi",
+    build=lambda params, sec: (
+        f'double pts[{2*len(params["points"])}];\n'
+        + '\n'.join(
+            f'pts[{2*i}]={x:.6f};\npts[{2*i+1}]={y:.6f};'
+            for i,(x,y) in enumerate(params['points'])
+        )
+        + f'\nint roi_id = CreatePolygonROI(pts,{len(params["points"])},{params.get("color",0)});'
+        + f'\nInt_SetKeyValue("{INI_PLACEHOLDER}","{sec}","id",roi_id);'
+        + f'\nChangeROIType(roi_id, 3);'
+    ),
+    parse=_parse_create_and_set_stim_roi
+)
+
+
+def _parse_activate_document(sec_cfg):
+    # ActivateDocument doesn't return a value, but we need a parse function
+    return None
+
+_OP_ACTIVATE_DOCUMENT = MacroOp(
+    name="activate_document",
+    build=lambda params, sec: f'ActivateDocument("{params["name"]}");',
+    parse=_parse_activate_document
+)
+
+
+def _parse_save_current_document(sec_cfg):
+    # ImageSaveAs doesn't return a value through the INI mechanism in this simple form
+    return None
+
+_OP_SAVE_CURRENT_DOCUMENT = MacroOp(
+    name="save_current_document",
+    build=lambda params, sec: f'ImageSaveAs("{params["outfile"]}", 15, 0);',
+    parse=_parse_save_current_document
 )
 
 
@@ -680,7 +727,8 @@ def run_stimulation_experiment(path_to_nis, timeout=300):
     timeout: float or None, default 300
         seconds to wait for the stimulation macro. Override for longer/shorter runs.
     """
-    _run_macro(path_to_nis, 'ND_RunSequentialStimulationExp();', timeout=timeout)
+    body = _OP_RUN_STIMULATION_EXPERIMENT.build({}, "stim_exp")
+    _run_macro(path_to_nis, body, timeout=timeout)
 
 
 # predefined NIS ROI colors (BGR values, see CreatePolygonROI docs)
@@ -777,7 +825,8 @@ def activate_document(path_to_nis, name):
     no disk re-load, unlike open_image; the name should be the exact
     NIS spelling as returned by get_opened_documents
     """
-    _run_macro(path_to_nis, f'ActivateDocument("{name}");')
+    body = _OP_ACTIVATE_DOCUMENT.build({"name": name}, "activate_doc")
+    _run_macro(path_to_nis, body)
 
 
 def _match_opened_document(name, docs):
@@ -846,7 +895,8 @@ def save_current_document(path_to_nis, outfile):
     outfile: str
         full destination path
     """
-    _run_macro(path_to_nis, f'ImageSaveAs("{outfile}", 15, 0);')
+    body = _OP_SAVE_CURRENT_DOCUMENT.build({"outfile": outfile}, "save_doc")
+    _run_macro(path_to_nis, body)
 
 
 def close_current_document(path_to_nis, save='discard'):
@@ -895,6 +945,34 @@ def add_polygon_roi(path_to_nis, points, color='green'):
     body = _OP_ADD_POLYGON_ROI.build({'points': points, 'color': color}, sec)
     cfg = _run_macro(path_to_nis, body, ini=True)
     return _OP_ADD_POLYGON_ROI.parse(cfg[sec])
+
+
+def add_polygon_roi_and_set_stim_type(path_to_nis, points, color='green'):
+    """
+    create a polygon ROI on the current image and immediately set it as a stimulation ROI.
+
+    This combines two operations into a single macro call for efficiency.
+
+    Parameters
+    ----------
+    points: sequence of (x, y)
+        polygon vertices in pixel coordinates ((0,0) = top-left)
+    color: str or int
+        color name from ROI_COLORS or a BGR value (0xBBGGRR — the docs call
+        it ColorRGB, but the constants are BGR-encoded; see ROI_COLORS)
+
+    Returns
+    -------
+    roi_id: int
+        >0 on success, <0 on failure
+    """
+    color = ROI_COLORS.get(color, color)
+    if len(points) < 3:
+        raise ValueError('a polygon needs at least 3 points')
+    sec = 'roi'
+    body = _OP_CREATE_AND_SET_STIM_ROI.build({'points': points, 'color': color}, sec)
+    cfg = _run_macro(path_to_nis, body, ini=True)
+    return _parse_create_and_set_stim_roi(cfg[sec])
 
 
 def set_roi_type(path_to_nis, roi_id, roi_type):

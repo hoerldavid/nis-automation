@@ -80,7 +80,7 @@ PATCHED_FUNCTIONS = (
     'run_current_nd_experiment', 'run_stimulation_experiment',
     'save_current_document', 'get_current_document', 'open_image',
     'close_current_document', 'activate_opened_document',
-    'add_polygon_roi', 'set_roi_type', 'delete_roi',
+    'add_polygon_roi', 'add_polygon_roi_and_set_stim_type', 'set_roi_type', 'delete_roi',
     'set_optical_configuration',
     'batch_run_macro',
     'delete_all_rois_in_current_document',
@@ -264,7 +264,7 @@ document is open
         return self.sources[0]
 
     def _run_current_nd_experiment(self, nis, outfile=None,
-                                   open_after=True, progress_bar=True):
+                                   open_after=True, progress_bar=True, timeout=300):
         self._call('run_current_nd_experiment', outfile)
         if self._failure_for('run_current_nd_experiment', outfile) is _SKIP:
             return  # NIS did not save: the pipeline's isfile check fails
@@ -354,6 +354,13 @@ document is open
         self._next_roi += 1
         return self.roi_id
 
+    def _add_polygon_roi_and_set_stim_type(self, nis, points, color='green'):
+        self._call('add_polygon_roi_and_set_stim_type', len(points))
+        if self._failure_for('add_polygon_roi_and_set_stim_type', len(points)) is _SKIP:
+            return -1  # no ROI created: the pipeline's id<=0 check fires
+        self._next_roi += 1
+        return self.roi_id
+
     def _set_roi_type(self, nis, roi_id, roi_type):
         self._call('set_roi_type', roi_id, roi_type)
         self._failure_for('set_roi_type', roi_id, roi_type)
@@ -424,6 +431,10 @@ document is open
                 out[sec] = self._add_polygon_roi(
                     nis, params.get('points', []), params.get('color', 'green'))
                 continue
+            if op.name == 'create_and_set_stim_roi':
+                out[sec] = self._add_polygon_roi_and_set_stim_type(
+                    nis, params.get('points', []), params.get('color', 'green'))
+                continue
             if op.name == 'delete_all_rois_in_current_document':
                 self._delete_all_rois_in_current_document(nis)
                 out[sec] = None
@@ -449,6 +460,13 @@ document is open
                 open_after = params.get('open_after', True)
                 self._run_current_nd_experiment(
                     nis, outfile=outfile, open_after=open_after, progress_bar=True
+                )
+                out[sec] = None
+                continue
+            if op.name == 'save_current_document':
+                outfile = params.get('outfile')
+                self._save_current_document(
+                    nis, outfile=outfile
                 )
                 out[sec] = None
                 continue

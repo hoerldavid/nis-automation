@@ -29,6 +29,9 @@ import sys
 import numpy as np
 from skimage.measure import regionprops
 
+# acquisition macro timeout (seconds)
+ACQUISITION_MACRO_TIMEOUT = 300  # For operations that may run long acquisitions
+
 # NOTE: For dry-runs, the FakeNIS patcher patches at the nis *module* level,
 # therefore, don't import individual functions directly (always use nis_util.fun())
 import autofrap.microscope.nis as nis_util
@@ -286,7 +289,7 @@ def _inner_loop_do_survey(nis_exe, survey_file, cycle):
     Run ND acquisition (survey image) and ensure the survey document is open & selected.
     """
     t0 = time.time()
-    nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file, progress_bar=True)
+    nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file, progress_bar=True, timeout=ACQUISITION_MACRO_TIMEOUT)
     print(f"[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)", flush=True)
     if not os.path.isfile(survey_file):
         raise AutofrapError(
@@ -386,42 +389,43 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     """
     roi_calls = [
         (nis_util._OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
+        (nis_util._OP_CREATE_AND_SET_STIM_ROI, {"points": stim_poly}),
         (nis_util._OP_ADD_POLYGON_ROI, {"points": cell_poly}),
-        (nis_util._OP_ADD_POLYGON_ROI, {"points": stim_poly}),
     ]
     roi_results = run_with_retries(
         lambda: nis_util.batch_run_macro(nis_exe, roi_calls),
         "create ROIs",
         retry_on=TimeoutError
     )
-    cell_roi = roi_results["add_polygon_roi_1"]
-    stim_roi = roi_results["add_polygon_roi_2"]
+    stim_roi = roi_results["create_and_set_stim_roi_1"]
+    cell_roi = roi_results["add_polygon_roi_2"]
 
     if cell_roi <= 0:
         raise AutofrapError(f"cell ROI creation failed (id={cell_roi})")
     if stim_roi <= 0:
         raise AutofrapError(f"stim ROI creation failed (id={stim_roi})")
 
-    # TODO: make part of roi creation batch (needs id from previous step in macro - needs work in nis.py)
-    nis_util.set_roi_type(nis_exe, stim_roi, 3)
-
-    # TODO: set OC + run experiment batch?
-    nis_util.set_optical_configuration(nis_exe, frap_oc)
+    # Batch set OC and run stimulation experiment
+    stim_calls = [
+        (nis_util._OP_SET_OPTICAL_CONFIGURATION, {"name": frap_oc}),
+        (nis_util._OP_RUN_STIMULATION_EXPERIMENT, {}),
+    ]
     t0 = time.time()
-    nis_util.run_stimulation_experiment(nis_exe)
+    nis_util.batch_run_macro(nis_exe, stim_calls, timeout=ACQUISITION_MACRO_TIMEOUT)
     print(f"[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)", flush=True)
 
     # safeguard: move GUI focus to unsaved "ND Acquisition" (the FRAP timeseries we just did)
     # in case user selected a different open image (e.g. the survey)
-
-    # TODO: batch activate and save the FRAP document
-    # Note: activate_document has no MacroOp yet, so cannot be easily batched
-    try:
-        nis_util.activate_document(nis_exe, "ND Acquisition")
-    except Exception:
-        # ND Acquisition should always be present; ignore if activation fails
-        pass
-    nis_util.save_current_document(nis_exe, frap_file)
+    # Batch activate and save the FRAP document
+    activate_save_calls = [
+        (nis_util._OP_ACTIVATE_DOCUMENT, {"name": "ND Acquisition"}),
+        (nis_util._OP_SAVE_CURRENT_DOCUMENT, {"outfile": frap_file}),
+    ]
+    run_with_retries(
+        lambda: nis_util.batch_run_macro(nis_exe, activate_save_calls),
+        "activate and save FRAP document",
+        retry_on=TimeoutError
+    )
     
     if not os.path.isfile(frap_file):
         raise AutofrapError(
