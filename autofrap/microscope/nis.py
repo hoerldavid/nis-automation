@@ -182,11 +182,12 @@ _OP_CREATE_AND_SET_STIM_ROI = MacroOp(
     name="create_and_set_stim_roi",
     build=lambda params, sec: (
         f'double pts[{2*len(params["points"])}];\n'
+        + 'int roi_id;\n'
         + '\n'.join(
             f'pts[{2*i}]={x:.6f};\npts[{2*i+1}]={y:.6f};'
             for i,(x,y) in enumerate(params['points'])
         )
-        + f'\nint roi_id = CreatePolygonROI(pts,{len(params["points"])},{params.get("color",0)});'
+        + f'\nroi_id = CreatePolygonROI(pts,{len(params["points"])},{params.get("color",0)});'
         + f'\nInt_SetKeyValue("{INI_PLACEHOLDER}","{sec}","id",roi_id);'
         + f'\nChangeROIType(roi_id, 3);'
     ),
@@ -194,25 +195,17 @@ _OP_CREATE_AND_SET_STIM_ROI = MacroOp(
 )
 
 
-def _parse_activate_document(sec_cfg):
-    # ActivateDocument doesn't return a value, but we need a parse function
-    return None
-
 _OP_ACTIVATE_DOCUMENT = MacroOp(
     name="activate_document",
     build=lambda params, sec: f'ActivateDocument("{params["name"]}");',
-    parse=_parse_activate_document
+    parse=None
 )
 
-
-def _parse_save_current_document(sec_cfg):
-    # ImageSaveAs doesn't return a value through the INI mechanism in this simple form
-    return None
 
 _OP_SAVE_CURRENT_DOCUMENT = MacroOp(
     name="save_current_document",
     build=lambda params, sec: f'ImageSaveAs("{params["outfile"]}", 15, 0);',
-    parse=_parse_save_current_document
+    parse=None
 )
 
 
