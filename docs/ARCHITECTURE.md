@@ -11,17 +11,15 @@
 * `nis_manual/` – intended location for the NIS manual: `README.md` describes how to obtain the (copyrighted, gitignored) `.chm` files from a NIS installation and extract them to greppable HTML; `nis_ar_help_html/` – the extracted macro reference HTML (both gitignored)
 
 ### `autofrap/`
-Package with public API re-exports.
+Package (`__init__.py` files intentionally empty since 20261001 — import from the submodules; the old re-exports and `autofrap_grid`/`autofrap_multiposition` aliases are gone).
 
-* `__init__.py` – public API re-exports (`autofrap()`, `autofrap_loop_outer()`, `grid_positions`, ...); `autofrap_grid` / `autofrap_multiposition` kept as aliases for `autofrap_loop_outer`
 * `pipeline/autofrap.py` – `autofrap()` (entry point: setup + position build), `autofrap_loop_outer()` (loop over positions), `autofrap_loop_inner()` (per-FOV work; the original `autofrap()`); CLI via `python -m autofrap.pipeline`
 * `core/`
   * `core/detection.py` – `build_detector` composer, `load_detector_file`, runtime parameter routing
   * `core/image/segmentation/` – segmentation building blocks: `simple.py` (Otsu+watershed `SimpleSegParams`/`detect_objects`), `remote.py` (Cellpose client), `dummy.py`
-  * `core/image/mask.py` – mask / label utilities (stim masks, polygons, filters)
+  * `core/image/mask.py` – mask / label utilities (stim masks, polygons, filters, `next_stimulatable_cell`)
   * `core/image/qc.py` – `save_qc_overlay`, `default_visualization`
-  * `core/simple_seg.py` – deprecated shim for `core/image/segmentation/simple`
-  * `core/utils/grid.py` – `gen_grid`, `spiral_positions`
+  * `core/utils/grid.py` – `gen_grid`, `grid_positions`, `spiral_positions` (generator-based)
 * `io/nd2.py` – ND2 read helpers (`read_channel`, `stage_position`)
 * `microscope/`
   * `nis.py` – NIS macro wrappers: `_run_macro`, `MacroOp` + `batch_run_macro` (batched ops), getters/setters, ROI + document management, `NDAcquisition` builder
@@ -47,11 +45,11 @@ Package with public API re-exports.
 
 ## Key data flow
 `autofrap()` → setup + position build → `autofrap_loop_outer()` → per position → `autofrap_loop_inner()` → per cycle:
-1. `set_position` → `run_current_nd_experiment` → survey ND2
+1. `move_stage_with_retry` (batched set+get, position verified) → `run_current_nd_experiment` → survey ND2
 2. `detection_fun(survey_file)` → labels, stim_mask, viz
 3. `next_stimulatable_cell` with centroid matching
-4. `add_polygon_roi` whole cell + stim ROI, `set_roi_type(3)`
-5. `run_stimulation_experiment` → `save_current_document` → FRAP ND2
+4. batched ROIs: `create_and_set_stim_roi` stim ROI (type 3 folded in) + `add_polygon_roi` whole cell
+5. batched: `set_optical_configuration` → `run_stimulation_experiment` → `activate_document` + `save_current_document` → FRAP ND2
 6. `cleanup_everything`: delete all ROIs + close documents (batched)
 
 Detector contract: `survey_file -> (labels,) or (labels, stim_mask) or (labels, stim_mask, viz)`

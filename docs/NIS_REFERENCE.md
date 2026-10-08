@@ -17,10 +17,13 @@ To reduce `nis_ar` overhead, `autofrap/microscope/nis.py` now uses a `MacroOp` p
 
 Every `nis_ar -mw` call carries a roughly constant startup overhead, so batching several ops into a single call reduces it (verified live on the workstation; concrete timings in `docs/SESSION_HISTORY.md`).
 
-Current ops:
-* `_OP_POSITION` → `get_position`
-* `_OP_RESOLUTION` → `get_resolution`
-* `_OP_ND_ACQ_TABS` → `get_nd_acq_tabs`
+Current ops (single-call wrapper in parentheses):
+* getters: `_OP_POSITION` (`get_position`), `_OP_RESOLUTION` (`get_resolution`), `_OP_ND_ACQ_TABS` (`get_nd_acq_tabs`)
+* stage / config: `_OP_SET_POSITION` (`set_position`), `_OP_SET_OPTICAL_CONFIGURATION` (`set_optical_configuration`)
+* acquisition: `_OP_RUN_STIMULATION_EXPERIMENT` (`run_stimulation_experiment`)
+* ROIs: `_OP_ADD_POLYGON_ROI` (`add_polygon_roi`), `_OP_CREATE_AND_SET_STIM_ROI` (`add_polygon_roi_and_set_stim_type`; create + `ChangeROIType(3)` in one op), `_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT` (`delete_all_rois_in_current_document`)
+* documents: `_OP_ACTIVATE_DOCUMENT` (`activate_document`), `_OP_SAVE_CURRENT_DOCUMENT` (`save_current_document`), `_OP_CLOSE_CURRENT_DOCUMENT` (`close_current_document`), `_OP_CLOSE_ALL_DOCS` (`close_all_docs`)
+* misc: `_OP_CHECKPOINT` (`checkpoint`)
 
 Example:
 ```python
@@ -79,6 +82,7 @@ Gotchas
 
 ### ROIs
 * `add_polygon_roi(points, color)` → `CreatePolygonROI`, returns ROI ID
+* `add_polygon_roi_and_set_stim_type(points, color)` → same + `ChangeROIType(id, 3)` in the same macro call
 * `set_roi_type(roi_id, type)` → 0 standard, 1 background, 2 reference, 3 stimulation
   * Type 3 label prefix `S1:<n>` – group 1 of 3
   * Return values unreliable (1 and 0 both observed) — verify via `get_roi_count` / the GUI
@@ -124,7 +128,7 @@ For NIS-stitched large images (`Stg_LargeImageScanArea`), the pixel → stage ma
 * Save survey image after ND run → `save_current_document`
 * Make an already-open ND2 current → `activate_opened_document`
 * Create whole-cell ROI → `add_polygon_roi` + `set_roi_type(0)`
-* Create stimulation ROI → `add_polygon_roi` + `set_roi_type(3)`
+* Create stimulation ROI → `add_polygon_roi_and_set_stim_type` (one macro call), or `add_polygon_roi` + `set_roi_type(3)`
 * Remove all ROIs → `delete_all_rois_in_current_document` (batched), or `get_roi_ids` → `delete_roi` for each
 * Move stage → `set_position`
 * Check survey template is single image → `get_nd_acq_tabs` → Time/XY/Large Image must be inactive
