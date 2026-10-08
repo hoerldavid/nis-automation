@@ -55,7 +55,7 @@ def _parse_resolution(sec_cfg):
 def _parse_nd_acq_tabs(sec_cfg):
     return {tab: sec_cfg.get(tab, '0') == '1' for tab in ND_ACQ_TABS}
 
-_OP_POSITION = MacroOp(
+OP_POSITION = MacroOp(
     name="position",
     build=lambda params, sec: f'''
         double x_pos; double y_pos; double z0_pos; double z1_pos;
@@ -72,7 +72,7 @@ _OP_POSITION = MacroOp(
     parse=_parse_position
 )
 
-_OP_RESOLUTION = MacroOp(
+OP_RESOLUTION = MacroOp(
     name="resolution",
     build=lambda params, sec: f'''
         int x_res; int y_res; double siz_res; double mag_res;
@@ -86,7 +86,7 @@ _OP_RESOLUTION = MacroOp(
     parse=_parse_resolution
 )
 
-_OP_ND_ACQ_TABS = MacroOp(
+OP_ND_ACQ_TABS = MacroOp(
     name="nd_acq_tabs",
     build=lambda params, sec: "\n".join(
         f'Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","{tab}",ND_IsAcqTabChecked("{tab}"));'
@@ -95,7 +95,7 @@ _OP_ND_ACQ_TABS = MacroOp(
     parse=_parse_nd_acq_tabs
 )
 
-_OP_SET_POSITION = MacroOp(
+OP_SET_POSITION = MacroOp(
     name="set_position",
     build=lambda params, sec: "\n".join([
         f'StgMoveXY({params["x"]},{params["y"]},{1 if params.get("relative_xy", False) else 0});'
@@ -108,25 +108,25 @@ _OP_SET_POSITION = MacroOp(
     parse=None
 )
 
-_OP_SET_OPTICAL_CONFIGURATION = MacroOp(
+OP_SET_OPTICAL_CONFIGURATION = MacroOp(
     name="set_optical_configuration",
     build=lambda params, sec: f'SelectOptConf("{params["name"]}");',
     parse=None
 )
 
-_OP_RUN_STIMULATION_EXPERIMENT = MacroOp(
+OP_RUN_STIMULATION_EXPERIMENT = MacroOp(
     name="run_stimulation_experiment",
     build=lambda params, sec: 'ND_RunSequentialStimulationExp();',
     parse=None
 )
 
-_OP_CHECKPOINT = MacroOp(
+OP_CHECKPOINT = MacroOp(
     name="checkpoint",
     build=lambda params, sec: f'Int_SetKeyValue("{INI_PLACEHOLDER}","{sec}","{params.get("key","ok")}",{params.get("value",1)});',
     parse=lambda cfg: True
 )
 
-_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT = MacroOp(
+OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT = MacroOp(
     name="delete_all_rois_in_current_document",
     build=lambda params, sec: '''
         int cnt, i, id;
@@ -139,7 +139,7 @@ _OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT = MacroOp(
     parse=None
 )
 
-_OP_CLOSE_ALL_DOCS = MacroOp(
+OP_CLOSE_ALL_DOCS = MacroOp(
     name="close_all_docs",
     build=lambda params, sec: '''
         char docs[24*260];
@@ -152,7 +152,7 @@ _OP_CLOSE_ALL_DOCS = MacroOp(
     parse=None
 )
 
-_OP_CLOSE_CURRENT_DOCUMENT = MacroOp(
+OP_CLOSE_CURRENT_DOCUMENT = MacroOp(
     name="close_current_document",
     build=lambda params, sec: f'CloseCurrentDocument({params.get("save_flag", 2)});',
     parse=None
@@ -161,7 +161,7 @@ _OP_CLOSE_CURRENT_DOCUMENT = MacroOp(
 def _parse_add_polygon_roi(sec_cfg):
     return int(sec_cfg['id'])
 
-_OP_ADD_POLYGON_ROI = MacroOp(
+OP_ADD_POLYGON_ROI = MacroOp(
     name="add_polygon_roi",
     build=lambda params, sec: (
         f'double pts[{2*len(params["points"])}];\n'
@@ -178,7 +178,7 @@ _OP_ADD_POLYGON_ROI = MacroOp(
 def _parse_create_and_set_stim_roi(sec_cfg):
     return int(sec_cfg['id'])
 
-_OP_CREATE_AND_SET_STIM_ROI = MacroOp(
+OP_CREATE_AND_SET_STIM_ROI = MacroOp(
     name="create_and_set_stim_roi",
     build=lambda params, sec: (
         f'double pts[{2*len(params["points"])}];\n'
@@ -195,14 +195,14 @@ _OP_CREATE_AND_SET_STIM_ROI = MacroOp(
 )
 
 
-_OP_ACTIVATE_DOCUMENT = MacroOp(
+OP_ACTIVATE_DOCUMENT = MacroOp(
     name="activate_document",
     build=lambda params, sec: f'ActivateDocument("{params["name"]}");',
     parse=None
 )
 
 
-_OP_SAVE_CURRENT_DOCUMENT = MacroOp(
+OP_SAVE_CURRENT_DOCUMENT = MacroOp(
     name="save_current_document",
     build=lambda params, sec: f'ImageSaveAs("{params["outfile"]}", 15, 0);',
     parse=None
@@ -426,19 +426,19 @@ def do_autofocus(path_to_nis, step_coarse=None, step_fine=None, focus_criterion=
 
 
 def set_optical_configuration(path_to_nis, oc_name):
-    body = _OP_SET_OPTICAL_CONFIGURATION.build({"name": oc_name}, "set_oc")
+    body = OP_SET_OPTICAL_CONFIGURATION.build({"name": oc_name}, "set_oc")
     _run_macro(path_to_nis, body)
 
 def delete_all_rois_in_current_document(path_to_nis):
-    body = _OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT.build({}, "del_rois")
+    body = OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT.build({}, "del_rois")
     _run_macro(path_to_nis, body)
 
 def close_all_docs(path_to_nis, save_flag=2):
-    body = _OP_CLOSE_ALL_DOCS.build({"save_flag": save_flag}, "close_docs")
+    body = OP_CLOSE_ALL_DOCS.build({"save_flag": save_flag}, "close_docs")
     _run_macro(path_to_nis, body)
 
 def checkpoint(path_to_nis, key='ok', value=1):
-    body = _OP_CHECKPOINT.build({"key": key, "value": value}, "ckpt")
+    body = OP_CHECKPOINT.build({"key": key, "value": value}, "ckpt")
     _run_macro(path_to_nis, body)
 
 
@@ -484,9 +484,9 @@ def get_camera_format(path_to_nis):
 
 def get_resolution(path_to_nis):
     sec = "res"
-    body = _OP_RESOLUTION.build({}, sec)
+    body = OP_RESOLUTION.build({}, sec)
     cfg = _run_macro(path_to_nis, body, ini=True)
-    return _OP_RESOLUTION.parse(cfg[sec])
+    return OP_RESOLUTION.parse(cfg[sec])
 
 
 def get_camera_roi(path_to_nis):
@@ -622,15 +622,15 @@ def set_position(path_to_nis, pos_xy=None, pos_z=None, pos_piezo=None, relative_
     if pos_piezo is not None:
         params['piezo'] = pos_piezo
         params['relative_piezo'] = relative_piezo
-    body = _OP_SET_POSITION.build(params, "set_pos")
+    body = OP_SET_POSITION.build(params, "set_pos")
     _run_macro(path_to_nis, body)
 
 
 def get_position(path_to_nis):
     sec = "pos"
-    body = _OP_POSITION.build({}, sec)
+    body = OP_POSITION.build({}, sec)
     cfg = _run_macro(path_to_nis, body, ini=True)
-    return _OP_POSITION.parse(cfg[sec])
+    return OP_POSITION.parse(cfg[sec])
 
 
 def get_fov_from_res(res):
@@ -664,9 +664,9 @@ def get_nd_acq_tabs(path_to_nis):
         one entry per ND_ACQ_TABS tab, True if that loop is active
     """
     sec = "tabs"
-    body = _OP_ND_ACQ_TABS.build({}, sec)
+    body = OP_ND_ACQ_TABS.build({}, sec)
     cfg = _run_macro(path_to_nis, body, ini=True)
-    return _OP_ND_ACQ_TABS.parse(cfg[sec])
+    return OP_ND_ACQ_TABS.parse(cfg[sec])
 
 
 def run_current_nd_experiment(path_to_nis, outfile=None, open_after=True, progress_bar=True, timeout=300):
@@ -720,7 +720,7 @@ def run_stimulation_experiment(path_to_nis, timeout=300):
     timeout: float or None, default 300
         seconds to wait for the stimulation macro. Override for longer/shorter runs.
     """
-    body = _OP_RUN_STIMULATION_EXPERIMENT.build({}, "stim_exp")
+    body = OP_RUN_STIMULATION_EXPERIMENT.build({}, "stim_exp")
     _run_macro(path_to_nis, body, timeout=timeout)
 
 
@@ -818,7 +818,7 @@ def activate_document(path_to_nis, name):
     no disk re-load, unlike open_image; the name should be the exact
     NIS spelling as returned by get_opened_documents
     """
-    body = _OP_ACTIVATE_DOCUMENT.build({"name": name}, "activate_doc")
+    body = OP_ACTIVATE_DOCUMENT.build({"name": name}, "activate_doc")
     _run_macro(path_to_nis, body)
 
 
@@ -888,7 +888,7 @@ def save_current_document(path_to_nis, outfile):
     outfile: str
         full destination path
     """
-    body = _OP_SAVE_CURRENT_DOCUMENT.build({"outfile": outfile}, "save_doc")
+    body = OP_SAVE_CURRENT_DOCUMENT.build({"outfile": outfile}, "save_doc")
     _run_macro(path_to_nis, body)
 
 
@@ -910,7 +910,7 @@ def close_current_document(path_to_nis, save='discard'):
     the macro call blocks until it is answered (cancel keeps the document open)
     """
     save_flag = {'ask': 0, 'discard': 2, 'yes': 1}[save]
-    body = _OP_CLOSE_CURRENT_DOCUMENT.build({'save_flag': save_flag}, 'close_current')
+    body = OP_CLOSE_CURRENT_DOCUMENT.build({'save_flag': save_flag}, 'close_current')
     _run_macro(path_to_nis, body)
 
 
@@ -935,9 +935,9 @@ def add_polygon_roi(path_to_nis, points, color='green'):
     if len(points) < 3:
         raise ValueError('a polygon needs at least 3 points')
     sec = 'roi'
-    body = _OP_ADD_POLYGON_ROI.build({'points': points, 'color': color}, sec)
+    body = OP_ADD_POLYGON_ROI.build({'points': points, 'color': color}, sec)
     cfg = _run_macro(path_to_nis, body, ini=True)
-    return _OP_ADD_POLYGON_ROI.parse(cfg[sec])
+    return OP_ADD_POLYGON_ROI.parse(cfg[sec])
 
 
 def add_polygon_roi_and_set_stim_type(path_to_nis, points, color='green'):
@@ -963,7 +963,7 @@ def add_polygon_roi_and_set_stim_type(path_to_nis, points, color='green'):
     if len(points) < 3:
         raise ValueError('a polygon needs at least 3 points')
     sec = 'roi'
-    body = _OP_CREATE_AND_SET_STIM_ROI.build({'points': points, 'color': color}, sec)
+    body = OP_CREATE_AND_SET_STIM_ROI.build({'points': points, 'color': color}, sec)
     cfg = _run_macro(path_to_nis, body, ini=True)
     return _parse_create_and_set_stim_roi(cfg[sec])
 

@@ -18,17 +18,17 @@ To reduce `nis_ar` overhead, `autofrap/microscope/nis.py` now uses a `MacroOp` p
 Every `nis_ar -mw` call carries a roughly constant startup overhead, so batching several ops into a single call reduces it (verified live on the workstation; concrete timings in `docs/SESSION_HISTORY.md`).
 
 Current ops (single-call wrapper in parentheses):
-* getters: `_OP_POSITION` (`get_position`), `_OP_RESOLUTION` (`get_resolution`), `_OP_ND_ACQ_TABS` (`get_nd_acq_tabs`)
-* stage / config: `_OP_SET_POSITION` (`set_position`), `_OP_SET_OPTICAL_CONFIGURATION` (`set_optical_configuration`)
-* acquisition: `_OP_RUN_STIMULATION_EXPERIMENT` (`run_stimulation_experiment`)
-* ROIs: `_OP_ADD_POLYGON_ROI` (`add_polygon_roi`), `_OP_CREATE_AND_SET_STIM_ROI` (`add_polygon_roi_and_set_stim_type`; create + `ChangeROIType(3)` in one op), `_OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT` (`delete_all_rois_in_current_document`)
-* documents: `_OP_ACTIVATE_DOCUMENT` (`activate_document`), `_OP_SAVE_CURRENT_DOCUMENT` (`save_current_document`), `_OP_CLOSE_CURRENT_DOCUMENT` (`close_current_document`), `_OP_CLOSE_ALL_DOCS` (`close_all_docs`)
-* misc: `_OP_CHECKPOINT` (`checkpoint`)
+* getters: `OP_POSITION` (`get_position`), `OP_RESOLUTION` (`get_resolution`), `OP_ND_ACQ_TABS` (`get_nd_acq_tabs`)
+* stage / config: `OP_SET_POSITION` (`set_position`), `OP_SET_OPTICAL_CONFIGURATION` (`set_optical_configuration`)
+* acquisition: `OP_RUN_STIMULATION_EXPERIMENT` (`run_stimulation_experiment`)
+* ROIs: `OP_ADD_POLYGON_ROI` (`add_polygon_roi`), `OP_CREATE_AND_SET_STIM_ROI` (`add_polygon_roi_and_set_stim_type`; create + `ChangeROIType(3)` in one op), `OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT` (`delete_all_rois_in_current_document`)
+* documents: `OP_ACTIVATE_DOCUMENT` (`activate_document`), `OP_SAVE_CURRENT_DOCUMENT` (`save_current_document`), `OP_CLOSE_CURRENT_DOCUMENT` (`close_current_document`), `OP_CLOSE_ALL_DOCS` (`close_all_docs`)
+* misc: `OP_CHECKPOINT` (`checkpoint`)
 
 Example:
 ```python
-from autofrap.microscope.nis import batch_run_macro, _OP_POSITION, _OP_RESOLUTION
-res = batch_run_macro(nis_exe, [(_OP_POSITION, {}), (_OP_RESOLUTION, {})])
+from autofrap.microscope.nis import batch_run_macro, OP_POSITION, OP_RESOLUTION
+res = batch_run_macro(nis_exe, [(OP_POSITION, {}), (OP_RESOLUTION, {})])
 # res == {'position_0': (x,y,z0,z1), 'resolution_1': (xres,yres,siz,mag)}
 ```
 

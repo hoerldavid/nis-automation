@@ -94,9 +94,9 @@ def setup_microscope(nis_exe):
         on repeated macro failures or if the survey ND template is misconfigured
     """
     calls = [
-        (nis_util._OP_ND_ACQ_TABS, {}),
-        (nis_util._OP_POSITION, {}),
-        (nis_util._OP_RESOLUTION, {}),
+        (nis_util.OP_ND_ACQ_TABS, {}),
+        (nis_util.OP_POSITION, {}),
+        (nis_util.OP_RESOLUTION, {}),
     ]
     # short timeout for reads, retried on transient NIS/OS failures
     try:
@@ -126,8 +126,8 @@ def move_stage_with_retry(nis_exe, pos_xy, tolerance_um=1.0):
     def _move_and_verify():
         # Batch set position + get position to verify we reached destination
         calls = [
-            (nis_util._OP_SET_POSITION, {"x": pos_xy[0], "y": pos_xy[1]}),
-            (nis_util._OP_POSITION, {}),
+            (nis_util.OP_SET_POSITION, {"x": pos_xy[0], "y": pos_xy[1]}),
+            (nis_util.OP_POSITION, {}),
         ]
         results = nis_util.batch_run_macro(nis_exe, calls, timeout=10)
         actual_pos = results["position_1"]
@@ -185,8 +185,8 @@ def nis_cleanup_everything(nis_exe):
             return
         # (delete all ROIs, close) n times -> should clean & close all
         calls = [
-            (nis_util._OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
-            (nis_util._OP_CLOSE_CURRENT_DOCUMENT, {"save_flag": 2}),
+            (nis_util.OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
+            (nis_util.OP_CLOSE_CURRENT_DOCUMENT, {"save_flag": 2}),
         ] * n
         nis_util.batch_run_macro(nis_exe, calls, timeout=20)
         print(f"[cleanup_everything] cleaned {n} document(s)")
@@ -388,9 +388,9 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     (the cycle's finally-cleanup runs and the FOV fails).
     """
     roi_calls = [
-        (nis_util._OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
-        (nis_util._OP_CREATE_AND_SET_STIM_ROI, {"points": stim_poly}),
-        (nis_util._OP_ADD_POLYGON_ROI, {"points": cell_poly}),
+        (nis_util.OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
+        (nis_util.OP_CREATE_AND_SET_STIM_ROI, {"points": stim_poly}),
+        (nis_util.OP_ADD_POLYGON_ROI, {"points": cell_poly}),
     ]
     roi_results = run_with_retries(
         lambda: nis_util.batch_run_macro(nis_exe, roi_calls),
@@ -407,8 +407,8 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
 
     # Batch set OC and run stimulation experiment
     stim_calls = [
-        (nis_util._OP_SET_OPTICAL_CONFIGURATION, {"name": frap_oc}),
-        (nis_util._OP_RUN_STIMULATION_EXPERIMENT, {}),
+        (nis_util.OP_SET_OPTICAL_CONFIGURATION, {"name": frap_oc}),
+        (nis_util.OP_RUN_STIMULATION_EXPERIMENT, {}),
     ]
     t0 = time.time()
     nis_util.batch_run_macro(nis_exe, stim_calls, timeout=ACQUISITION_MACRO_TIMEOUT)
@@ -418,8 +418,8 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     # in case user selected a different open image (e.g. the survey)
     # Batch activate and save the FRAP document
     activate_save_calls = [
-        (nis_util._OP_ACTIVATE_DOCUMENT, {"name": "ND Acquisition"}),
-        (nis_util._OP_SAVE_CURRENT_DOCUMENT, {"outfile": frap_file}),
+        (nis_util.OP_ACTIVATE_DOCUMENT, {"name": "ND Acquisition"}),
+        (nis_util.OP_SAVE_CURRENT_DOCUMENT, {"outfile": frap_file}),
     ]
     run_with_retries(
         lambda: nis_util.batch_run_macro(nis_exe, activate_save_calls),
