@@ -8,7 +8,11 @@ worth a retry but a persistent one should surface as-is. The helper is
 exception-driven only: it never inspects or validates the result, which
 is passed through unchanged.
 """
+import logging
 import time
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 def run_with_retries(fn, what, retry_on=Exception, delays=(0, 2, 4)):
@@ -47,12 +51,12 @@ def run_with_retries(fn, what, retry_on=Exception, delays=(0, 2, 4)):
                 time.sleep(delay)
             result = fn()
             if attempt > 1:
-                print(f'[{what}] succeeded on attempt {attempt}', flush=True)
+                logger.debug(f'[{what}] succeeded on attempt {attempt}')
             return result
         except retry_on as e:
             last_exc = e
             if attempt == len(delays):
                 break
-            print(f'[{what}] attempt {attempt} failed: {e!r}, '
-                  f'retry in {delays[attempt]}s', flush=True)
+            logger.info(f'[{what}] attempt {attempt} failed: {e!r}, '
+                        f'retry in {delays[attempt]}s')
     raise last_exc

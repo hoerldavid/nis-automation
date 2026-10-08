@@ -1,8 +1,10 @@
 import subprocess
 import configparser
 from tempfile import NamedTemporaryFile
+import contextlib
 import os
-from shutil import move
+import time
+from shutil import move, copyfile
 import logging
 import re
 from dataclasses import dataclass
@@ -34,6 +36,9 @@ EXPORT_DUMMY_PREFIX = '$tiffexport$'
 # placeholder for the temp .ini path in macro bodies; _run_macro
 # substitutes it with the real path (only when ini=True)
 INI_PLACEHOLDER = '__INI_PATH__'
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 @dataclass(frozen=True)
@@ -245,6 +250,63 @@ def export_nd2_to_tiff(path_to_nis, nd2_file, out_dir=None, combine_t=False, com
             move(os.path.join(out_dir, f), os.path.join(out_dir, f.replace(EXPORT_DUMMY_PREFIX, '')))
 
 
+# debug dir for preserving failed macro temp files (set by the pipeline
+# via the macro_debug_dir() context manager); None = keep the temp files
+# in the OS temp dir on failure and just log their paths
+_macro_debug_dir = None
+# increments per _run_macro call; used in DEBUG logs and preserved-file names
+_macro_seq = 0
+
+
+@contextlib.contextmanager
+def macro_debug_dir(path):
+    """
+    Context manager: while active, the temp files of a *failed* macro
+    (.mac, .ini, nis_ar output) are preserved in <path>/macro_debug/
+    instead of being deleted. Without an active context, failed macro
+    temp files are kept in the OS temp dir and their paths are logged.
+    """
+    global _macro_debug_dir
+    prev, _macro_debug_dir = _macro_debug_dir, path
+    try:
+        yield
+    finally:
+        _macro_debug_dir = prev
+
+
+def _preserve_failed_macro(mac_path, ini_path, out_path, exc, seq):
+    """
+    Keep the evidence of a failed macro call: copy the temp files to
+    <_macro_debug_dir>/macro_debug/ when a debug dir is set, otherwise
+    leave them in the OS temp dir. Logs the location at ERROR either way.
+    """
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    base = f"{stamp}_{seq:03d}"
+    srcs = [p for p in (mac_path, ini_path, out_path) if p]
+    if _macro_debug_dir is not None:
+        dest_dir = os.path.join(_macro_debug_dir, "macro_debug")
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+            kept = []
+            for p in srcs:
+                dest = os.path.join(dest_dir, base + os.path.splitext(p)[1])
+                try:
+                    copyfile(p, dest)
+                    kept.append(dest)
+                except OSError:
+                    pass  # e.g. NIS still holds a lock on the .mac
+            if kept:
+                logger.error(
+                    "macro #%d failed (%r); preserved %d file(s) in %s",
+                    seq, exc, len(kept), dest_dir)
+                return
+        except OSError:
+            pass
+    # fallback: leave the temp files where they are
+    logger.error("macro #%d failed (%r); temp files kept at: %s",
+                 seq, exc, ", ".join(srcs))
+
+
 def _cleanup(*paths):
     """
     remove temp files, tolerating NIS keeping a lock on the .mac file
@@ -302,12 +364,30 @@ def _run_macro(path_to_nis, body, ini=False, timeout=20):
         the parsed .ini file (ini=True), or None (ini=False);
         like the old per-function code, a missing section/key raises
         KeyError in the caller
+
+    Logging / failure evidence
+    --------------------------
+    DEBUG: the macro body, the nis_ar stdout/stderr and the ini content
+    of every call. A non-zero nis_ar exit is logged at WARNING (the
+    call still returns; a missing ini section/key raises KeyError in
+    the caller). On an exception (timeout, ...) the temp files are
+    preserved instead of deleted — in <macro_debug_dir>/macro_debug/
+    when the macro_debug_dir() context is active, otherwise kept in
+    the OS temp dir; the location is logged at ERROR either way.
     """
     if not _nis_running(path_to_nis):
         raise RuntimeError('NIS Elements does not appear to be running '
                            '(no %s process) - start it first' % os.path.basename(path_to_nis))
+    global _macro_seq
+    _macro_seq += 1
+    seq = _macro_seq
     ntf = NamedTemporaryFile(suffix='.mac', delete=False)
     ntf2 = None
+    # nis_ar stdout/stderr go to a temp file (a PIPE risks hanging if
+    # nis_ar spawns a detached child that inherits it)
+    outf = NamedTemporaryFile(suffix='.nis_ar.log', delete=False)
+    outf.close()
+    success = False
     try:
         if ini:
             # pre-create an empty .ini for the macro to fill
@@ -318,17 +398,36 @@ def _run_macro(path_to_nis, body, ini=False, timeout=20):
         # the .mac handle must be closed before nis_ar opens the file,
         # otherwise the GUI reports "Can't open file for reading"
         ntf.close()
+        logger.debug("NIS macro #%d -> %s:\n%s", seq, ntf.name, body)
         try:
-            subprocess.run([path_to_nis, "-mw", ntf.name], timeout=timeout,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            with open(outf.name, 'w') as out_handle:
+                proc = subprocess.run([path_to_nis, "-mw", ntf.name], timeout=timeout,
+                                      stdout=out_handle, stderr=out_handle, check=False)
         except subprocess.TimeoutExpired:
             raise TimeoutError(f"NIS macro timed out after {timeout}s. Macro file: {ntf.name}")
+        with open(outf.name) as f:
+            nis_ar_out = f.read()
+        logger.debug("NIS macro #%d nis_ar output (rc=%d):\n%s",
+                     seq, proc.returncode, nis_ar_out)
+        if proc.returncode != 0:
+            logger.warning("NIS macro #%d: nis_ar exited with rc=%d:\n%s",
+                           seq, proc.returncode, nis_ar_out)
         if ini:
+            with open(ntf2.name) as f:
+                ini_text = f.read()
+            logger.debug("NIS macro #%d ini result:\n%s", seq, ini_text)
             config = configparser.ConfigParser()
             config.read(ntf2.name)
+            success = True
             return config
+        success = True
+        return None
+    except Exception as e:
+        _preserve_failed_macro(ntf.name, ntf2.name if ntf2 else None, outf.name, e, seq)
+        raise
     finally:
-        _cleanup(ntf.name, ntf2.name if ntf2 else None)
+        if success:
+            _cleanup(ntf.name, ntf2.name if ntf2 else None, outf.name)
 
 
 def batch_run_macro(path_to_nis, calls, timeout=20):

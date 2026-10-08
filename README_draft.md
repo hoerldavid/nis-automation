@@ -99,6 +99,7 @@ Key arguments:
 * `--max-cycles` cycles per FOV
 * `--detector` path to the detector module (required – see below)
 * `--detector-arg key=value` tuning parameters forwarded to the detector (repeatable)
+* `--verbose` DEBUG logging: per-cycle detail plus the NIS macro traffic (macro bodies, ini results, `nis_ar` output); failed macros are preserved in `<run_dir>/macro_debug/`
 
 ### Spiral visit order
 

@@ -18,8 +18,17 @@ Error handling policy:
     stop between cycles (or optionally after next survey acquisition).
   * Timeout assumption: all non-acquisition macros complete well within 10-20 s;
     acquisition macros run with 300 s timeout. Timeouts are treated as genuine faults
+
+Logging: this module logs via logging.getLogger(__name__) (NullHandler, no
+level set - library style). The CLI (main()) configures logging: INFO by
+default, DEBUG with --verbose (per-cycle detail + the NIS macro traffic -
+macro bodies, ini results, nis_ar output - logged by autofrap.microscope.nis).
+Library callers that want output should call logging.basicConfig() themselves.
+While a grid run is active (autofrap_loop_outer), failed macro temp files are
+preserved in <run_dir>/macro_debug/ via nis_util.macro_debug_dir(run_dir).
 """
 
+import logging
 import os
 import time
 import argparse
@@ -28,6 +37,9 @@ import sys
 
 import numpy as np
 from skimage.measure import regionprops
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 # acquisition macro timeout (seconds)
 ACQUISITION_MACRO_TIMEOUT = 300  # For operations that may run long acquisitions
@@ -142,6 +154,8 @@ def move_stage_with_retry(nis_exe, pos_xy, tolerance_um=1.0):
                 f"actual ({actual_xy[0]:.1f}, {actual_xy[1]:.1f}), "
                 f"errors ({dx:.1f}, {dy:.1f}) > tolerance {tolerance_um:.1f} um"
             )
+        logger.debug(f"stage at ({actual_xy[0]:+.1f}, {actual_xy[1]:+.1f}) um "
+                     f"(target ({pos_xy[0]:+.1f}, {pos_xy[1]:+.1f}))")
         return actual_xy
     
     run_with_retries(
@@ -162,14 +176,14 @@ def cleanup_run(nis_exe, start_pos, return_to_start=True):
     if return_to_start and start_pos is not None:
         try:
             move_stage_with_retry(nis_exe, start_pos[:2])
-            print(f"moved back to start ({start_pos[0]:+.2f}, {start_pos[1]:+.2f})")
+            logger.info(f"moved back to start ({start_pos[0]:+.2f}, {start_pos[1]:+.2f})")
         except Exception as e:
-            print(f"!!! could not return to start: {e!r}", flush=True)
+            logger.warning(f"could not return to start: {e!r}")
 
     try:
         nis_cleanup_everything(nis_exe)
     except Exception as e:
-        print(f"!!! nis_cleanup_everything failed: {e!r}", flush=True)
+        logger.warning(f"nis_cleanup_everything failed: {e!r}")
 
 
 def nis_cleanup_everything(nis_exe):
@@ -181,7 +195,7 @@ def nis_cleanup_everything(nis_exe):
         docs = nis_util.get_opened_documents(nis_exe)
         n = len(docs)
         if n == 0:
-            print("[cleanup_everything] no open documents")
+            logger.debug("cleanup_everything: no open documents")
             return
         # (delete all ROIs, close) n times -> should clean & close all
         calls = [
@@ -189,12 +203,12 @@ def nis_cleanup_everything(nis_exe):
             (nis_util.OP_CLOSE_CURRENT_DOCUMENT, {"save_flag": 2}),
         ] * n
         nis_util.batch_run_macro(nis_exe, calls, timeout=20)
-        print(f"[cleanup_everything] cleaned {n} document(s)")
+        logger.debug(f"cleanup_everything: cleaned {n} document(s)")
 
     try:
         run_with_retries(_cleanup, "cleanup_everything", retry_on=TimeoutError)
     except Exception as e:
-        print(f"!!! nis_cleanup_everything failed: {e!r}", flush=True)
+        logger.warning(f"nis_cleanup_everything failed: {e!r}")
         raise
 
 
@@ -290,7 +304,7 @@ def _inner_loop_do_survey(nis_exe, survey_file, cycle):
     """
     t0 = time.time()
     nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file, progress_bar=True, timeout=ACQUISITION_MACRO_TIMEOUT)
-    print(f"[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)", flush=True)
+    logger.info(f"[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)")
     if not os.path.isfile(survey_file):
         raise AutofrapError(
             f"survey file missing after the ND run: {survey_file} "
@@ -339,7 +353,7 @@ def _inner_loop_select_cell_and_qc(
 
     cell = next_stimulatable_cell(labels, matched, stimulation_mask)
     if cell is None:
-        print(
+        logger.info(
             f"[c{cycle:02d}] {n_obj} objects, all stimulated or no "
             "stimulation mask -> stop"
         )
@@ -352,16 +366,18 @@ def _inner_loop_select_cell_and_qc(
         if cell_poly and stim_poly:
             break
         skipped.add(cell)
-        print(f"[c{cycle:02d}] cell {cell}: no polygon, skipping")
+        logger.info(f"[c{cycle:02d}] cell {cell}: no polygon, skipping")
         cell = next_stimulatable_cell(labels, matched | skipped, stimulation_mask)
         if cell is None:
-            print(
+            logger.info(
                 f"[c{cycle:02d}] all {n_obj} objects have no "
                 "polygon -> move to next FOV"
             )
             return None, None, None, n_obj
 
-    print(f"[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}")
+    logger.info(f"[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}")
+    logger.debug(f"[c{cycle:02d}] cell {cell}: polygons with "
+                 f"{len(cell_poly)} (cell) / {len(stim_poly)} (stim) vertices")
     # QC overlay before stimulation
     try:
         save_qc_overlay(
@@ -377,7 +393,7 @@ def _inner_loop_select_cell_and_qc(
             caption=f"{CYCLE_PREFIX}{cycle:02d} cell {cell}",
         )
     except Exception as e:
-        print(f"[c{cycle:02d}] WARNING: QC overlay failed: {e!r}", flush=True)
+        logger.warning(f"[c{cycle:02d}] QC overlay failed: {e!r}")
 
     return cell, cell_poly, stim_poly, n_obj
 
@@ -399,6 +415,7 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     )
     stim_roi = roi_results["create_and_set_stim_roi_1"]
     cell_roi = roi_results["add_polygon_roi_2"]
+    logger.debug(f"[c{cycle:02d}] ROIs created: stim={stim_roi}, cell={cell_roi}")
 
     if cell_roi <= 0:
         raise AutofrapError(f"cell ROI creation failed (id={cell_roi})")
@@ -412,7 +429,7 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
     ]
     t0 = time.time()
     nis_util.batch_run_macro(nis_exe, stim_calls, timeout=ACQUISITION_MACRO_TIMEOUT)
-    print(f"[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)", flush=True)
+    logger.info(f"[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)")
 
     # safeguard: move GUI focus to unsaved "ND Acquisition" (the FRAP timeseries we just did)
     # in case user selected a different open image (e.g. the survey)
@@ -646,9 +663,7 @@ def autofrap_loop_inner(
             # so the next FOV starts from a clean GUI state; 
             nis_cleanup_everything(nis_exe)
 
-    print(
-        f"\nFOV one after {cycle} cycle(s), output in {out_dir}"
-    )
+    logger.info(f"FOV done after {cycle} cycle(s), output in {out_dir}")
 
 
 def autofrap_loop_outer(
@@ -762,71 +777,68 @@ def autofrap_loop_outer(
         )
     os.makedirs(run_dir, exist_ok=True)
 
-    print(f"grid: {len(positions)} position(s)")
+    logger.info(f"grid: {len(positions)} position(s)")
 
-    consecutive_failures = 0
-    for i, (x, y) in enumerate(positions, 1):
-        fov_dir = os.path.join(run_dir, f"fov{i:02d}") if fov_subdirs else run_dir
-        print(
-            f"\n=== [{i}/{len(positions)}] ({x:+.1f}, {y:+.1f}) um "
-            f"-> {fov_dir} (fov{i:02d})",
-            flush=True,
-        )
-
-        try:
-            # move with retry; a failed move counts as a FOV failure
-            move_stage_with_retry(nis_exe, (x, y))
-
-            autofrap_loop_inner(
-                nis_exe,
-                fov_dir,
-                max_cycles=max_cycles,
-                detection_fun=detection_fun,
-                frap_oc=frap_oc,
-                centroid_threshold=centroid_threshold,
-                file_prefix=f"fov{i:02d}",
-                stop_check=stop_check,
-                allow_interrupt_after_survey=allow_interrupt_after_survey,
-                **detector_kwargs,
+    # while the grid run is active, failed macro temp files are
+    # preserved in <run_dir>/macro_debug/ (see nis_util.macro_debug_dir)
+    with nis_util.macro_debug_dir(run_dir):
+        consecutive_failures = 0
+        for i, (x, y) in enumerate(positions, 1):
+            fov_dir = os.path.join(run_dir, f"fov{i:02d}") if fov_subdirs else run_dir
+            logger.info(
+                f"=== [{i}/{len(positions)}] ({x:+.1f}, {y:+.1f}) um "
+                f"-> {fov_dir} (fov{i:02d})"
             )
-        except AutofrapInterruptedException as e:
-            # user stop
-            print(
-                f"\nGrid stopped by user: {i-1}/{len(positions)} FOV(s) done. "
-                f"output in {run_dir}"
-            )
-            raise e
 
-        except Exception as e:
-            # stage move or FOV failure: skip this position and abort
-            # the grid once max_consecutive_failures FOVs fail in a
-            # row (the failure is then systemic - disk full, NIS
-            # wedged, detector down)
-            consecutive_failures += 1
-            fov_results = None
-            if consecutive_failures >= max_consecutive_failures:
-                print(
-                    f"!!! FOV {i} failed: {e!r} - "
-                    f"{consecutive_failures} consecutive failure(s), "
-                    "aborting the run",
-                    flush=True,
+            try:
+                # move with retry; a failed move counts as a FOV failure
+                move_stage_with_retry(nis_exe, (x, y))
+
+                autofrap_loop_inner(
+                    nis_exe,
+                    fov_dir,
+                    max_cycles=max_cycles,
+                    detection_fun=detection_fun,
+                    frap_oc=frap_oc,
+                    centroid_threshold=centroid_threshold,
+                    file_prefix=f"fov{i:02d}",
+                    stop_check=stop_check,
+                    allow_interrupt_after_survey=allow_interrupt_after_survey,
+                    **detector_kwargs,
                 )
-                raise AbortRunError()
+            except AutofrapInterruptedException as e:
+                # user stop
+                logger.info(
+                    f"Grid stopped by user: {i-1}/{len(positions)} FOV(s) done. "
+                    f"output in {run_dir}"
+                )
+                raise e
+
+            except Exception as e:
+                # stage move or FOV failure: skip this position and abort
+                # the grid once max_consecutive_failures FOVs fail in a
+                # row (the failure is then systemic - disk full, NIS
+                # wedged, detector down)
+                consecutive_failures += 1
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.error(
+                        f"FOV {i} failed: {e!r} - "
+                        f"{consecutive_failures} consecutive failure(s), "
+                        "aborting the run"
+                    )
+                    raise AbortRunError()
+                else:
+                    logger.warning(
+                        f"FOV {i} failed ({consecutive_failures}/"
+                        f"{max_consecutive_failures} consecutive): {e!r} "
+                        f"- moving on to the next position"
+                    )
             else:
-                print(
-                    f"!!! FOV {i} failed ({consecutive_failures}/"
-                    f"{max_consecutive_failures} consecutive): {e!r} "
-                    f"- moving on to the next position",
-                    flush=True,
-                )
-        else:
-            # a completed FOV (even with zero cycles) proves NIS,
-            # detection and disk work - reset the failure counter
-            consecutive_failures = 0
+                # a completed FOV (even with zero cycles) proves NIS,
+                # detection and disk work - reset the failure counter
+                consecutive_failures = 0
 
-    print(
-        f"\nGrid done: output in {run_dir}"
-    )
+    logger.info(f"Grid done: output in {run_dir}")
 
 
 
@@ -966,6 +978,13 @@ def parse_cli_args(argv=None):
         "(opt-in; otherwise waits for end of cycle)",
     )
     p.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="DEBUG logging: per-cycle detail plus the NIS macro traffic "
+        "(macro bodies, ini results, nis_ar output); failed macros are "
+        "always preserved in <run_dir>/macro_debug/ [default: INFO]",
+    )
+    p.add_argument(
         "--name",
         help="experiment name: the run directory is named "
         "<timestamp>_<name> (or <name> with --no-timestamp) "
@@ -1007,28 +1026,37 @@ def main(argv=None):
         _stop["count"] += 1
         if _stop["count"] == 1:
             _stop["requested"] = True
-            print(
-                "\nCtrl-C: stopping after the current cycle "
-                "(press again to interrupt immediately)",
-                flush=True,
-            )
+            logger.info("Ctrl-C: stopping after the current cycle "
+                        "(press again to interrupt immediately)")
         else:
             raise KeyboardInterrupt
 
     signal.signal(signal.SIGINT, _on_sigint)
 
     args = parse_cli_args(argv)
+    # the CLI owns the logging configuration (the pipeline modules only
+    # attach NullHandlers - library style)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+        force=True,
+    )
+    if args.verbose:
+        # third-party DEBUG is chatty (matplotlib font matching, ...);
+        # --verbose is about our own DEBUG output
+        logging.getLogger('matplotlib').setLevel(logging.INFO)
     # NIS macros resolve relative paths against the NIS executable's
     # directory - the pipeline must hand them absolute paths
     args.out = os.path.abspath(args.out)
 
-    print(f"loading detector from: {args.detector}", flush=True)
+    logger.info(f"loading detector from: {args.detector}")
     detection_fun = load_detector_file(args.detector)
 
     detector_kwargs = {}
     for arg in args.detector_arg:
         if "=" not in arg:
-            print(f"ERROR: --detector-arg expects KEY=VALUE, got: {arg!r}")
+            logger.error(f"--detector-arg expects KEY=VALUE, got: {arg!r}")
             sys.exit(1)
         key, val = arg.split("=", 1)
         try:
@@ -1060,7 +1088,7 @@ def main(argv=None):
     except AutofrapInterruptedException:
         sys.exit(130)
     except AbortRunError as e:
-        print(f"\nERROR: {e}")
+        logger.error(f"{e}")
         sys.exit(1)
 
 
