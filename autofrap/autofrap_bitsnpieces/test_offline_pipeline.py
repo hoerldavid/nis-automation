@@ -153,7 +153,7 @@ with tempfile.TemporaryDirectory() as TMP:
                   for i in (1, 2, 3, 4) for k in ('survey', 'frap'))
           and all(filecmp.cmp(fov_file(out, 'wrap', i, k), src_of(i), shallow=False)
                   for i in (1, 2, 3, 4) for k in ('survey', 'frap'))
-          and has_msg(recs, 'INFO', 'Grid done'),
+          and has_msg(recs, 'INFO', 'Run done'),
           f'raised={raised!r}')
 
     # A2: cross-cycle cell matching: 2 cells found -> cycle 1 stimulates
@@ -276,7 +276,7 @@ with tempfile.TemporaryDirectory() as TMP:
           and not os.path.exists(fov_file(out, 'nosave', 1, 'survey'))
           and all(os.path.isfile(fov_file(out, 'nosave', i, 'frap'))
                   for i in (2, 3, 4, 5))
-          and has_msg(recs, 'INFO', 'Grid done'),
+          and has_msg(recs, 'INFO', 'Run done'),
           f'raised={raised!r}')
 
     # C4: one failed FRAP save -> FOV 1 fails, run continues
@@ -306,7 +306,7 @@ with tempfile.TemporaryDirectory() as TMP:
           and has_msg(recs, 'INFO', 'stage jammed', 'retry')
           and all(os.path.isfile(fov_file(out, 'move1', i, 'frap'))
                   for i in (1, 2, 3, 4, 5))
-          and has_msg(recs, 'INFO', 'Grid done'),
+          and has_msg(recs, 'INFO', 'Run done'),
           f'raised={raised!r}')
 
     # C6: every stage move fails -> systemic -> abort at FOV 3
@@ -345,7 +345,7 @@ with tempfile.TemporaryDirectory() as TMP:
           raised is None
           and len(msgs(recs, 'WARNING')) == 3
           and all('detector server down' in m for m in msgs(recs, 'WARNING'))
-          and has_msg(recs, 'INFO', 'Grid done')
+          and has_msg(recs, 'INFO', 'Run done')
           and all(os.path.isfile(fov_file(out, 'det', i, 'frap'))
                   for i in (2, 4))
           and not any(os.path.exists(fov_file(out, 'det', i, 'frap'))
@@ -380,7 +380,7 @@ with tempfile.TemporaryDirectory() as TMP:
                              stop_check=lambda: stop['v'])
     check('D1 clean stop: re-raised after the summary',
           isinstance(raised, af.AutofrapInterruptedException)
-          and has_msg(recs, 'INFO', 'Grid stopped by user: 1/5')
+          and has_msg(recs, 'INFO', 'Run stopped by user: 1/5')
           and os.path.isfile(fov_file(out, 'stop', 1, 'frap')),
           f'raised={raised!r}')
 
