@@ -2,8 +2,8 @@
 Offline dry run of the real autoFRAP CLI with FakeNIS standing in for the
 scope: survey/FRAP "acquisitions" are copies of real survey nd2 files.
 
-Everything the pipeline CLI offers works as-is (--spiral, --max-cycles,
---detector-arg, --max-consecutive-failures, Ctrl-C clean stop, ...) -
+Everything the pipeline CLI offers works as-is (--grid, --max-positions,
+--max-cycles, --detector-arg, --max-consecutive-failures, Ctrl-C clean stop, ...) -
 this wrapper only adds:
 
   * FakeNIS patching, sourcing "acquired" surveys from --sources
@@ -14,9 +14,10 @@ this wrapper only adds:
 Run from the repo root:
 
     python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py --preset dummy
-        offline: dummy detector, default 2x2 grid, 1 cycle per FOV
+        offline: dummy detector, default centre-out spiral (25 positions),
+        1 cycle per FOV
     python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py \
-        --preset simple_seg --spiral --max-positions 5 --max-cycles 3
+        --preset simple_seg --max-positions 5 --max-cycles 3
     python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py \
         --preset cellpose --detector-arg server_url=http://localhost:9000
         (needs the cellpose server; the preset already sets a default)

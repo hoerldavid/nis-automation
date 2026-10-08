@@ -58,6 +58,10 @@ from autofrap.core.utils.retry import run_with_retries
 # spelled out rather than 'c' to avoid the color-channel reading
 CYCLE_PREFIX = "cycle"
 
+# default number of positions when visiting in the (CLI default) centre-out
+# spiral order: 25 = the start position plus two square loops around it
+SPIRAL_DEFAULT_POSITIONS = 25
+
 # ND Acquisition tab names that are *not* valid for a survey image
 # (multi-position, time-lapse, or large-image scans)
 _SURVEY_TABS_FORBIDDEN = frozenset({"Time", "XY", "Large Image"})
@@ -854,21 +858,26 @@ def build_positions(
     fov : tuple
         Field of view (fov_x, fov_y) in µm.
     nx, ny : int
-        Grid dimensions.
+        Grid dimensions (grid mode only; unused in spiral mode).
     spacing : float
         Spacing in FOV units.
     spiral : bool
         If True, generate a centre-out square spiral.
     max_positions : int or None
         Hard cap on number of positions. For spiral mode, if None it
-        defaults to nx*ny.
+        defaults to SPIRAL_DEFAULT_POSITIONS; for grid mode None means
+        the full nx*ny grid.
 
     Returns
     -------
     positions : list of (x, y)
     """
     if spiral:
-        max_pos = max_positions if max_positions is not None else nx * ny
+        max_pos = (
+            max_positions
+            if max_positions is not None
+            else SPIRAL_DEFAULT_POSITIONS
+        )
         positions = spiral_positions(
             start_xy, fov=fov, max_positions=max_pos, spacing=spacing
         )
@@ -886,75 +895,7 @@ def parse_cli_args(argv=None):
     p = argparse.ArgumentParser(
         description="auto-FRAP over a grid of stage positions " "(see autofrap())"
     )
-    p.add_argument(
-        "--out",
-        "-o",
-        default="autofrap_out",
-        help="output directory (a <run_stamp>/ sub-directory is "
-        "created in it); resolved against the current "
-        "working directory and passed to NIS as an "
-        "absolute path [default: %(default)s]",
-    )
-    p.add_argument(
-        "--nis",
-        default=r"C:\Program Files\NIS-Elements\nis_ar.exe",
-        help="path to nis_ar.exe [default: %(default)s]",
-    )
-    p.add_argument(
-        "--nx",
-        type=int,
-        default=2,
-        help="grid size in x (1 = single FOV) [default: %(default)s]",
-    )
-    p.add_argument(
-        "--ny",
-        type=int,
-        default=2,
-        help="grid size in y (1 = single FOV) [default: %(default)s]",
-    )
-    p.add_argument(
-        "--spacing",
-        type=float,
-        default=1.0,
-        help="grid spacing in units of FOV (1 = touching) " "[default: %(default)s]",
-    )
-    p.add_argument(
-        "--max-cycles",
-        type=int,
-        default=1,
-        help="max FRAP cycles per FOV [default: %(default)s]",
-    )
-    p.add_argument(
-        "--frap-oc",
-        default="FRAPPA",
-        help="optical configuration name to use for FRAP stimulation [default: %(default)s]",
-    )
-    p.add_argument(
-        "--until-done",
-        action="store_true",
-        help="run until all cells of a FOV are stimulated " "(ignore --max-cycles)",
-    )
-    p.add_argument(
-        "--no-return",
-        action="store_true",
-        help="don't move back to the start position after the run",
-    )
-    p.add_argument(
-        "--spiral",
-        action="store_true",
-        help="use a centre-out square spiral instead of a plain NxM grid; "
-        "--max-positions sets the number of positions, otherwise nx*ny is used",
-    )
-    p.add_argument(
-        "--max-positions",
-        "--num-positions",
-        type=int,
-        default=None,
-        help="maximum number of positions to visit, applied as a hard cap to both "
-        "grid and spiral visit orders. For spiral mode, if omitted it defaults "
-        "to --nx * --ny; for grid mode it truncates the generated NxM grid "
-        "[default: None]",
-    )
+    # detection (required)
     p.add_argument(
         "--detector",
         required=True,
@@ -971,6 +912,94 @@ def parse_cli_args(argv=None):
         "e.g. --detector-arg diameter=30 "
         "(repeatable)",
     )
+    # output
+    p.add_argument(
+        "--out",
+        "-o",
+        default="autofrap_out",
+        help="output directory (a <run_stamp>/ sub-directory is "
+        "created in it); resolved against the current "
+        "working directory and passed to NIS as an "
+        "absolute path [default: %(default)s]",
+    )
+    p.add_argument(
+        "--name",
+        help="experiment name, appended to the run directory name: "
+        "<timestamp>_<name> (or exactly <name> with --no-timestamp); "
+        "without it the run directory is named just <timestamp>",
+    )
+    p.add_argument(
+        "--no-timestamp",
+        action="store_true",
+        help="name the run directory exactly --name (requires " "--name)",
+    )
+    # microscope / acquisition
+    p.add_argument(
+        "--nis",
+        default=r"C:\Program Files\NIS-Elements\nis_ar.exe",
+        help="path to nis_ar.exe [default: %(default)s]",
+    )
+    p.add_argument(
+        "--frap-oc",
+        default="FRAPPA",
+        help="optical configuration name to use for FRAP stimulation [default: %(default)s]",
+    )
+    # stage positions (default: centre-out spiral; --grid for a plain grid)
+    p.add_argument(
+        "--spacing",
+        type=float,
+        default=1.0,
+        help="grid spacing in units of FOV (1 = touching) " "[default: %(default)s]",
+    )
+    p.add_argument(
+        "--max-positions",
+        "--num-positions",
+        type=int,
+        default=None,
+        help="number of positions to visit. Default: 25 in the default "
+        "spiral order (the start position plus two loops around it); "
+        "in --grid mode, all of the nx*ny grid unless given as a cap "
+        "[default: spiral: 25, grid: all]",
+    )
+    p.add_argument(
+        "--grid",
+        action="store_true",
+        help="visit positions in a plain NxM grid (--nx, --ny) in "
+        "row-major order instead of the default centre-out square "
+        "spiral; --max-positions truncates the grid",
+    )
+    p.add_argument(
+        "--nx",
+        type=int,
+        default=2,
+        help="grid size in x (--grid mode; 1 = single FOV) [default: %(default)s]",
+    )
+    p.add_argument(
+        "--ny",
+        type=int,
+        default=2,
+        help="grid size in y (--grid mode; 1 = single FOV) [default: %(default)s]",
+    )
+    # cycles per FOV
+    p.add_argument(
+        "--max-cycles",
+        type=int,
+        default=1,
+        help="max FRAP cycles per FOV [default: %(default)s]",
+    )
+    p.add_argument(
+        "--until-done",
+        action="store_true",
+        help="run until all cells of a FOV are stimulated " "(ignore --max-cycles)",
+    )
+    # run behavior
+    p.add_argument(
+        "--max-consecutive-failures",
+        type=int,
+        default=3,
+        help="abort the grid run after this many consecutive "
+        "FOV failures [default: %(default)s]",
+    )
     p.add_argument(
         "--allow-interrupt-after-survey",
         action="store_true",
@@ -978,29 +1007,17 @@ def parse_cli_args(argv=None):
         "(opt-in; otherwise waits for end of cycle)",
     )
     p.add_argument(
+        "--no-return",
+        action="store_true",
+        help="don't move back to the start position after the run",
+    )
+    # logging
+    p.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="DEBUG logging: per-cycle detail plus the NIS macro traffic "
         "(macro bodies, ini results, nis_ar output); failed macros are "
         "always preserved in <run_dir>/macro_debug/ [default: INFO]",
-    )
-    p.add_argument(
-        "--name",
-        help="experiment name: the run directory is named "
-        "<timestamp>_<name> (or <name> with --no-timestamp) "
-        "[default: <timestamp>]",
-    )
-    p.add_argument(
-        "--no-timestamp",
-        action="store_true",
-        help="name the run directory exactly --name (requires " "--name)",
-    )
-    p.add_argument(
-        "--max-consecutive-failures",
-        type=int,
-        default=3,
-        help="abort the grid run after this many consecutive "
-        "FOV failures [default: %(default)s]",
     )
     args = p.parse_args(argv)
     if args.no_timestamp and not args.name:
@@ -1072,7 +1089,7 @@ def main(argv=None):
             nx=args.nx,
             ny=args.ny,
             spacing=args.spacing,
-            spiral=args.spiral,
+            spiral=not args.grid,
             max_positions=args.max_positions,
             max_cycles=None if args.until_done else args.max_cycles,
             detection_fun=detection_fun,

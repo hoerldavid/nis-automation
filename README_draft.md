@@ -71,6 +71,7 @@ Example 2×2 grid, 3 cycles per FOV, local Otsu+watershed detector:
 ```bash
 python -m autofrap.pipeline \
   --out /path/to/output \
+  --grid \
   --nx 2 --ny 2 \
   --spacing 1.0 \
   --max-cycles 3 \
@@ -93,21 +94,20 @@ above), with the segmentation parameters passed via `--detector-arg`:
 
 Key arguments:
 * `--out` output root, per-FOV subdirs created automatically
-* `--nx/--ny` grid size
+* `--max-positions` / `--num-positions` number of positions to visit; default 25 in the default spiral order (start plus two loops around it), caps the grid in `--grid` mode
+* `--grid` visit positions in a plain NxM grid instead of the default centre-out spiral
+* `--nx/--ny` grid size (`--grid` mode)
 * `--spacing` FOV spacing in FOV units
-* `--max-positions` / `--num-positions` hard cap on number of positions visited; applies to both grid and spiral modes
 * `--max-cycles` cycles per FOV
 * `--detector` path to the detector module (required – see below)
 * `--detector-arg key=value` tuning parameters forwarded to the detector (repeatable)
 * `--verbose` DEBUG logging: per-cycle detail plus the NIS macro traffic (macro bodies, ini results, `nis_ar` output); failed macros are preserved in `<run_dir>/macro_debug/`
 
-### Spiral visit order
+### Spiral visit order (default)
 
 ```bash
 python -m autofrap.pipeline \
   --out /path/to/output \
-  --spiral \
-  --max-positions 25 \
   --spacing 1.0 \
   --max-cycles 3 \
   --name spiral_run \
@@ -117,14 +117,14 @@ python -m autofrap.pipeline \
   --detector-arg min_eroded_extent=0.90
 ```
 
-`--spiral` generates a centre-out spiral via
-`autofrap.core.utils.grid.spiral_positions`. Use `--max-positions` /
-`--num-positions` to set the number of positions to visit; if omitted
-it falls back to `--nx * --ny`. The same flag also caps a regular
-grid: e.g. `--nx 5 --ny 5 --max-positions 20` visits the first 20
-positions of the 5×5 grid in row-major order. Example:
-`--spiral --max-positions 13` visits the centre plus 12 surrounding
-positions.
+By default positions are visited in a centre-out square spiral (via
+`autofrap.core.utils.grid.spiral_positions`), starting at the current
+stage position. `--max-positions` / `--num-positions` sets the number
+of positions to visit; if omitted it defaults to 25 — the start
+position plus two loops around it. Use `--grid` for a plain NxM grid
+instead; `--max-positions` then caps the grid: e.g. `--grid --nx 5
+--ny 5 --max-positions 20` visits the first 20 positions of the 5×5
+grid in row-major order.
 
 ## Detectors
 
