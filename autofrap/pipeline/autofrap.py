@@ -326,6 +326,30 @@ def _inner_loop_do_survey(nis_exe, survey_file, cycle):
     return survey_file
 
 
+def _save_cycle_qc_overlay(
+    viz_image, labels, stimulation_mask, cycle, out_dir, file_prefix, **qc_kwargs
+):
+    """
+    Save the per-cycle QC overlay PNG (<file_prefix>_cycle<NN>_survey_qc.png),
+    warn-and-continue on failure. Works with or without a selected cell —
+    without one (qc_kwargs only holding a caption) the overlay still shows
+    the image, all labels and the stimulation mask, so a "no cell found"
+    FOV can be diagnosed (truly empty vs. detector thresholds too strict).
+    """
+    try:
+        save_qc_overlay(
+            viz_image,
+            labels,
+            os.path.join(
+                out_dir, f"{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_survey_qc.png"
+            ),
+            stimulation_mask=stimulation_mask,
+            **qc_kwargs,
+        )
+    except Exception as e:
+        logger.warning(f"[c{cycle:02d}] QC overlay failed: {e!r}")
+
+
 def _inner_loop_select_cell_and_qc(
     labels,
     stimulation_mask,
@@ -337,7 +361,8 @@ def _inner_loop_select_cell_and_qc(
     file_prefix,
 ):
     """Match detected objects to already-imaged map, pick next cell, build polygons and save QC overlay.
-    Returns (cell, cell_poly, stim_poly, n_obj) or (None, None, None, n_obj) if no cell is available.
+    Returns (cell, cell_poly, stim_poly, n_obj) or (None, None, None, n_obj) if no cell is available
+    (a QC overlay is saved in that case too, without cell/ROI polygons).
     """
 
     n_obj = len(np.unique(labels)) - 1
@@ -363,6 +388,10 @@ def _inner_loop_select_cell_and_qc(
             f"[c{cycle:02d}] {n_obj} objects, all stimulated or no "
             "stimulation mask -> stop"
         )
+        _save_cycle_qc_overlay(
+            viz_image, labels, stimulation_mask, cycle, out_dir, file_prefix,
+            caption=f"{CYCLE_PREFIX}{cycle:02d} no cell (all stimulated / no FRAP mask)",
+        )
         return None, None, None, n_obj
 
     skipped = set()
@@ -379,27 +408,23 @@ def _inner_loop_select_cell_and_qc(
                 f"[c{cycle:02d}] all {n_obj} objects have no "
                 "polygon -> move to next FOV"
             )
+            _save_cycle_qc_overlay(
+                viz_image, labels, stimulation_mask, cycle, out_dir, file_prefix,
+                caption=f"{CYCLE_PREFIX}{cycle:02d} no cell (no viable polygon)",
+            )
             return None, None, None, n_obj
 
     logger.info(f"[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}")
     logger.debug(f"[c{cycle:02d}] cell {cell}: polygons with "
                  f"{len(cell_poly)} (cell) / {len(stim_poly)} (stim) vertices")
     # QC overlay before stimulation
-    try:
-        save_qc_overlay(
-            viz_image,
-            labels,
-            os.path.join(
-                out_dir, f"{file_prefix}_{CYCLE_PREFIX}{cycle:02d}_survey_qc.png"
-            ),
-            stimulation_mask=stimulation_mask,
-            cell_id=cell,
-            cell_poly=cell_poly,
-            stim_poly=stim_poly,
-            caption=f"{CYCLE_PREFIX}{cycle:02d} cell {cell}",
-        )
-    except Exception as e:
-        logger.warning(f"[c{cycle:02d}] QC overlay failed: {e!r}")
+    _save_cycle_qc_overlay(
+        viz_image, labels, stimulation_mask, cycle, out_dir, file_prefix,
+        cell_id=cell,
+        cell_poly=cell_poly,
+        stim_poly=stim_poly,
+        caption=f"{CYCLE_PREFIX}{cycle:02d} cell {cell}",
+    )
 
     return cell, cell_poly, stim_poly, n_obj
 
@@ -494,7 +519,10 @@ def autofrap_loop_inner(
          (<file_prefix>_cycle<NN>_survey_qc.png: detection, FRAP mask, selected
          cell, polygons as sent to NIS — on a blank canvas when the
          detector provides no visualization); warn-and-continue on
-         failure, saved before the stimulation run so it survives it
+         failure, saved before the stimulation run so it survives it.
+         When no cell is available, the overlay is still saved (labels +
+         FRAP mask, without cell/ROI polygons) so the FOV can be
+         diagnosed: truly empty vs. detector thresholds too conservative
       5. open the survey image in NIS, add two ROIs: the whole cell
          (for downstream analysis) and the stimulation region
          ((labels == cell_id) & stimulation_mask), the latter set to
