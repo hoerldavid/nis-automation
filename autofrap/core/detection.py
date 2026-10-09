@@ -384,3 +384,79 @@ def load_detector_file(path):
             f"found {type(detection_fun).__name__}"
         )
     return detection_fun
+
+
+def unpack_detection_result(result):
+    """
+    Normalize a detection_fun return value to (labels, stimulation_mask, viz).
+
+    Accepts a bare label map (normalized to a 1-tuple) or a 1-3
+    tuple/list ``(labels[, stimulation_mask[, visualization]])`` in the
+    contract order; the missing entries are None. This is the single
+    home of the unpacking logic - the pipeline and the detector runner
+    (:mod:`autofrap.detectors.cli`) both use it.
+
+    Parameters
+    ----------
+    result: np.ndarray or tuple/list
+        what ``detection_fun`` returned
+
+    Returns
+    -------
+    (labels, stimulation_mask, viz)
+        stimulation_mask / viz are None when the detector omitted them
+
+    Raises
+    ------
+    ValueError
+        anything else (0-tuple, 4+-tuple, other type)
+    """
+    if isinstance(result, np.ndarray):
+        result = (result,)
+    if not isinstance(result, (tuple, list)) or not 1 <= len(result) <= 3:
+        raise ValueError(
+            f"detection_fun returned {type(result).__name__} "
+            f"(length {len(result) if isinstance(result, (tuple, list)) else '-'}); "
+            "expected (labels[, stimulation_mask[, visualization]])"
+        )
+    labels = result[0]
+    stimulation_mask = result[1] if len(result) > 1 else None
+    viz = result[2] if len(result) > 2 else None
+    return labels, stimulation_mask, viz
+
+
+def parse_detector_args(pairs):
+    """
+    Parse repeated KEY=VALUE strings (``--detector-arg``) into a kwargs dict.
+
+    A value becomes an int (or float if it contains a ``.``) when it
+    parses as one, otherwise it stays a string. This is the single home
+    of the ``--detector-arg`` value parsing - the pipeline and the
+    detector runner use it, so the two CLIs cannot drift apart.
+
+    Parameters
+    ----------
+    pairs: iterable of str
+        the raw KEY=VALUE arguments
+
+    Returns
+    -------
+    dict
+        keyword arguments for ``detection_fun``
+
+    Raises
+    ------
+    ValueError
+        an entry without ``=``
+    """
+    kwargs = {}
+    for arg in pairs:
+        if "=" not in arg:
+            raise ValueError(f"expects KEY=VALUE, got: {arg!r}")
+        key, val = arg.split("=", 1)
+        try:
+            val = float(val) if "." in val else int(val)
+        except ValueError:
+            pass
+        kwargs[key] = val
+    return kwargs

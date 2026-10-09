@@ -11,6 +11,11 @@ Usage::
 
     python -m autofrap.pipeline --detector autofrap/detectors/simple_seg_detector.py \
         --detector-arg cell_sigma=16 --detector-arg otsu_frac=0.3
+
+Offline test on a single image (no microscope):
+
+    python -m autofrap.detectors --detector autofrap/detectors/simple_seg_detector.py \
+        path/to/survey.nd2 --detector-arg cell_sigma=16
 """
 from functools import partial
 
@@ -40,21 +45,3 @@ detection_fun = build_detector(
                                     'otsu_frac': 'otsu_frac',
                                     'min_eroded_extent': 'min_eroded_extent'}},
 )
-
-
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('file', help='survey nd2 file')
-    parser.add_argument('--cell-sigma', type=float, default=None)
-    parser.add_argument('--otsu-frac', type=float, default=None)
-    parser.add_argument('--min-eroded-extent', type=float, default=None)
-    args = parser.parse_args()
-    kwargs = {k: v for k, v in [
-        ('cell_sigma', args.cell_sigma),
-        ('otsu_frac', args.otsu_frac),
-        ('min_eroded_extent', args.min_eroded_extent),
-    ] if v is not None}
-    out = detection_fun(args.file, **kwargs)
-    labels = out[0]
-    print(f'labels shape {labels.shape}, objects={int(labels.max())}')

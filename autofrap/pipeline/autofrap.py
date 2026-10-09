@@ -49,8 +49,12 @@ ACQUISITION_MACRO_TIMEOUT = 300  # For operations that may run long acquisitions
 import autofrap.microscope.nis as nis_util
 
 from autofrap.core.utils.grid import grid_positions, spiral_positions
-from autofrap.core.detection import load_detector_file
-from autofrap.core.image.mask import mask_to_polygon, cell_mask, next_stimulatable_cell
+from autofrap.core.detection import (
+    load_detector_file,
+    parse_detector_args,
+    unpack_detection_result,
+)
+from autofrap.core.image.mask import select_next_cell
 from autofrap.core.image.qc import save_qc_overlay
 from autofrap.core.utils.retry import run_with_retries
 
@@ -382,37 +386,34 @@ def _inner_loop_select_cell_and_qc(
     else:
         matched = set()
 
-    cell = next_stimulatable_cell(labels, matched, stimulation_mask)
-    if cell is None:
+    cell, cell_poly, stim_poly, skipped = select_next_cell(
+        labels, matched, stimulation_mask
+    )
+    if skipped:
         logger.info(
-            f"[c{cycle:02d}] {n_obj} objects, all stimulated or no "
-            "stimulation mask -> stop"
+            f"[c{cycle:02d}] cells {skipped}: no viable polygon, skipped"
         )
-        _save_cycle_qc_overlay(
-            viz_image, labels, stimulation_mask, cycle, out_dir, file_prefix,
-            caption=f"{CYCLE_PREFIX}{cycle:02d} no cell (all stimulated / no FRAP mask)",
-        )
-        return None, None, None, n_obj
-
-    skipped = set()
-    while True:
-        cell_poly = mask_to_polygon(cell_mask(labels, cell))
-        stim_poly = mask_to_polygon(cell_mask(labels, cell, stimulation_mask))
-        if cell_poly and stim_poly:
-            break
-        skipped.add(cell)
-        logger.info(f"[c{cycle:02d}] cell {cell}: no polygon, skipping")
-        cell = next_stimulatable_cell(labels, matched | skipped, stimulation_mask)
-        if cell is None:
+    if cell is None:
+        if skipped:
             logger.info(
                 f"[c{cycle:02d}] all {n_obj} objects have no "
                 "polygon -> move to next FOV"
             )
-            _save_cycle_qc_overlay(
-                viz_image, labels, stimulation_mask, cycle, out_dir, file_prefix,
-                caption=f"{CYCLE_PREFIX}{cycle:02d} no cell (no viable polygon)",
+        else:
+            logger.info(
+                f"[c{cycle:02d}] {n_obj} objects, all stimulated or no "
+                "stimulation mask -> stop"
             )
-            return None, None, None, n_obj
+        _save_cycle_qc_overlay(
+            viz_image, labels, stimulation_mask, cycle, out_dir, file_prefix,
+            caption=(
+                f"{CYCLE_PREFIX}{cycle:02d} no cell (no viable polygon)"
+                if skipped
+                else f"{CYCLE_PREFIX}{cycle:02d} no cell "
+                "(all stimulated / no FRAP mask)"
+            ),
+        )
+        return None, None, None, n_obj
 
     logger.info(f"[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}")
     logger.debug(f"[c{cycle:02d}] cell {cell}: polygons with "
@@ -644,19 +645,14 @@ def autofrap_loop_inner(
                 # whether to abort)
                 raise AutofrapError(f"detection failed on {survey_file}: {e!r}") from e
 
-            # 2b. unpack detector output
-            # a bare label map is accepted (normalized to a 1-tuple);
-            # otherwise: a 1-3 tuple/list (labels[, mask[, viz]])
-            if isinstance(detection_results, np.ndarray):
-                detection_results = (detection_results,)
-            if not isinstance(detection_results, (tuple, list)) or not 1 <= len(detection_results) <= 3:
-                raise AutofrapError(
-                    f"detection_fun returned {type(detection_results).__name__}; expected "
-                    "(labels[, stimulation_mask[, visualization]])"
+            # 2b. unpack detector output (the shared contract logic;
+            # the detector runner uses the same function)
+            try:
+                labels, stimulation_mask, viz_image = unpack_detection_result(
+                    detection_results
                 )
-            labels = detection_results[0]
-            stimulation_mask = detection_results[1] if len(detection_results) > 1 else None
-            viz_image = detection_results[2] if len(detection_results) > 2 else None
+            except ValueError as e:
+                raise AutofrapError(f"invalid detector output: {e}") from e
 
             # safe stop point P2: survey acquired + detected, no ROIs
             # created yet (the finally-cleanup just closes the survey
@@ -1103,16 +1099,11 @@ def main(argv=None):
     detection_fun = load_detector_file(args.detector)
 
     detector_kwargs = {}
-    for arg in args.detector_arg:
-        if "=" not in arg:
-            logger.error(f"--detector-arg expects KEY=VALUE, got: {arg!r}")
-            sys.exit(1)
-        key, val = arg.split("=", 1)
-        try:
-            val = float(val) if "." in val else int(val)
-        except ValueError:
-            pass
-        detector_kwargs[key] = val
+    try:
+        detector_kwargs = parse_detector_args(args.detector_arg)
+    except ValueError as e:
+        logger.error(f"--detector-arg {e}")
+        sys.exit(1)
 
     try:
         autofrap(

@@ -15,9 +15,9 @@ Package (`__init__.py` files intentionally empty since 20261001 — import from 
 
 * `pipeline/autofrap.py` – `autofrap()` (entry point: setup + position build), `autofrap_loop_outer()` (loop over positions), `autofrap_loop_inner()` (per-FOV work; the original `autofrap()`); CLI via `python -m autofrap.pipeline`
 * `core/`
-  * `core/detection.py` – `build_detector` composer, `load_detector_file`, runtime parameter routing
+  * `core/detection.py` – `build_detector` composer, `load_detector_file`, `unpack_detection_result` / `parse_detector_args` (shared by both CLIs), runtime parameter routing
   * `core/image/segmentation/` – segmentation building blocks: `simple.py` (Otsu+watershed `SimpleSegParams`/`detect_objects`), `remote.py` (Cellpose client), `dummy.py`
-  * `core/image/mask.py` – mask / label utilities (stim masks, polygons, filters, `next_stimulatable_cell`)
+  * `core/image/mask.py` – mask / label utilities (stim masks, polygons, filters, `next_stimulatable_cell`, `select_next_cell` = pipeline cell selection incl. polygon viability)
   * `core/image/qc.py` – `save_qc_overlay`, `default_visualization`
   * `core/utils/grid.py` – `gen_grid`, `grid_positions`, `spiral_positions` (generator-based)
 * `io/nd2.py` – ND2 read helpers (`read_channel`, `stage_position`)
@@ -25,7 +25,7 @@ Package (`__init__.py` files intentionally empty since 20261001 — import from 
   * `nis.py` – NIS macro wrappers: `_run_macro`, `MacroOp` + `batch_run_macro` (batched ops), getters/setters, ROI + document management, `NDAcquisition` builder
   * `fake_nis.py` – offline stand-in for dry runs
   * `_resources.py` – resource paths (`microscope/res/`)
-* `detectors/` – detector files for `--detector` (one `detection_fun` each; see the directory for the current list)
+* `detectors/` – detector files for `--detector` (one `detection_fun` each; see the directory for the current list) + `cli.py` (offline detector runner: `python -m autofrap.detectors --detector <file> image.nd2` — runs one detector on one image and saves a QC overlay)
 * `autofrap_bitsnpieces/` – one-off experiments, tests, bits & pieces (no per-file docs; see the directory listing)
 
 ### Test data

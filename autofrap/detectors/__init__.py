@@ -5,3 +5,7 @@
 #
 # Users can also write their own detector file and pass it via
 # ``--detector path/to/my_detector.py``.
+#
+# Test any detector file offline on a single image (no microscope):
+# ``python -m autofrap.detectors --detector <file> image.nd2`` (see
+# ``autofrap/detectors/cli.py`` and WRITING_DETECTOR.md §5).

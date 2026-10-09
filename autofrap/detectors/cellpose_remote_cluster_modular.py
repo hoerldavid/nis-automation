@@ -21,6 +21,12 @@ Usage::
         --nx 2 --ny 2 --detector-arg diameter=70 --detector-arg server_url=http://... \
         --detector-arg load_channel=all --detector-arg det_channel=0
 
+Offline test on a single image (no microscope; needs the
+cellpose server):
+
+    python -m autofrap.detectors --detector autofrap/detectors/cellpose_remote_cluster_modular.py \
+        path/to/survey.nd2 --detector-arg diameter=70
+
 --detector-arg values are routed via an explicit parameter_map:
   load_channel -> channel selection for loading (read_channel)
   det_channel  -> channel selection for remote_detect_objects
@@ -73,26 +79,3 @@ detection_fun = build_detector(
                             'metric': 'metric'},
     },
 )
-
-
-if __name__ == '__main__':
-    # Standalone test: run the detector on a provided nd2 file
-    import argparse
-    import numpy as np
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('file', help='survey nd2 file')
-    parser.add_argument('--diameter', type=float, default=None,
-                        help='cellpose diameter parameter')
-    parser.add_argument('--min-size', type=int, default=None,
-                        help='cellpose min_size parameter')
-    args = parser.parse_args()
-
-    kwargs = {k: v for k, v in
-              (('diameter', args.diameter), ('min_size', args.min_size))
-              if v is not None}
-    det = detection_fun(args.file, **kwargs)
-    shapes = [d.shape for d in det if hasattr(d, 'shape')]
-    print(f'returned {len(det)} array(s), shapes: {shapes}')
-    labels = det[0]
-    print(f'labels: {labels.shape} {labels.dtype}, objects={labels.max()}')

@@ -747,3 +747,47 @@ def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
             if stimulation_mask is None or np.any((labels == lbl) & stimulation_mask):
                 return lbl
     return None
+
+
+def select_next_cell(labels, stimulated, stimulation_mask=None):
+    """
+    Pick the next stimulatable cell and compute its ROI polygons.
+
+    The selection the pipeline performs per cycle: candidates are
+    tried via :func:`next_stimulatable_cell` (smallest label first);
+    a candidate whose whole-cell or stimulation polygon comes out
+    empty (:func:`mask_to_polygon`) is skipped and the next candidate
+    is tried instead. This is the exact logic a live run applies, so
+    an offline preview (the detector runner) picks the same cell.
+
+    Parameters
+    ----------
+    labels: 2D np.ndarray (y, x), int
+        label map (0 = background, 1..N = objects)
+    stimulated: set of int
+        cell IDs to exclude (already stimulated / already tried)
+    stimulation_mask: 2D np.ndarray (y, x), optional
+        binary mask of areas eligible for photostimulation
+
+    Returns
+    -------
+    (cell_id, cell_poly, stim_poly, skipped)
+        cell_id: int or None — the selected cell (None if no candidate
+        has a viable polygon pair)
+        cell_poly, stim_poly: list of (x, y) — the whole-cell /
+        stimulation polygons as sent to NIS (None if no cell selected)
+        skipped: list of int — candidates that were tried but rejected
+        (no viable polygon), in the order they were tried
+    """
+    stimulated = set(stimulated)
+    skipped = []
+    while True:
+        cell = next_stimulatable_cell(labels, stimulated, stimulation_mask)
+        if cell is None:
+            return None, None, None, skipped
+        cell_poly = mask_to_polygon(cell_mask(labels, cell))
+        stim_poly = mask_to_polygon(cell_mask(labels, cell, stimulation_mask))
+        if cell_poly and stim_poly:
+            return cell, cell_poly, stim_poly, skipped
+        skipped.append(cell)
+        stimulated.add(cell)

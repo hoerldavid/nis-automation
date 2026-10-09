@@ -104,8 +104,10 @@ detection_fun = build_detector(
 )
 ```
 
-That's it — 12 lines. Run it with
-`python -m autofrap.pipeline --detector this_file.py --nx 1 --ny 1`.
+That's it — 12 lines. Try it offline on one image with
+`python -m autofrap.detectors --detector this_file.py path/to/survey.nd2`
+(see §5), or run the pipeline live with
+`python -m autofrap.pipeline --detector this_file.py --grid --nx 1 --ny 1`.
 
 Reading it back against the steps above:
 
@@ -242,17 +244,34 @@ keys are not routed anywhere.)
 
 ## 5. Testing your detector before a live run
 
-Every detector file can test itself on a single survey image:
+The detector runner executes a detector file on a single image, without
+the microscope:
 
 ```
-python your_detector.py path/to/survey.nd2
+python -m autofrap.detectors --detector your_detector.py path/to/survey.nd2
 ```
 
-(add the `if __name__ == '__main__':` block from any file in
-`autofrap/detectors/` — they all have one). For a visual check without
-the pipeline, use the dummy detector to validate your file's plumbing,
-or run the pipeline with `--nx 1 --ny 1` on one FOV and look at the QC
-overlay.
+Parameters can be tried out with `--detector-arg` exactly as in a live
+run (see §4):
+
+```
+python -m autofrap.detectors --detector your_detector.py path/to/survey.nd2 \
+    --detector-arg diameter=70 --detector-arg load_channel=all
+```
+
+It prints a per-cell summary — object area, bleach-region area, which
+cell a live run would pick first (candidates without a viable ROI
+polygon are reported as skipped) — and writes the QC overlay:
+`survey_qc.png` next to the image, or wherever `--out` points. The
+overlay shows your visualization, all detected cells, the bleach
+regions and the first pick's ROI polygons — the same picture a live
+run saves per cycle. Exit code 0 means the detection ran, even when no
+cell is selectable: the overlay then shows what the detector did find,
+so you can tell a truly empty image from thresholds set too strict.
+
+For an end-to-end check including the microscope, run the pipeline
+itself on one FOV (`--grid --nx 1 --ny 1`) and look at the per-cycle QC
+overlays in the run directory.
 
 ## 6. What the pipeline checks for you
 
