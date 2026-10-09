@@ -51,7 +51,7 @@ it per run with `--detector-arg server_url=http://<server>:8000`.
 No microscope required:
 
 ```bash
-python autofrap/autofrap_bitsnpieces/dry_run_pipeline.py --preset simple_seg
+python -m autofrap.pipeline.dry_run --preset simple_seg
 ```
 
 Presets:
@@ -60,9 +60,11 @@ Presets:
 * `cellpose` → `autofrap/detectors/cellpose_remote_halfnucleus_modular.py` with `diameter=70` (needs the server)
 
 The dry run is designed to work with arbitrary existing ND2 files. The
-test script uses a hardcoded survey glob, but the pipeline itself
+tool uses a default survey glob (`--sources`), but the pipeline itself
 accepts any source list. It copies source ND2s as surveys/FRAPs and
-writes QC PNGs.
+writes QC PNGs. By default it visits each source file once (at most 25
+positions); pass `--max-positions` / `--grid` / `--nx` / `--ny` to
+override.
 
 ## Run on the microscope
 

@@ -14,6 +14,7 @@
 Package (`__init__.py` files intentionally empty since 20261001 — import from the submodules; the old re-exports and `autofrap_grid`/`autofrap_multiposition` aliases are gone).
 
 * `pipeline/autofrap.py` – `autofrap()` (entry point: setup + position build), `autofrap_loop_outer()` (loop over positions), `autofrap_loop_inner()` (per-FOV work; the original `autofrap()`); CLI via `python -m autofrap.pipeline`
+* `pipeline/dry_run.py` – offline dry-run tool, `python -m autofrap.pipeline.dry_run`: the real CLI under FakeNIS, with detector presets and the position count capped to the number of source files by default
 * `core/`
   * `core/detection.py` – `build_detector` composer, `load_detector_file`, `unpack_detection_result` / `parse_detector_args` (shared by both CLIs), runtime parameter routing
   * `core/image/segmentation/` – segmentation building blocks: `simple.py` (Otsu+watershed `SimpleSegParams`/`detect_objects`), `remote.py` (Cellpose client), `dummy.py`
@@ -26,10 +27,10 @@ Package (`__init__.py` files intentionally empty since 20261001 — import from 
   * `fake_nis.py` – offline stand-in for dry runs
   * `_resources.py` – resource paths (`microscope/res/`)
 * `detectors/` – detector files for `--detector` (one `detection_fun` each; see the directory for the current list) + `cli.py` (offline detector runner: `python -m autofrap.detectors --detector <file> image.nd2` — runs one detector on one image and saves a QC overlay)
-* `autofrap_bitsnpieces/` – one-off experiments, plots, tools (no per-file docs; see the directory listing) — the test suite lives in `tests/`
+* `autofrap_bitsnpieces/` – one-off experiments, plots, benchmarks (no per-file docs; see the directory listing) — the test suite lives in `tests/`, the dry-run tool in `autofrap/pipeline/dry_run.py`
 
 ### `tests/`
-Stdlib `unittest` suite, mirroring the `autofrap/` layout (`core/`, `io/`, `microscope/`, `pipeline/`, `live/`). Run from the repo root: `python -m unittest discover -s tests -t .` (plain `python -m unittest discover` works too). `tests/live/` holds the microscope probes — they auto-skip off the workstation; data-dependent tests skip when their files (`01.nd2`, `test_acquisitions/`, `test_data/`) are missing, so the suite is green on every machine.
+Stdlib `unittest` suite, mirroring the `autofrap/` layout (`core/`, `io/`, `microscope/`, `pipeline/`, `live/`). Run from the repo root: `python -m unittest discover -s tests -t .` (plain `python -m unittest discover` works too). `tests/live/` holds the microscope probes — they auto-skip off the workstation; data-dependent tests skip when their files (`01.nd2`, `test_acquisitions/`, `test_data/`) are missing, so the suite is green on every machine. `tests/pipeline/test_dry_run_cli.py` covers the CLI layer itself end-to-end (argument parsing, `--detector` file loading, exit codes) — the other pipeline tests drive the loops directly.
 
 ### Test data
 * `test_acquisitions/`
