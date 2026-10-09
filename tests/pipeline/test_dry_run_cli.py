@@ -10,6 +10,8 @@ bytes and the stub detector never reads them. (Per the suite's scope:
 the pipeline logic is tested here, not the detectors - read_channel and
 load_detector_file have their own unit tests.)
 """
+import contextlib
+import io
 import logging
 import os
 import tempfile
@@ -81,6 +83,17 @@ class TestBuildArgv(unittest.TestCase):
         argv = dry_run.build_argv('dummy', ['a.nd2', 'b.nd2'], 'out', 'nm',
                                   ['--spacing', '0.8'])
         self.assertEqual(argv[argv.index('--max-positions') + 1], '2')
+
+
+class TestDryRunToolArgs(unittest.TestCase):
+    """the dry-run tool's own argument parsing (no FakeNIS, no pipeline)"""
+
+    def test_sources_required(self):
+        """--sources has no default: argparse rejects a dry run without it"""
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                dry_run.main(['--preset', 'dummy'])
+        self.assertEqual(cm.exception.code, 2)
 
 
 class _ListHandler(logging.Handler):

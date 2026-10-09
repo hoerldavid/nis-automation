@@ -5,7 +5,7 @@
 ### Root
 * `cellpose_server/` – self-contained FastAPI Cellpose inference server (script + `requirements.txt` + README; `--device auto|cuda|mps|cpu`). Runs on a remote GPU machine — the microscope PC is CPU-only (its K2200 GPU is unsupported by current PyTorch); GPU inference is much faster than CPU (verified live)
 * `pyproject.toml`, `requirements.txt`
-* `DESIGN_GOALS_AUTOFRAP.md`, `README_draft.md`, `STATUS.md`
+* `README.md`, `WRITING_DETECTOR.md`, `DESIGN_GOALS_AUTOFRAP.md`, `STATUS.md`
 * `docs/` – split documentation
 * `legacy/wingscanner/` – pre-existing wing-scanner project (kept as-is): `automation.py`, `annotation.py`, `resources.py`, `simple_detection.py`, `start_wing_scanner.bat`, calibration JSONs in `res/`, exploratory notebooks, plus `nis_util.py` / `grid_utils.py` shims that re-export the package modules for the legacy code
 * `nis_manual/` – intended location for the NIS manual: `README.md` describes how to obtain the (copyrighted, gitignored) `.chm` files from a NIS installation and extract them to greppable HTML; `nis_ar_help_html/` – the extracted macro reference HTML (both gitignored)

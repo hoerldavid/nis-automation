@@ -11,6 +11,7 @@ Everything the pipeline CLI offers works as-is (--grid, --max-positions,
 - this tool only adds:
 
   * FakeNIS patching, sourcing "acquired" surveys from --sources
+    (required - no default: pass a glob of your own survey files)
   * detector presets for convenience (--preset)
   * dry-run defaults: --out test_acquisitions/dry_run, --name dryrun
     (both overridable by passing the same flags)
@@ -20,10 +21,14 @@ Everything the pipeline CLI offers works as-is (--grid, --max-positions,
 
 Examples:
 
-    python -m autofrap.pipeline.dry_run --preset dummy
+    python -m autofrap.pipeline.dry_run --preset dummy \
+        --sources "test_acquisitions/autofrap_out/*survey.nd2"
         offline: dummy detector, one FOV per source file, 1 cycle per FOV
-    python -m autofrap.pipeline.dry_run --preset simple_seg --max-positions 5 --max-cycles 3
-    python -m autofrap.pipeline.dry_run --preset cellpose --detector-arg server_url=http://localhost:9000
+    python -m autofrap.pipeline.dry_run --preset simple_seg \
+        --sources "/path/to/data/*survey.nd2" --max-positions 5 --max-cycles 3
+    python -m autofrap.pipeline.dry_run --preset cellpose \
+        --sources "/path/to/data/*survey.nd2" \
+        --detector-arg server_url=http://localhost:9000
         (needs the cellpose server; the preset already sets a default)
 """
 import argparse
@@ -93,10 +98,10 @@ def main(argv=None):
     p.add_argument('--preset', choices=sorted(PRESETS), default='dummy',
                    help='detector preset: expands to --detector / '
                         '--detector-arg (default: %(default)s)')
-    p.add_argument('--sources',
-                   default='test_acquisitions/autofrap_out/*survey.nd2',
+    p.add_argument('--sources', required=True,
                    help='glob of nd2 files FakeNIS copies as the '
-                        '"acquired" surveys (default: %(default)s)')
+                        '"acquired" surveys (required: pass your own '
+                        'survey files, e.g. "/path/to/data/*survey.nd2")')
     p.add_argument('--out', '-o', default='test_acquisitions/dry_run',
                    help='output directory (default: %(default)s)')
     p.add_argument('--name', default='dryrun',
