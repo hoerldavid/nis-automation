@@ -35,14 +35,15 @@ python -m autofrap.pipeline --help
 
 Only needed for the `cellpose_remote_*` detector files; all other
 detectors run fully local. Run on a separate machine with GPU / Apple
-Silicon:
+Silicon — the server lives in `cellpose_server/` (self-contained:
+script + `requirements.txt` + README; see `cellpose_server/README.md`
+for setup, including the torch/CUDA and dinov3 notes):
 
 ```bash
-pip install cellpose
-python /path/to/repo/cellpose_server.py --device auto --host 0.0.0.0 --port 8000
+python /path/to/repo/cellpose_server/cellpose_server.py --device auto --host 0.0.0.0 --port 8000
 ```
 
-`cellpose_server.py` lives in the repository root. The detector files default to `DEFAULT_CELLPOSE_SERVER_URL` (defined
+The detector files default to `DEFAULT_CELLPOSE_SERVER_URL` (defined
 at the top of each file — edit it there if the server moves), or pass
 it per run with `--detector-arg server_url=http://<server>:8000`.
 

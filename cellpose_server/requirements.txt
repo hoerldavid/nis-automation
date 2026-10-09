@@ -1,0 +1,11 @@
+# cellpose inference server dependencies (see README.md)
+#
+# torch is intentionally NOT listed: cellpose pulls it in as a transient
+# dependency when it is missing, and the default build may not match
+# your CUDA version - install a CUDA-matched torch first (README.md).
+fastapi
+uvicorn
+cellpose
+# the default model (cpdino-vitb) is DINOv3-based and needs one more
+# package that is not on PyPI:
+#   pip install git+https://github.com/facebookresearch/dinov3

@@ -3,7 +3,7 @@
 ## Repository layout
 
 ### Root
-* `cellpose_server.py` – FastAPI Cellpose inference server, `--device auto|cuda|mps|cpu`. Runs on a remote GPU machine — the microscope PC is CPU-only (its K2200 GPU is unsupported by current PyTorch); GPU inference is much faster than CPU (verified live)
+* `cellpose_server/` – self-contained FastAPI Cellpose inference server (script + `requirements.txt` + README; `--device auto|cuda|mps|cpu`). Runs on a remote GPU machine — the microscope PC is CPU-only (its K2200 GPU is unsupported by current PyTorch); GPU inference is much faster than CPU (verified live)
 * `pyproject.toml`, `requirements.txt`
 * `DESIGN_GOALS_AUTOFRAP.md`, `README_draft.md`, `STATUS.md`
 * `docs/` – split documentation

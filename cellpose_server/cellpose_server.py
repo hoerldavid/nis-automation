@@ -25,23 +25,15 @@ Endpoints:
 The model is loaded once at startup; inference requests are serialized
 with a lock (single GPU).
 
-Setup on the server machine:
-    pip install fastapi uvicorn cellpose
-    # pretrained weights are downloaded on first model load, or copy
-    # the local model cache over to skip the download
-
-Run:
-    python cellpose_server.py --model cpdino-vitb --host 0.0.0.0 --port 8000
-    # device: 'auto' (default) picks cuda, then mps (Apple Silicon),
-    # then cpu; override with --device cuda / mps / cpu
-    # (mps support depends on the installed cellpose version - if a
-    # model errors on mps, retry with --device cpu or a newer cellpose)
-
 Wire format: raw np.save bytes (magic + shape/dtype header + data).
 A 1024x1024 uint16 image is ~2 MB - no compression needed on a LAN.
 
 Plain HTTP, no auth: intended for a trusted lab network. Add a token
 check (FastAPI dependency on /detect) if it ever leaves that network.
+
+Setup and run: see README.md in this directory (requirements.txt holds
+the pip dependencies; install a CUDA-matched torch first, and dinov3
+for the default model).
 """
 import argparse
 import io
