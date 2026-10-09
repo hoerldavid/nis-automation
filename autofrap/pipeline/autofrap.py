@@ -241,14 +241,94 @@ def autofrap(
     return_to_start=True,
     **detector_kwargs,
 ):
-    """Outermost autoFRAP entry point.
+    """Outermost autoFRAP entry point: microscope setup, position
+    building, the loop over positions (autofrap_loop_outer ->
+    autofrap_loop_inner) and guaranteed cleanup.
 
-    Performs setup, builds positions (default: centre-out spiral with
-    SPIRAL_DEFAULT_POSITIONS positions; spiral=False for the plain
-    NxM grid from nx/ny), runs the outer loop over positions and
-    guarantees cleanup. Parameters are passed through to
-    autofrap_loop_outer (see there, e.g. max_consecutive_failures for
-    the failure policy).
+    Positions form a centre-out square spiral (SPIRAL_DEFAULT_POSITIONS
+    by default) around the current stage position; spiral=False selects
+    the plain nx*ny row-major grid. All acquisition settings come from
+    the NIS GUI (the ND acquisition definition carries the survey's
+    optical configuration).
+
+    Output: <out_dir>/<run_name>/ with per-cycle files
+    <fovNN>_cycle<NN>_survey.nd2 / _frap.nd2 / _survey_qc.png
+    (fov_subdirs=True: one fov<NN>/ sub-directory per FOV;
+    run_name = <YYYYmmdd_HHMMSS>[_<name>]).
+
+    Error handling and clean-stop policy: see the module docstring
+    (FOV-level failures vs. AbortRunError vs. AutofrapInterruptedException).
+
+    Parameters
+    ----------
+    nis_exe: str
+        path to the nis_ar.exe executable
+    out_dir: str
+        output directory; a <run_name> sub-directory is created in it
+    nx, ny: int
+        grid dimensions (grid mode only, i.e. spiral=False; 1x1 = single FOV)
+    spacing: float
+        distance between positions in units of the field of view (1 = touching)
+    spiral: bool
+        True (default): centre-out square spiral over max_positions
+        positions; False: plain nx*ny grid, truncated by max_positions
+    max_positions: int, optional
+        cap on the number of positions to visit (spiral default:
+        SPIRAL_DEFAULT_POSITIONS; grid default: all of nx*ny)
+    max_cycles: int, optional
+        max FRAP cycles per FOV (default: until all detected cells are done)
+    detection_fun: callable, required
+        survey_file -> (labels[, stimulation_mask[, visualization]])
+        or a bare label map - the detector contract is documented in
+        WRITING_DETECTOR.md and autofrap.core.detection; a detector
+        file is loaded via load_detector_file for CLI use. Without a
+        stimulation mask the whole cell is FRAPed; the visualization is
+        the QC-overlay background (absent -> blank canvas)
+    frap_oc: str
+        optical configuration to activate before each stimulation
+    centroid_threshold: float or 'auto'
+        centroid distance (px) for matching cells across cycles:
+        'auto' (default) matches within each cell's equivalent_diameter
+        (regionprops); a number sets a fixed matching radius
+    fov_subdirs: bool
+        give each FOV its own <run_name>/fov<NN>/ sub-directory
+        (default: all FOVs in the single run directory, the position
+        encoded in the file names)
+    name: str, optional
+        experiment name appended to the run directory name
+        (<timestamp>_<name>, or exactly <name> with use_timestamp=False);
+        restricted to [A-Za-z0-9._-]
+    use_timestamp: bool
+        prefix the run directory name with a timestamp (default True)
+    stop_check: callable, optional
+        zero-arg callable returning True when a clean stop was requested
+        (e.g. Ctrl-C via the CLI); checked between cycles and between
+        FOVs, and after survey + detection when
+        allow_interrupt_after_survey is set. A stop raises
+        AutofrapInterruptedException at the next safe boundary so the
+        cleanup runs from a known state
+    allow_interrupt_after_survey: bool
+        allow the stop between detection and ROI creation instead of
+        waiting for the end of the current cycle (default False; the
+        cycle end is the cleanest exit state)
+    max_consecutive_failures: int
+        abort the run after this many FOVs failed in a row (default 3)
+    return_to_start: bool
+        move back to the starting position after the run (default True)
+    detector_kwargs: dict, optional
+        extra keyword arguments forwarded to detection_fun at each call,
+        e.g. {'diameter': 30}; from the CLI these come from
+        --detector-arg key=value (repeatable)
+
+    Raises
+    ------
+    AbortRunError
+        configuration or resource problems found before or between FOVs
+        (NIS not running, misconfigured survey template, invalid
+        detector, run directory collision) - the run aborts immediately
+    AutofrapInterruptedException
+        a clean stop was requested (stop_check) - raised at the next
+        safe boundary; the run ends cleanly, not as a failure
     """
     if detection_fun is None:
         raise AbortRunError(
@@ -495,117 +575,40 @@ def autofrap_loop_inner(
     allow_interrupt_after_survey=False,
     **detector_kwargs,
 ):
-    """
-    Auto-FRAP inner loop: survey -> detect -> pick unused cell -> stimulate -> repeat.
-
-    All acquisition settings come from the NIS GUI (the ND acquisition
-    definition carries the survey's optical configuration); this function
-    just runs them in a loop.
+    """Internal: the per-FOV cycle loop (a layer of autofrap(); see
+    there for the shared parameters nis_exe, out_dir, max_cycles,
+    detection_fun, frap_oc, centroid_threshold, stop_check,
+    allow_interrupt_after_survey and detector_kwargs).
 
     Per cycle:
-      1. run the current ND experiment, saved to
-         <file_prefix>_cycle<NN>_survey.nd2 (file_prefix defaults to a
-         timestamp for standalone runs; autofrap_loop_outer passes 'fov<NN>')
-      2. detect objects in the survey image (detection_fun — required,
-         e.g. one of the built-ins in autofrap/detectors/, see
-         WRITING_DETECTOR.md) — returns
-         (labels[, stimulation_mask[, visualization]]): only the label
-         map is required (a bare label map is accepted); without a
-         stimulation mask the whole cell is FRAPed, the visualization is
-         used for the QC overlay only
-      3. match detected objects to the accumulated "already-imaged" map
-         via centroid distance; pick the smallest unmatched label that
-         has at least one pixel in the stimulation mask
-      4. compute the ROI polygons and save a QC overlay PNG
-         (<file_prefix>_cycle<NN>_survey_qc.png: detection, FRAP mask, selected
-         cell, polygons as sent to NIS — on a blank canvas when the
-         detector provides no visualization); warn-and-continue on
-         failure, saved before the stimulation run so it survives it.
-         When no cell is available, the overlay is still saved (labels +
-         FRAP mask, without cell/ROI polygons) so the FOV can be
-         diagnosed: truly empty vs. detector thresholds too conservative
-      5. open the survey image in NIS, add two ROIs: the whole cell
-         (for downstream analysis) and the stimulation region
-         ((labels == cell_id) & stimulation_mask), the latter set to
-         stimulation mode (type 3)
-      6. switch optical conf to FRAPPA, run the current sequential
-         stimulation experiment
-      7. save the FRAP timeseries to <file_prefix>_cycle<NN>_frap.nd2 (the
-         stimulation ROI is part of the saved file)
-      8. delete both ROIs (so they don't linger for the next cycle) and
-         close the FRAP + survey documents
-      9. add the stimulated cell's centroid to the "already-imaged" map
-    -> next cycle (the ND experiment definition restores the survey OC)
+      1. acquire the survey image via the current ND experiment,
+         saved to <file_prefix>_cycle<NN>_survey.nd2 and kept open
+      2. run detection_fun on it (detector contract: WRITING_DETECTOR.md)
+      3. pick the next cell: the smallest label not yet in the
+         accumulated "already-imaged" map (centroid match via
+         centroid_threshold) that has stimulation-eligible pixels and
+         viable ROI polygons
+      4. save the QC overlay PNG (<file_prefix>_cycle<NN>_survey_qc.png:
+         detection, FRAP mask, selected cell + its polygons as sent to
+         NIS) - before stimulation, so it survives it; also saved when
+         no cell is selectable (without the polygons, for diagnosis)
+      5. create the stimulation + whole-cell ROIs, switch to frap_oc,
+         run the current sequential stimulation experiment and save
+         the timeseries to <file_prefix>_cycle<NN>_frap.nd2
+      6. cleanup (ROIs deleted, documents closed - finally-cleanup) and
+         record the stimulated cell's centroid as imaged
 
-    The loop stops when every detected object has been stimulated, when
-    no cell has stimulation-eligible pixels, when max_cycles is reached, or
-    when the user requests a clean stop (stop_check, e.g. Ctrl-C via the
-    CLI): the run then ends at the next safe boundary (end of a cycle,
-    or after survey + detection with allow_interrupt_after_survey) with
-    the usual finally-cleanup, and a grid run reports 'stopped by user'
-    instead of aborting.
+    The loop stops when no cell is selectable, at max_cycles, or on a
+    stop_check request: at cycle end (P1, the default, cleanest state)
+    or after survey + detection (P2, opt-in via
+    allow_interrupt_after_survey); a stop raises
+    AutofrapInterruptedException so the finally-cleanup runs from a
+    known state. Any other failure propagates to the outer loop (one
+    failed FOV; see the module docstring for the failure policy).
 
-    Parameters
-    ----------
-    nis_exe: str
-        path to the nis_ar.exe executable
-    out_dir: str
-        output directory for survey + FRAP files
-    max_cycles: int, optional
-        stop after this many cycles (default: until all cells done)
-    detection_fun: callable, required
-        survey_file -> (labels[, stimulation_mask[, visualization]])
-        or a bare label map; only the label map is required.
-        stimulation_mask (FRAP sub-regions): None or absent -> the
-        whole cell is FRAPed.
-        visualization (2D or RGB(A), detector-assembled, e.g.
-        multi-channel): used for the QC overlay only; absent -> the
-        overlay is drawn on a blank canvas (autofrap() does not know
-        which channel(s) the detector used). A detector file is
-        loaded via :func:`detection.load_detector_file` for CLI use;
-    frap_oc: str
-        optical configuration to activate before each stimulation
-    centroid_threshold: float or 'auto'
-        centroid distance threshold (px) for matching cells across
-        consecutive cycles.  ``'auto'`` (default): uses each cell's
-        ``equivalent_diameter`` from ``regionprops`` — a matched cell
-        is one whose centroid lies within one equivalent-diameter of
-        a previously stimulated cell's centroid.  A numeric value
-        overrides this heuristic with a fixed radius.
-    file_prefix: str, optional
-        prefix for the per-cycle file names
-        (<file_prefix>_cycle<NN>_survey.nd2, ...); default: a timestamp
-        (YYYYmmdd_HHMMSS) for standalone runs — autofrap_loop_outer passes
-        'fov<NN>' per position. Set to '' for plain cycle<NN>_... names.
-    stop_check: callable, optional
-        zero-arg callable returning True when a clean stop was requested
-        (e.g. by Ctrl-C); checked at the start of each cycle (after the
-        previous cycle fully completed — ROIs deleted, documents
-        closed) and, when allow_interrupt_after_survey is True, right
-        after survey + detection (before any ROI is created). A stop
-        raises AutofrapInterruptedException so the finally-cleanup runs
-        from a known state.
-    allow_interrupt_after_survey: bool
-        allow the stop between detection and ROI creation (default
-        False — the stop always waits for the end of the current cycle,
-        which is the cleanest exit state).
-    detector_kwargs: dict, optional
-        extra keyword arguments forwarded to ``detection_fun`` at each
-        call, e.g. ``{'diameter': 30, 'channel': 0}``.  From the CLI
-        these come from ``--detector-arg key=value`` (repeatable).
-
-
-    Raises
-    ------
-    AutofrapError and other exceptions
-        any failure during a cycle (missing survey/FRAP file, detector
-        error, NIS macro timeout or aborted read-back, ROI creation
-        failed, OS error, ...): the finally-cleanup runs, this FOV
-        fails, and the outer loop applies the consecutive-failure
-        policy (continue / abort)
-    AutofrapInterruptedException
-        a clean stop was requested (stop_check) and the next safe
-        boundary was reached; the run should be stopped by outer loop
+    file_prefix: per-FOV file-name prefix; autofrap_loop_outer passes
+        'fov<NN>', the default is a timestamp (standalone runs); ''
+        gives plain cycle<NN>_... names
     """
 
     os.makedirs(out_dir, exist_ok=True)
@@ -712,75 +715,35 @@ def autofrap_loop_outer(
     max_consecutive_failures=3,
     **detector_kwargs,
 ):
-    """
-    Go over multiple stage positions / FOVs and run one or more autoFRAP cycles at each.
+    """Internal: loop over the precomputed stage positions, running
+    autofrap_loop_inner per FOV (a layer of autofrap(); see there for
+    the shared parameters nis_exe, out_dir, max_cycles, detection_fun,
+    frap_oc, centroid_threshold, stop_check,
+    allow_interrupt_after_survey and detector_kwargs).
 
-    By default all FOVs are written to a single run directory; the
-    'fov<NN>' file prefix (matching the log lines) keeps files
-    self-describing and makes one folder easy to browse (QC PNGs side
-    by side) or to hand to downstream analysis:
+    Creates the run directory (<out_dir>/<YYYYmmdd_HHMMSS>[_<name>]; an
+    existing non-empty directory aborts the run before any
+    acquisition), visits the positions in order (fov_subdirs=True: one
+    fov<NN>/ sub-directory per FOV), and applies the consecutive-FOV-
+    failure policy (see the module docstring): a failed stage move or
+    inner loop skips the position, max_consecutive_failures in a row
+    abort the run with AbortRunError. stop_check is honored between
+    FOVs; a stop ends the run cleanly (AutofrapInterruptedException),
+    the remaining positions are not visited.
 
-        <out_dir>/<run_name>/
-            <fovNN>_cycleNN_survey.nd2
-            <fovNN>_cycleNN_frap.nd2
-            <fovNN>_cycleNN_survey_qc.png
-
-    run_name is a timestamp (<YYYYmmdd_HHMMSS>) by default, or
-    <timestamp>_<name> when name is given (and <name> alone when
-    use_timestamp=False). An existing non-empty run directory aborts
-    the run before any acquisition (an empty one is reused).
-
-    With fov_subdirs=True, each FOV goes into its own sub-directory
-    instead (<run_stamp>/fov<NN>/, same file names).
-
-    Parameters
-    ----------
-    nis_exe, out_dir: str
-        as in autofrap(); a <run_stamp> sub-directory is created in
-        out_dir for this grid run
     positions: list of (x, y)
-        precomputed stage positions in visit order; the list is generated
-        outside (e.g. via :func:`grid_positions` for a plain NxM grid or
-        :func:`spiral_positions` for a centre-out spiral).
-    return_to_start: bool
-        move back to the starting position after the last FOV
-    max_cycles, detection_fun, frap_oc, centroid_threshold:
-        passed through to autofrap() unchanged
-    fov_subdirs: bool
-        give each FOV its own <run_name>/fov<NN>/ sub-directory
-        (default: all FOVs in the single run directory, position
-        encoded in the file names)
-    name: str, optional
-        experiment name appended to the run directory name (see
-        above); restricted to [A-Za-z0-9._-]
-    use_timestamp: bool
-        prefix the run directory name with a timestamp (default True);
-        only meaningful together with name
-    stop_check, allow_interrupt_after_survey:
-        passed through to autofrap_loop_inner() unchanged; additionally the grid
-        checks stop_check between FOVs. A requested stop stops the run
-        at the next safe boundary (AutofrapInterruptedException from
-        autofrap_loop_inner()) — this is not a failure: the remaining positions
-        are simply not visited and the partial results are returned
-    max_consecutive_failures: int, default 3
-        the grid run aborts when this many FOVs fail in a row. A failed
-        FOV is any error during the stage move or the inner loop; a FOV
-        that completes normally - even with zero cycles - resets the
-        counter
-    detector_kwargs: dict, optional
-        extra keyword arguments forwarded to ``autofrap_loop_inner`` →
-        ``detection_fun`` (see :func:`autofrap_loop_inner` for details); from the
-        CLI these come from ``--detector-arg key=value`` (repeatable)
+        stage positions in µm, in visit order, generated outside
+        (autofrap uses build_positions; see core.utils.grid for
+        grid_positions / spiral_positions)
 
     Raises
     ------
     AbortRunError
-        if the experiment name is invalid, no positions are given, or
-        the run directory already exists and is non-empty (setup
-        failures are raised by setup_microscope, before this function)
+        invalid experiment name, positions=None, or a non-empty run
+        directory (setup failures are raised by setup_microscope,
+        before this function)
     AutofrapInterruptedException
-        a clean stop was requested; the unvisited positions (including
-        the current one) do not appear in results
+        a clean stop was requested (re-raised after the summary log)
     """
     if name is not None and not all(c.isalnum() or c in "._-" for c in name):
         raise AbortRunError(
