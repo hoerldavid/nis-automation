@@ -154,7 +154,7 @@ def build_detector(
         def filter_expressing(labels, image):
             good = []
             for rp in regionprops(labels, intensity_image=image[1]):
-                if rp.mean_intensity > 500:
+                if rp.intensity_mean > 500:
                     good.append(rp.label)
             return good
 

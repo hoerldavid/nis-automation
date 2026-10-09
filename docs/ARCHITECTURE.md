@@ -17,7 +17,7 @@ Package (`__init__.py` files intentionally empty since 20261001 — import from 
 * `core/`
   * `core/detection.py` – `build_detector` composer, `load_detector_file`, `unpack_detection_result` / `parse_detector_args` (shared by both CLIs), runtime parameter routing
   * `core/image/segmentation/` – segmentation building blocks: `simple.py` (Otsu+watershed `SimpleSegParams`/`detect_objects`), `remote.py` (Cellpose client), `dummy.py`
-  * `core/image/mask.py` – mask / label utilities (stim masks, polygons, filters, `next_stimulatable_cell`, `select_next_cell` = pipeline cell selection incl. polygon viability)
+  * `core/image/mask.py` – mask / label utilities (stim masks, polygons, filters, `match_imaged_centroids` = cross-cycle cell matching, `next_stimulatable_cell`, `select_next_cell` = pipeline cell selection incl. polygon viability)
   * `core/image/qc.py` – `save_qc_overlay`, `default_visualization`
   * `core/utils/grid.py` – `gen_grid`, `grid_positions`, `spiral_positions` (generator-based)
 * `io/nd2.py` – ND2 read helpers (`read_channel`, `stage_position`)
@@ -26,7 +26,10 @@ Package (`__init__.py` files intentionally empty since 20261001 — import from 
   * `fake_nis.py` – offline stand-in for dry runs
   * `_resources.py` – resource paths (`microscope/res/`)
 * `detectors/` – detector files for `--detector` (one `detection_fun` each; see the directory for the current list) + `cli.py` (offline detector runner: `python -m autofrap.detectors --detector <file> image.nd2` — runs one detector on one image and saves a QC overlay)
-* `autofrap_bitsnpieces/` – one-off experiments, tests, bits & pieces (no per-file docs; see the directory listing)
+* `autofrap_bitsnpieces/` – one-off experiments, plots, tools (no per-file docs; see the directory listing) — the test suite lives in `tests/`
+
+### `tests/`
+Stdlib `unittest` suite, mirroring the `autofrap/` layout (`core/`, `io/`, `microscope/`, `pipeline/`, `live/`). Run from the repo root: `python -m unittest discover -s tests -t .` (plain `python -m unittest discover` works too). `tests/live/` holds the microscope probes — they auto-skip off the workstation; data-dependent tests skip when their files (`01.nd2`, `test_acquisitions/`, `test_data/`) are missing, so the suite is green on every machine.
 
 ### Test data
 * `test_acquisitions/`
@@ -47,7 +50,7 @@ Package (`__init__.py` files intentionally empty since 20261001 — import from 
 `autofrap()` → setup + position build → `autofrap_loop_outer()` → per position → `autofrap_loop_inner()` → per cycle:
 1. `move_stage_with_retry` (batched set+get, position verified) → `run_current_nd_experiment` → survey ND2
 2. `detection_fun(survey_file)` → labels, stim_mask, viz
-3. `next_stimulatable_cell` with centroid matching
+3. `match_imaged_centroids` + `select_next_cell` (candidate order incl. polygon viability)
 4. batched ROIs: `create_and_set_stim_roi` stim ROI (type 3 folded in) + `add_polygon_roi` whole cell
 5. batched: `set_optical_configuration` → `run_stimulation_experiment` → `activate_document` + `save_current_document` → FRAP ND2
 6. `cleanup_everything`: delete all ROIs + close documents (batched)

@@ -154,6 +154,21 @@ Per FOV:
 
 The pipeline returns to start position on completion or abort.
 
+## Development: running the tests
+
+The test suite (`tests/`, stdlib `unittest`, no extra dependencies)
+mirrors the package layout:
+
+```bash
+python -m unittest discover -s tests -t .    # from the repo root
+```
+
+`tests/live/` holds the probes that need the microscope (NIS-Elements
+open) — they skip automatically on any other machine, and tests that
+need data files not present on your machine skip as well, so the
+suite is green everywhere. See `STATUS.md` and `docs/ARCHITECTURE.md`
+for the layout.
+
 ## Notes
 
 * Survey files can be multi-channel. `load_fun` returns `(c, y, x)`

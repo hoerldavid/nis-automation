@@ -17,8 +17,8 @@ OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def plot_spiral(max_positions, fov, spacing, center, title):
-    """Plot the spiral pattern."""
-    positions = spiral_positions(center, fov, spacing, max_positions)
+    """Plot the spiral pattern. fov is the (fov_x, fov_y) tuple."""
+    positions = spiral_positions(center, fov, max_positions, spacing)
     xs = [p[0] for p in positions]
     ys = [p[1] for p in positions]
 
@@ -37,7 +37,7 @@ def plot_spiral(max_positions, fov, spacing, center, title):
                 color='red', fontweight='bold', zorder=5)
 
     # Draw layer boundaries
-    step = spacing * fov
+    step = spacing * fov[0]
     for n in range(1, 5):
         square = plt.Rectangle(
             (center[0] - n * step, center[1] - n * step),
@@ -67,17 +67,17 @@ def plot_spiral(max_positions, fov, spacing, center, title):
 
 # --- Plots ---
 
-plot_spiral(25, fov=10.0, spacing=1.0, center=(0, 0),
+plot_spiral(25, fov=(10.0, 10.0), spacing=1.0, center=(0, 0),
             title="25 positions (5x5)")
 
-plot_spiral(65, fov=10.0, spacing=1.0, center=(0, 0),
+plot_spiral(65, fov=(10.0, 10.0), spacing=1.0, center=(0, 0),
             title="65 positions (layers 0-3)")
 
-plot_spiral(200, fov=10.0, spacing=1.0, center=(0, 0),
+plot_spiral(200, fov=(10.0, 10.0), spacing=1.0, center=(0, 0),
             title="200 positions (layers 0-5)")
 
 # Overlapping FOV example
-plot_spiral(25, fov=10.0, spacing=0.8, center=(0, 0),
+plot_spiral(25, fov=(10.0, 10.0), spacing=0.8, center=(0, 0),
             title="25 positions with overlap (spacing=0.8)")
 
 print("All plots saved.")

@@ -607,8 +607,13 @@ def filter_intensity_inside(labels, image, channel=0, metric='mean', threshold=0
         if rp.label == 0:
             continue
         if metric == 'mean':
-            # regionprops uses deprecated attribute name in older versions
-            val = getattr(rp, 'mean_intensity', getattr(rp, 'intensity_mean'))
+            # skimage 0.26 renamed mean_intensity -> intensity_mean (old
+            # name deprecated, removal in 2.0); prefer the new name. An
+            # explicit None check: a getattr default is evaluated eagerly
+            # and would touch the deprecated property anyway.
+            val = getattr(rp, 'intensity_mean', None)
+            if val is None:
+                val = rp.mean_intensity  # skimage < 0.26
         else:
             mask = labels == rp.label
             val = float(np.median(img[mask]))
@@ -716,6 +721,48 @@ def cell_mask(labels, cell_id, stimulation_mask=None):
     if stimulation_mask is None:
         return labels == cell_id
     return (labels == cell_id) & stimulation_mask
+
+
+def match_imaged_centroids(labels, imaged_centroids, centroid_threshold):
+    """
+    Match detected objects to the accumulated "already imaged" centroid map.
+
+    A detected object counts as already imaged when its centroid lies
+    within ``centroid_threshold`` pixels of any recorded centroid; with
+    'auto' the threshold is the object's own equivalent diameter, i.e.
+    about one cell diameter.
+
+    Parameters
+    ----------
+    labels: 2D np.ndarray
+        label map (0 = background, 1..N = objects)
+    imaged_centroids: list of (y, x) tuples
+        centroids of already-stimulated cells (empty list -> no matches)
+    centroid_threshold: float or 'auto'
+        centroid distance (px) for the match; 'auto' uses each object's
+        equivalent_diameter_area as its own matching radius
+
+    Returns
+    -------
+    matched: set of int
+        labels of the objects that match an imaged centroid
+    """
+    from skimage.measure import regionprops
+
+    matched = set()
+    if not imaged_centroids:
+        return matched
+    for rp in regionprops(labels):
+        cy, cx = rp.centroid
+        if centroid_threshold == "auto":
+            radius = rp.equivalent_diameter_area
+        else:
+            radius = centroid_threshold
+        for iy, ix in imaged_centroids:
+            if (cy - iy) ** 2 + (cx - ix) ** 2 < radius**2:
+                matched.add(rp.label)
+                break
+    return matched
 
 
 def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):

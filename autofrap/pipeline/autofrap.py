@@ -54,7 +54,7 @@ from autofrap.core.detection import (
     parse_detector_args,
     unpack_detection_result,
 )
-from autofrap.core.image.mask import select_next_cell
+from autofrap.core.image.mask import match_imaged_centroids, select_next_cell
 from autofrap.core.image.qc import save_qc_overlay
 from autofrap.core.utils.retry import run_with_retries
 
@@ -450,21 +450,9 @@ def _inner_loop_select_cell_and_qc(
     """
 
     n_obj = len(np.unique(labels)) - 1
-    # match detected objects to already-imaged map
-    if imaged_centroids:
-        matched = set()
-        for rp in regionprops(labels):
-            cy, cx = rp.centroid
-            if centroid_threshold == "auto":
-                radius = rp.equivalent_diameter_area
-            else:
-                radius = centroid_threshold
-            for iy, ix in imaged_centroids:
-                if (cy - iy) ** 2 + (cx - ix) ** 2 < radius**2:
-                    matched.add(rp.label)
-                    break
-    else:
-        matched = set()
+    # match detected objects to the already-imaged centroid map
+    matched = match_imaged_centroids(labels, imaged_centroids,
+                                    centroid_threshold)
 
     cell, cell_poly, stim_poly, skipped = select_next_cell(
         labels, matched, stimulation_mask

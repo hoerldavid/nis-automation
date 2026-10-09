@@ -24,19 +24,15 @@ Notes from earlier probing:
     a comma-separated string of variable names to substitute; use
     strcpy() for literal strings.
 
-Usage (at the microscope, NIS open):
-    python autofrap/autofrap_bitsnpieces/test_nd_exp_getter_live.py
+Skipped automatically off the microscope workstation.
 """
 import os
-import sys
-import time
-
-# repo root (for nis_util) — this script lives two levels down in autofrap/
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import unittest
 
 from autofrap.microscope import nis as nis_util
 
 NIS = r'C:\Program Files\NIS-Elements\nis_ar.exe'
+LIVE = os.name == 'nt' and os.path.exists(NIS)
 IN = nis_util.INI_PLACEHOLDER
 
 # verified tab names (20260904, all ticked -> all returned 1)
@@ -57,23 +53,26 @@ def ask(label, body, keys, section='q'):
         return {}
 
 
-def main():
-    print('=== tab active states ===')
-    for tab in TAB_CANDIDATES:
-        body = 'Int_SetKeyValue("%s","q","on",ND_IsAcqTabChecked("%s"));' % (IN, tab)
-        res = ask('tab %r' % tab, body, ['on'])
-        if res:
-            print('  %-12s active=%s' % (tab, res['on']))
+@unittest.skipUnless(LIVE, 'requires the microscope workstation (NIS-Elements)')
+class TestNdExpGetterLive(unittest.TestCase):
 
-    print('=== time ===')
-    res = ask('phase count',
-              'Int_SetKeyValue("%s","q","phases",ND_GetTimeLapsePhaseCount());' % IN,
-              ['phases'])
-    phases = int(res['phases']) if res else None
-    if res:
-        print('  time phases: %s' % res['phases'])
-    if phases:
-        body = '''
+    def test_nd_acquisition_dialog_probe(self):
+        """every dialog query macro runs and returns its keys"""
+        for tab in TAB_CANDIDATES:
+            res = ask('tab %r' % tab,
+                      'Int_SetKeyValue("%s","q","on",ND_IsAcqTabChecked("%s"));'
+                      % (IN, tab), ['on'])
+            self.assertTrue(res, f'tab {tab!r} query failed')
+            print(f'  tab {tab!r}: active={res["on"]}')
+
+        res = ask('phase count',
+                  'Int_SetKeyValue("%s","q","phases",ND_GetTimeLapsePhaseCount());'
+                  % IN, ['phases'])
+        self.assertTrue(res, 'phase count query failed')
+        print(f'  time phases: {res["phases"]}')
+        phases = int(res['phases'])
+        if phases:
+            body = '''
 double interval, duration;
 int loopcnt;
 ND_GetTimePhaseSchedule(0, &interval, &duration, &loopcnt);
@@ -81,20 +80,19 @@ Int_SetKeyValue("%s","q","interval",interval);
 Int_SetKeyValue("%s","q","duration",duration);
 Int_SetKeyValue("%s","q","loopcnt",loopcnt);
 ''' % (IN, IN, IN)
-        res = ask('phase 0 schedule', body, ['interval', 'duration', 'loopcnt'])
-        if res:
+            res = ask('phase 0 schedule', body,
+                      ['interval', 'duration', 'loopcnt'])
+            self.assertTrue(res, 'phase 0 schedule query failed')
             print('  phase 0: loopcnt=%s interval=%s ms duration=%s ms'
                   % (res['loopcnt'], res['interval'], res['duration']))
 
-    print('=== xy multipoint ===')
-    res = ask('position count',
-              'Int_SetKeyValue("%s","q","count",ND_MP_GetCount());' % IN,
-              ['count'])
-    if res:
-        print('  positions: %s' % res['count'])
+        res = ask('position count',
+                  'Int_SetKeyValue("%s","q","count",ND_MP_GetCount());' % IN,
+                  ['count'])
+        self.assertTrue(res, 'position count query failed')
+        print(f'  positions: {res["count"]}')
 
-    print('=== z ===')
-    body = '''
+        body = '''
 int ztype, zcount, zhome_def, zclose;
 double ztop, zhome, zbottom, zstep;
 char zdevice[256];
@@ -108,15 +106,16 @@ Int_SetKeyValue("%s","q","zstep",zstep);
 Int_SetKeyValue("%s","q","zcount",zcount);
 Int_SetKeyString("%s","q","zdevice",zdevice);
 ''' % (IN, IN, IN, IN, IN, IN)
-    res = ask('z series', body, ['ztype', 'ztop', 'zbottom', 'zstep', 'zcount', 'zdevice'])
-    if res:
+        res = ask('z series', body,
+                  ['ztype', 'ztop', 'zbottom', 'zstep', 'zcount', 'zdevice'])
+        self.assertTrue(res, 'z series query failed')
         print('  type=%s top=%s bottom=%s step=%s count=%s device=%r'
               % (res['ztype'], res['ztop'], res['zbottom'], res['zstep'],
                  res['zcount'], res['zdevice']))
 
-    print('=== channels ===')
-    for i in range(MAX_CHANNELS):
-        body = '''
+        n_channels = 0
+        for i in range(MAX_CHANNELS):
+            body = '''
 char name[256];
 char oc[256];
 char before[256];
@@ -127,17 +126,20 @@ ND_GetLambdaChannel(%d, &name, &oc, &color, &before, &after, &aftype, &afarg1, &
 Int_SetKeyString("%s","q","name",name);
 Int_SetKeyString("%s","q","oc",oc);
 ''' % (i, IN, IN)
-        res = ask('channel %d' % i, body, ['name', 'oc'])
-        if not res:
-            break
-        if res['name'] == 'SENTINEL':
-            print('  channel %d: (buffer untouched -> out of range, stopping)' % i)
-            break
-        print('  channel %d: name=%r oc=%r' % (i, res['name'], res['oc']))
-        if res['name'] == '':
-            print('  (empty name — ambiguous; stopping to be safe)')
-            break
+            res = ask('channel %d' % i, body, ['name', 'oc'])
+            if not res:
+                break
+            if res['name'] == 'SENTINEL':
+                print(f'  channel {i}: (buffer untouched -> out of range, '
+                      'stopping)')
+                break
+            print(f'  channel {i}: name={res["name"]!r} oc={res["oc"]!r}')
+            if res['name'] == '':
+                print('  (empty name — ambiguous; stopping to be safe)')
+                break
+            n_channels += 1
+        self.assertGreater(n_channels, 0, 'no channels found')
 
 
 if __name__ == '__main__':
-    main()
+    unittest.main()
