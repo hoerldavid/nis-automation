@@ -13,6 +13,12 @@ Usage::
     python -m autofrap.detectors --detector autofrap/detectors/simple_seg_detector.py \\
         path/to/survey.nd2 --detector-arg cell_sigma=16
 
+To see which parameters a detector exposes before running it (keys,
+defaults where the sub-function signatures reveal them, and the
+detector's docstring), no image needed::
+
+    python -m autofrap.detectors --list-detector-args --detector autofrap/detectors/simple_seg_detector.py
+
 Writes ``<image stem>_qc.png`` next to the input image (override with
 ``--out``): detection, FRAP mask, the first cell that would be picked
 and its ROI polygons, on the detector's visualization (blank canvas if
@@ -21,10 +27,12 @@ it provides none). ``--detector-arg`` works exactly as in a live run.
 Exit codes:
   0   detection ran and the QC overlay was saved (even when no cell is
       selectable - the overlay then shows labels + FRAP mask for
-      diagnosis)
+      diagnosis); with --list-detector-args, the listing was printed
   1   detector loading / --detector-arg / detection / overlay error
+  2   no input image given (required unless --list-detector-args)
 """
 import argparse
+import inspect
 import logging
 import os
 import sys
@@ -33,7 +41,10 @@ import numpy as np
 from skimage.measure import regionprops
 
 from autofrap.core.detection import (
+    _module_detection_fun,
+    get_detector_parameters,
     load_detector_file,
+    load_detector_module,
     parse_detector_args,
     unpack_detection_result,
 )
@@ -53,13 +64,23 @@ def parse_cli_args(argv=None):
     )
     p.add_argument(
         "file",
-        help="image to run the detector on (e.g. a survey nd2)",
+        nargs="?",
+        help="image to run the detector on (e.g. a survey nd2); not "
+        "needed with --list-detector-args",
     )
     p.add_argument(
         "--detector",
         required=True,
         help="path to a .py file defining detection_fun (built-ins in "
         "autofrap/detectors/, see WRITING_DETECTOR.md)",
+    )
+    p.add_argument(
+        "--list-detector-args",
+        action="store_true",
+        help="list the detector's tunable parameters (--detector-arg "
+        "keys, grouped by the build_detector step they route to, with "
+        "defaults where the sub-function signatures reveal them) plus "
+        "the detector's docstring, and exit - no image needed",
     )
     p.add_argument(
         "--detector-arg",
@@ -86,6 +107,35 @@ def parse_cli_args(argv=None):
     return p.parse_args(argv)
 
 
+def _format_parameter_listing(detection_fun, module):
+    """--list-detector-args output: the tunable parameters (grouped by
+    the build_detector step they route to, defaults where the
+    sub-function signatures reveal them), followed by the detector
+    module's docstring."""
+    params = get_detector_parameters(detection_fun)
+    lines = [f"{module.__name__}: tunable parameters "
+             "(--detector-arg key=value):"]
+    if not params:
+        lines.append("  (none)")
+    else:
+        width = max(len(p.name) for p in params)
+        current_steps = object()  # sentinel != any steps tuple
+        for p in params:
+            if p.steps != current_steps:
+                current_steps = p.steps
+                lines.append(f"  {', '.join(p.steps)}:" if p.steps else "")
+            if p.required:
+                desc = "required"
+            elif p.has_default:
+                desc = f"default: {p.default!r}"
+            else:
+                desc = "default: (not introspectable)"
+            lines.append(f"    {p.name:<{width}}  {desc}")
+    lines.append("")
+    lines.append(inspect.getdoc(module) or "(no module docstring)")
+    return "\n".join(lines)
+
+
 def main(argv=None):
     """CLI entry point (see module docstring for usage and exit codes)"""
     args = parse_cli_args(argv)
@@ -100,6 +150,25 @@ def main(argv=None):
     if args.verbose:
         # third-party DEBUG is chatty (matplotlib font matching, ...)
         logging.getLogger("matplotlib").setLevel(logging.INFO)
+
+    # --list-detector-args: print the introspected parameters and exit,
+    # no image needed. The module is imported once and the callable
+    # check reuses load_detector_file's helper (a detector module may
+    # have side effects, e.g. loading a model - never import it twice).
+    if args.list_detector_args:
+        try:
+            module = load_detector_module(args.detector)
+            detection_fun = _module_detection_fun(module, args.detector)
+        except (ValueError, OSError) as e:
+            logger.error(f"could not load detector: {e}")
+            sys.exit(1)
+        print(_format_parameter_listing(detection_fun, module))
+        return
+
+    if args.file is None:
+        logger.error("no input image given (the file argument is "
+                     "required unless --list-detector-args is used)")
+        sys.exit(2)
 
     detector_name = os.path.splitext(os.path.basename(args.detector))[0]
     out_path = (

@@ -16,7 +16,9 @@ visualization (display format).
 
 import warnings
 import importlib.util
+import inspect
 import os
+from dataclasses import dataclass
 
 import numpy as np
 from skimage.measure import label, regionprops
@@ -123,7 +125,10 @@ def build_detector(
         survey_file_path -> (labels[, stimulation_mask[, viz]]): the
         positions are fixed (2 = mask, 3 = viz), so with a viz but no
         mask the result is (labels, None, viz). (labels,) if nothing
-        else is given (whole-cell FRAP downstream).
+        else is given (whole-cell FRAP downstream). The callable also
+        carries introspection metadata: ``.parameter_map`` (the
+        routing table, as passed) and ``.step_functions`` (the
+        sub-function per step) — see :func:`get_detector_parameters`.
 
     Examples
     --------
@@ -330,7 +335,59 @@ def build_detector(
             return labels, mask
         return labels, mask, viz
 
+    # introspection metadata (see get_detector_parameters): the runtime
+    # keys (parameter_map, as passed) and the sub-function they route
+    # to, so tools can present the tunable parameters with types and
+    # defaults (e.g. the detector runner's --list-detector-args)
+    _detect.parameter_map = parameter_map
+    _detect.step_functions = {
+        "load_fun": load_fun,
+        "detector_fun": detector_fun,
+        "filter_function": filter_function,
+        "stim_mask_fun": stim_mask_fun,
+        "visualization_fun": visualization_fun,
+    }
     return _detect
+
+
+def load_detector_module(path):
+    """
+    Import a detector .py file and return its module.
+
+    The module must define ``detection_fun: survey_file -> (labels[,
+    mask[, viz]])`` (see :func:`load_detector_file`, which wraps this
+    with the callable check). The module itself is what tooling needs:
+    the module docstring documents the detector (shown by the detector
+    runner's ``--list-detector-args``).
+
+    Parameters
+    ----------
+    path: str
+        path to a ``.py`` file that defines ``detection_fun``
+
+    Returns
+    -------
+    module
+        the imported detector module
+    """
+    name = os.path.splitext(os.path.basename(path))[0]
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"could not load detector file: {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _module_detection_fun(mod, path):
+    """Return the module's detection_fun, checking the callable contract."""
+    detection_fun = getattr(mod, "detection_fun", None)
+    if detection_fun is None or not callable(detection_fun):
+        raise ValueError(
+            f'detector file {path} must define a callable "detection_fun"; '
+            f"found {type(detection_fun).__name__}"
+        )
+    return detection_fun
 
 
 def load_detector_file(path):
@@ -369,21 +426,148 @@ def load_detector_file(path):
 
         python -m autofrap.pipeline --detector my_detector.py ...
     """
+    return _module_detection_fun(load_detector_module(path), path)
 
-    name = os.path.splitext(os.path.basename(path))[0]
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise ValueError(f"could not load detector file: {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
 
-    detection_fun = getattr(mod, "detection_fun", None)
-    if detection_fun is None or not callable(detection_fun):
-        raise ValueError(
-            f'detector file {path} must define a callable "detection_fun"; '
-            f"found {type(detection_fun).__name__}"
-        )
-    return detection_fun
+# build_detector steps in routing order - the order runtime keys are
+# listed in by get_detector_parameters
+_STEP_ORDER = ("load_fun", "detector_fun", "filter_function",
+               "stim_mask_fun", "visualization_fun")
+
+
+@dataclass
+class DetectorParameter:
+    """
+    One tunable detector parameter, as reported by
+    :func:`get_detector_parameters`.
+
+    Fields
+    ------
+    name: str
+        the runtime key: what goes into ``--detector-arg key=value``
+        (for a plain detection_fun, the parameter name)
+    steps: tuple
+        the build_detector steps the key routes to (empty for plain
+        detection_fun)
+    default:
+        the default value, resolved from the sub-function signature
+        (plain detection_fun: from its own signature)
+    has_default: bool
+        False when no default could be resolved - either the parameter
+        is required (``required`` below) or it is hidden behind a
+        ``**kwargs`` forward and the sub-function's own default applies
+    required: bool
+        the call fails without a value (plain detection_fun parameter
+        without a default; composed detectors only route explicitly
+        given keys, so their keys are never required)
+    ptype: str
+        type name from the signature annotation, or inferred from the
+        default; empty string when neither is known
+    """
+    name: str
+    steps: tuple = ()
+    default: object = None
+    has_default: bool = False
+    required: bool = False
+    ptype: str = ""
+
+
+def _parameter_type(param, default):
+    """Annotation type name, or the type of the default, or ''."""
+    if param.annotation is not inspect.Parameter.empty:
+        return getattr(param.annotation, "__name__", str(param.annotation))
+    if default is not None:
+        return type(default).__name__
+    return ""
+
+
+def _resolve_from_step(spec, fun, internal_name):
+    """Fill spec's default/ptype from the step function's signature."""
+    if fun is None:
+        return
+    try:
+        sig = inspect.signature(fun)
+    except (TypeError, ValueError):
+        return
+    param = sig.parameters.get(internal_name)
+    if param is None:
+        return  # hidden behind **kwargs: not introspectable
+    if param.default is not inspect.Parameter.empty:
+        spec.default = param.default
+        spec.has_default = True
+    spec.ptype = _parameter_type(param, spec.default)
+
+
+def _composed_parameters(detection_fun):
+    """DetectorParameter list from the build_detector metadata."""
+    pmap = detection_fun.parameter_map
+    step_funs = getattr(detection_fun, "step_functions", {})
+    specs = {}  # runtime key -> DetectorParameter, insertion-ordered
+    for step in _STEP_ORDER:
+        for runtime_key, internal_name in pmap.get(step, {}).items():
+            spec = specs.get(runtime_key)
+            if spec is None:
+                spec = specs[runtime_key] = DetectorParameter(
+                    name=runtime_key, steps=(step,))
+            else:
+                # one key routed to several steps: record the extra
+                # step, and give it a chance to resolve the default
+                spec.steps = spec.steps + (step,)
+            if not spec.has_default:
+                _resolve_from_step(spec, step_funs.get(step), internal_name)
+    return list(specs.values())
+
+
+def _plain_parameters(detection_fun):
+    """DetectorParameter list from a plain detection_fun signature."""
+    sig = inspect.signature(detection_fun)
+    params = list(sig.parameters.values())
+    specs = []
+    # the first positional parameter is the survey file - not tunable
+    for param in params[1:]:
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL,
+                          inspect.Parameter.VAR_KEYWORD):
+            continue
+        spec = DetectorParameter(name=param.name)
+        if param.default is inspect.Parameter.empty:
+            spec.required = True
+        else:
+            spec.default = param.default
+            spec.has_default = True
+        spec.ptype = _parameter_type(param, spec.default)
+        specs.append(spec)
+    return specs
+
+
+def get_detector_parameters(detection_fun):
+    """
+    Introspect the tunable parameters of a detection_fun.
+
+    Best effort, in this order:
+
+    * composed (built via :func:`build_detector` with a
+      ``parameter_map``): one entry per runtime key, in routing order
+      (load, detect, filter, mask, viz), with ``steps`` set; types and
+      defaults are resolved through the sub-function signatures via
+      the internal names. Keys whose sub-function hides them behind
+      ``**kwargs`` are listed without a default.
+    * plain detection_fun: the signature after the survey-file
+      parameter - defaults where given, ``required`` otherwise.
+    * anything opaque (``**kwargs``): no entries - callers should
+      offer a free-text KEY=VALUE input as the fallback.
+
+    Parameters
+    ----------
+    detection_fun: callable
+        as loaded by :func:`load_detector_file`
+
+    Returns
+    -------
+    list of DetectorParameter
+    """
+    if getattr(detection_fun, "parameter_map", None):
+        return _composed_parameters(detection_fun)
+    return _plain_parameters(detection_fun)
 
 
 def unpack_detection_result(result):

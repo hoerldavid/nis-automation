@@ -143,7 +143,13 @@ once per survey image.
 cases (local Otsu+watershed, remote-Cellpose variants with different
 stimulation masks, a dummy for testing) — the "Built-in detectors"
 table in `WRITING_DETECTOR.md` says what each one does and when to
-use it.
+use it. To see which parameters a detector exposes (keys, defaults
+where introspectable, plus its docstring):
+
+```bash
+python -m autofrap.detectors --list-detector-args \
+  --detector autofrap/detectors/simple_seg_detector.py
+```
 
 To write your own, start with `WRITING_DETECTOR.md`: it walks through
 the contract, the building blocks in `autofrap/core/` (load → detect

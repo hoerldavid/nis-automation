@@ -242,6 +242,30 @@ mask-in-channel-1 possible: all three functions have a `channel`
 parameter, but each `--detector-arg` key is routed to exactly one step. (Without any `parameter_map`, `--detector-arg`
 keys are not routed anywhere.)
 
+The `parameter_map` doubles as machine-readable metadata: `build_detector`
+attaches it (together with the step functions) to the returned
+`detection_fun`, and `autofrap.core.detection.get_detector_parameters`
+turns it into a list of the tunable keys — with defaults and types
+where the step-function signatures reveal them. To see what a detector
+exposes before running it:
+
+```
+python -m autofrap.detectors --list-detector-args --detector your_detector.py
+```
+
+This prints the keys (grouped by the step they route to, with defaults
+where introspectable) followed by the detector file's **module**
+docstring — the top-of-file `"""..."""` string, not the docstrings of
+`detection_fun` or the step functions, which the listing does not
+show. That module docstring is the place to document what the
+parameters mean (see the built-in detectors for examples). For
+hand-rolled `detection_fun`s the same listing works from the function
+signature: every parameter after the survey file shows up, marked
+`required` when it has no default. Making a parameter introspectable
+is simply a matter of declaring it with a default (and ideally a type
+annotation) in the step function — parameters forwarded through
+`**kwargs` are listed but marked "(not introspectable)".
+
 ## 5. Testing your detector before a live run
 
 The detector runner executes a detector file on a single image, without
