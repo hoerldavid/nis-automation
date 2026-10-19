@@ -114,17 +114,28 @@ Important ROI behavior
 ### FOV
 `FOV = xres * pixel_size / magnification`
 
-## Pixel ↔ stage transform (stitched overviews)
+## Pixel ↔ stage transform (single images)
 
-For NIS-stitched large images (`Stg_LargeImageScanArea`), the pixel → stage map is affine: `stage = M @ px + t`. Retro-analysis of the legacy wing-scanner overview calibrations (`legacy/wingscanner/res/*.json`, `create_overview_calibration.ipynb`; details: `docs/SESSION_HISTORY.md` 20260929):
+For a single acquired image, the pixel → stage map is affine — a similarity (uniform scale + one axis flip + rotation) plus a translation. The linear part is a property of the imaging chain (camera port + optical configuration) and is identical for any stage position; only the anchor is per-image:
 
-* **M (linear part)** = uniform scale (pixel size, incl. binning) × flip × camera/stage rotation — a property of the imaging chain (camera port + OC), identical for any stage position. In the legacy calibs it was exactly scale + x-flip (+ 0.55° rotation for the gray camera).
-* **t (origin)** follows a corner-anchoring rule: image pixel (0,0) sits at `(left, top) + (Δx, Δy)` of the requested rectangle, with (Δx, Δy) constant per OC/binning and ≈ half a tile (i.e. the first stitch tile is centered on the (left, top) corner). Verified across 3 slides × 2 cameras of the legacy unit to ~1 µm (color) / ~20 µm (gray, hover-readout precision).
-* Consequence: for any rectangle + OC the transform is `stage = M @ px + (left + fov_x/2, top − fov_y/2)` if Δ = FOV/2 holds — fully programmatic, no manual GUI calibration.
-* **Per-unit caveat**: `get_rotation_matrix` (`Get_CalibrationAngleMatrix`) values are per microscope unit — the wing-scanner unit is not the current one, so only same-unit comparisons of the fitted M against the calibration matrix are meaningful. Current unit (from `inspect_microscope.ipynb`): ≈ 180° flip + 0.78° residual.
-* **Live-verified on the current unit (20261019, single full-frame image; details + numbers: `docs/SESSION_HISTORY.md`)**: the pixel → stage map is a similarity `stage = M @ px + t` with **M = (pixel_size/mag) · R^T · diag(1,−1)** — uniform scale 0.1300 µm/px (matches `get_resolution`), one axis flip (pixel y inverted vs the camera frame, det −1), and the rotation matching `get_rotation_matrix` to 0.07° **when the matrix is applied transposed** (see gotcha below). The stored nd2 stage position corresponds to the image-center pixel within ~4 px measurement noise.
-* **Gotcha — `Get_CalibrationAngleMatrix` is a row-vector matrix**: the NIS manual documents the application as `x' = x*A11 + y*A12`, `y' = x*A21 + y*A22`, i.e. `(x', y') = (x, y) · A`. In column-vector (numpy) form that is `A^T @ p` — applying it naively as `R @ p` is off by ~1.6° on this unit (≈ 3.7 µm at the FOV edge), which would misplace per-tile ROIs. The matrix itself is accurate (0.07° residual, within measurement noise).
-* **Still open (anchor rule)**: the corner-anchoring rule above is legacy-unit evidence only. The planned live test on this unit — `do_large_image_scan` over a known rect → fit the affine from image↔stage points, confirm first-tile centering on (left, top) + Δ = FOV/2, and check whether a stitched nd2 stores per-tile or single positions — was started 20261019 but not completed (the scan macro exceeded `_run_macro`'s default 20 s timeout; see `docs/SESSION_HISTORY.md`). Until then, treat the anchor rule as unverified on this unit.
+```
+stage(px) = p_acq + s · R^T · F · (px − c)
+```
+
+Components:
+
+* `px` — pixel coordinates `(col, row)`; (0,0) is top-left, x grows right, y grows down (the same convention as ROI polygons, see § ROIs).
+* `s` — effective pixel size in µm/px: `pixel_size / magnification` from `get_resolution` (equivalently `fov / xres` via `get_fov_from_res`). Depends on objective, binning and camera — re-read per optical configuration.
+* `R` — the camera→stage calibration matrix from `get_rotation_matrix` (`Get_CalibrationAngleMatrix`), **applied transposed**: the NIS manual documents the application as the row-vector formula `x' = x*A11 + y*A12`, `y' = x*A21 + y*A22`, i.e. `(x', y') = (x, y) · A`; in column-vector (numpy) form that is `A^T @ p`, not `A @ p`. Applying it untransposed rotates the map by the wrong angle — the misplacement grows linearly with distance from the anchor pixel. The matrix is per camera (`ActiveCamera` argument) and per microscope unit — re-read it when the camera or optical configuration changes. The manual documents it as the "rotation and flip" of the optical path: `det(R) = −1` means the optical path itself contains a mirror (the flip situation then changes — re-verify rather than assume `F`).
+* `F` — the axis flip between pixel coordinates and the camera frame (pixel y grows down, camera-frame y grows up): `diag(1, −1)`. **There is no programmatic way to obtain this flip**: no macro getter exists — the Camera Light Path "Flip" setting (Acquire → Camera Light Path → Camera Rotation and Flipping) is a calibration-time GUI checkbox, not runtime-readable, and `CameraGet_Cam0Flip` does not exist in this API (see § Gotchas). It was established by a one-time live measurement on this unit (details: `docs/SESSION_HISTORY.md`, 20261019). The manual notes that NIS flips flipped camera data internally "so that all ports give the same, non-flipped data", which indicates the remaining flip is the fixed pixel/camera axis convention rather than a per-port setting — but that is documentation, not a getter. If the camera, port or light-path settings ever change, check the GUI settings and re-verify the flip.
+* `c` — the anchor pixel: the image center, `(xres/2, yres/2)`. If a camera ROI is active, the saved image is the ROI — the natural assumption is that `c` is then the ROI center in saved-image pixel coordinates (`get_camera_roi` returns the rectangle; `get_resolution` already reports the ROI size when enabled), but **the anchor with an active camera ROI is untested** — verify before relying on it.
+* `p_acq` — the stage position in µm (the `StgGetPosXY` / `StgMoveXY` frame) **at the moment the image was acquired**. Anchor rule (live-verified, 20261019): the stage position corresponds to the image-center pixel — the image center sits at stage coordinate `p_acq`. In the pipeline this is simply the commanded target of the verified move (`move_stage_with_retry` checks the reached position; the survey is acquired immediately after), so no nd2 metadata is needed. The position stored in the saved nd2 is equivalent but goes stale if the stage moved between acquisition and save; a `get_position` read taken later belongs to a different image.
+
+Notes:
+
+* The result is in the `StgMoveXY` frame and feeds straight back into `set_position` — the programmatic inverse of the GUI's "Move this point to center".
+* On this setup the fitted map has stage x decreasing left-to-right and stage y increasing top-to-bottom.
+* Stitched large images (`Stg_LargeImageScanArea`) are **not covered** here: their anchor (first-tile corner anchoring; what position(s) the stitched nd2 stores) is unverified on this unit — see `docs/SESSION_HISTORY.md` (20260929 legacy retro-analysis, 20261019 live-test attempt).
 
 ## To do X, use macro Y
 
