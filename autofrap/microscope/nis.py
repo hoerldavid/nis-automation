@@ -630,6 +630,16 @@ def get_camera_roi(path_to_nis):
 
 
 def get_rotation_matrix(path_to_nis):
+    """
+    camera->stage calibration matrix (a11, a12, a21, a22) via
+    Get_CalibrationAngleMatrix(0, ...) — the "rotation and flip"
+    transformation of the optical path
+
+    Gotcha: the NIS manual applies it as a ROW-vector matrix
+    (x' = x*A11 + y*A12, y' = x*A21 + y*A22), i.e. column-vector form is
+    A^T @ p, not A @ p. See docs/NIS_REFERENCE.md § Pixel <-> stage
+    transform for the live-verified pixel->stage formula.
+    """
     cmd = f'''
         double a11;
         double a12;
@@ -644,7 +654,7 @@ def get_rotation_matrix(path_to_nis):
         Int_SetKeyValue("{INI_PLACEHOLDER}","res","a22",a22);
         '''
     config = _run_macro(path_to_nis, cmd, ini=True)
-    res = (config['res']['a11'], config['res']['a12'], config['res']['a21'], config.get('res', 'a22'))
+    res = (config['res']['a11'], config['res']['a12'], config['res']['a21'], config['res']['a22'])
     return tuple(map(float, res))
 
 
