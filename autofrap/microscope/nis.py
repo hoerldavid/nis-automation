@@ -368,12 +368,14 @@ def _run_macro(path_to_nis, body, ini=False, timeout=20):
     Logging / failure evidence
     --------------------------
     DEBUG: the macro body, the nis_ar stdout/stderr and the ini content
-    of every call. A non-zero nis_ar exit is logged at WARNING (the
-    call still returns; a missing ini section/key raises KeyError in
-    the caller). On an exception (timeout, ...) the temp files are
-    preserved instead of deleted — in <macro_debug_dir>/macro_debug/
-    when the macro_debug_dir() context is active, otherwise kept in
-    the OS temp dir; the location is logged at ERROR either way.
+    of every call. The nis_ar exit code is NOT a success signal: live
+    (20261019) every call exits 0xFFFFFF36 (-202), successful ones
+    included — macro failures surface as a timeout here or as a
+    missing ini section/key (KeyError) in the caller. On an exception
+    (timeout, ...) the temp files are preserved instead of deleted —
+    in <macro_debug_dir>/macro_debug/ when the macro_debug_dir()
+    context is active, otherwise kept in the OS temp dir; the
+    location is logged at ERROR either way.
     """
     if not _nis_running(path_to_nis):
         raise RuntimeError('NIS Elements does not appear to be running '
@@ -409,9 +411,8 @@ def _run_macro(path_to_nis, body, ini=False, timeout=20):
             nis_ar_out = f.read()
         logger.debug("NIS macro #%d nis_ar output (rc=%d):\n%s",
                      seq, proc.returncode, nis_ar_out)
-        if proc.returncode != 0:
-            logger.warning("NIS macro #%d: nis_ar exited with rc=%d:\n%s",
-                           seq, proc.returncode, nis_ar_out)
+        # nis_ar's exit code is not a success signal: live (20261019)
+        # every call exits 0xFFFFFF36 (-202), successful ones included
         if ini:
             with open(ntf2.name) as f:
                 ini_text = f.read()

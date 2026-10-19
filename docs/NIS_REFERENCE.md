@@ -43,6 +43,7 @@ Gotchas
 * File paths in macro calls must be absolute
 * `CloseCurrentDocument(save='yes')` pops Save-As dialog and blocks macro
 * `CameraGet_Cam0Flip` / `CameraGet_Cam0Rotate180` do not exist in this API (the macro aborts at compile); `get_cam_rotation` uses `CameraGet_Rotate` / `Camera_RotateGet` instead
+* `nis_ar -mw` exits non-zero even on success — observed constant 0xFFFFFF36 (= -202) on every call, successful ones included (live, 20261019). Don't use the exit code as a success signal; a failed macro shows up as a timeout or a missing ini section/key
 
 ## Key wrappers
 
