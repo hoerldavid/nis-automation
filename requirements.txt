@@ -1,6 +1,7 @@
 jupyter_contrib_nbextensions
 nd2
 numpy
+xarray
 scikit-image
 calmutils
 fastremap

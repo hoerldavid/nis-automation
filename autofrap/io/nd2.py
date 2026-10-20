@@ -16,7 +16,9 @@ def read_channel(nd2_file, channel=0, z_projection=None):
     downstream analysis, not the acquisition pipeline.
 
     Channel selection is independent of the file's axis order (NIS
-    writes e.g. (C, Y, X) and (Z, C, Y, X)).
+    writes e.g. (C, Y, X) and (Z, C, Y, X)): the file is loaded as an
+    axis-labeled xarray (ND2File.to_xarray) and selected by dimension
+    name, so nd2/xarray own the axis handling.
 
     Parameters
     ----------
@@ -63,53 +65,35 @@ def read_channel(nd2_file, channel=0, z_projection=None):
                 f'{nd2_file}: file has a Z dimension (axes: {axes}); '
                 "pass z_projection='max' to project it")
 
-        # Determine channel selection
+        # axis-labeled array; squeeze=True (the default) drops singleton
+        # dims (e.g. a size-1 C), so the channel logic below keys on the
+        # post-squeeze dims rather than on f.sizes
+        arr = f.to_xarray(delayed=False)
+
         if channel == 'all':
-            if 'C' in axes:
-                num_c = f.sizes['C']
-                channels = list(range(num_c))
-            else:
-                # single-channel file: will be promoted to (1,Y,X) after extraction
-                channels = [0]
+            channels = (list(range(arr.sizes['C'])) if 'C' in arr.dims
+                        else [0])
         elif isinstance(channel, (tuple, list)):
             channels = list(channel)
         else:
             channels = [channel]
 
-        if 'C' not in axes:
-            if channels != [0]:
-                raise ValueError(
-                    f'{nd2_file}: single-channel file (no C dimension); '
-                    'pass channel=0 or channel=\'all\'')
+        if 'C' in arr.dims:
+            # one index -> 2D (y, x); several -> (k, y, x) in order
+            arr = arr.isel(C=channels[0] if len(channels) == 1
+                           else channels)
+        elif channels != [0]:
+            raise ValueError(
+                f'{nd2_file}: single-channel file (no C dimension); '
+                "pass channel=0 or channel='all'")
 
-        arr = _extract(f.asarray(), axes, channels, z_projection)
+        if 'Z' in arr.dims and z_projection == 'max':
+            arr = arr.max(dim='Z')
 
-        # Promote to (C,Y,X) for channel='all' on single-channel files
-        if channel == 'all' and 'C' not in axes:
-            return arr[None, ...]
-        return arr
-
-
-def _extract(arr, axes, channels, z_projection):
-    """
-    axis-order-independent extraction on a validated survey array
-    (axes ⊆ {C, Z, Y, X}): normalize to (C, Z, Y, X) as present,
-    select the channel(s) (a single index gives a 2D result), project
-    Z if requested. (Factored out for testing the axis logic without
-    a matching nd2 file.)
-    """
-    order = [a for a in ('C', 'Z', 'Y', 'X') if a in axes]
-    arr = np.transpose(arr, [axes.index(a) for a in order])
-    z_axis = 0
-    if 'C' in axes:
-        if len(channels) > 1:
-            arr = arr[channels]  # (k, Z?, Y, X)
-            z_axis = 1
-        else:
-            arr = arr[channels[0]]  # (Z?, Y, X)
-    if 'Z' in axes and z_projection == 'max':
-        arr = arr.max(axis=z_axis)
-    return arr
+        image = np.asarray(arr)
+        if channel == 'all' and 'C' not in arr.dims:
+            return image[None, ...]  # promote (Y, X) -> (1, Y, X)
+        return image
 
 
 # TODO: not really needed - remove?
