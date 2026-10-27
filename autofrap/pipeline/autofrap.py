@@ -17,7 +17,10 @@ Error handling policy:
   * AutofrapInterruptedException: clean user stop (Ctrl-C) - registered and causes 
     stop between cycles (or optionally after next survey acquisition).
   * Timeout assumption: all non-acquisition macros complete well within 10-20 s;
-    acquisition macros run with 300 s timeout. Timeouts are treated as genuine faults
+    acquisition macros run with a per-acquisition macro timeout - survey 60 s,
+    FRAP/stimulation 300 s by default, user-settable (autofrap() parameters
+    survey_timeout / frap_timeout, CLI --survey-timeout / --frap-timeout).
+    Timeouts are treated as genuine faults
 
 Logging: this module logs via logging.getLogger(__name__) (NullHandler, no
 level set - library style). The CLI (main()) configures logging: INFO by
@@ -41,8 +44,11 @@ from skimage.measure import regionprops
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-# acquisition macro timeout (seconds)
-ACQUISITION_MACRO_TIMEOUT = 300  # For operations that may run long acquisitions
+# acquisition macro timeouts (seconds) - separate per acquisition: a survey
+# is a single image, the FRAP/stimulation experiment is GUI-configured and
+# can take minutes; user-settable via autofrap() / the CLI (defaults here)
+SURVEY_MACRO_TIMEOUT = 60
+FRAP_MACRO_TIMEOUT = 300
 
 # NOTE: For dry-runs, the FakeNIS patcher patches at the nis *module* level,
 # therefore, don't import individual functions directly (always use nis_util.fun())
@@ -231,6 +237,8 @@ def autofrap(
     max_cycles=None,
     detection_fun=None,
     frap_oc="FRAPPA",
+    survey_timeout=SURVEY_MACRO_TIMEOUT,
+    frap_timeout=FRAP_MACRO_TIMEOUT,
     centroid_threshold="auto",
     fov_subdirs=False,
     name=None,
@@ -286,6 +294,14 @@ def autofrap(
         the QC-overlay background (absent -> blank canvas)
     frap_oc: str
         optical configuration to activate before each stimulation
+    survey_timeout: float
+        macro timeout (seconds) for the survey acquisition (default 60);
+        set ~2-3x the longest expected survey, not barely above - a
+        timeout is an FOV failure and the macro may still be running
+    frap_timeout: float
+        macro timeout (seconds) for the FRAP/stimulation acquisition
+        batch (optical-configuration switch + stimulation experiment)
+        (default 300)
     centroid_threshold: float or 'auto'
         centroid distance (px) for matching cells across cycles:
         'auto' (default) matches within each cell's equivalent_diameter
@@ -356,6 +372,8 @@ def autofrap(
             max_cycles=max_cycles,
             detection_fun=detection_fun,
             frap_oc=frap_oc,
+            survey_timeout=survey_timeout,
+            frap_timeout=frap_timeout,
             centroid_threshold=centroid_threshold,
             fov_subdirs=fov_subdirs,
             name=name,
@@ -388,12 +406,12 @@ class AutofrapInterruptedException(AutofrapError):
     ``allow_interrupt_after_survey`` is set)"""
 
 
-def _inner_loop_do_survey(nis_exe, survey_file, cycle):
+def _inner_loop_do_survey(nis_exe, survey_file, cycle, timeout=SURVEY_MACRO_TIMEOUT):
     """
     Run ND acquisition (survey image) and ensure the survey document is open & selected.
     """
     t0 = time.time()
-    nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file, progress_bar=True, timeout=ACQUISITION_MACRO_TIMEOUT)
+    nis_util.run_current_nd_experiment(nis_exe, outfile=survey_file, progress_bar=True, timeout=timeout)
     logger.info(f"[c{cycle:02d}] survey saved ({time.time() - t0:.1f} s)")
     if not os.path.isfile(survey_file):
         raise AutofrapError(
@@ -498,7 +516,8 @@ def _inner_loop_select_cell_and_qc(
     return cell, cell_poly, stim_poly, n_obj
 
 
-def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, cycle):
+def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, cycle,
+                             timeout=FRAP_MACRO_TIMEOUT):
     """Create ROIs in NIS, run FRAP stimulation and save the timeseries.
     Raises on failure - the exception propagates to the outer loop
     (the cycle's finally-cleanup runs and the FOV fails).
@@ -528,7 +547,7 @@ def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, c
         (nis_util.OP_RUN_STIMULATION_EXPERIMENT, {}),
     ]
     t0 = time.time()
-    nis_util.batch_run_macro(nis_exe, stim_calls, timeout=ACQUISITION_MACRO_TIMEOUT)
+    nis_util.batch_run_macro(nis_exe, stim_calls, timeout=timeout)
     logger.info(f"[c{cycle:02d}] stimulation done ({time.time() - t0:.1f} s)")
 
     # safeguard: move GUI focus to unsaved "ND Acquisition" (the FRAP timeseries we just did)
@@ -557,6 +576,8 @@ def autofrap_loop_inner(
     max_cycles=None,
     detection_fun=None,
     frap_oc="FRAPPA",
+    survey_timeout=SURVEY_MACRO_TIMEOUT,
+    frap_timeout=FRAP_MACRO_TIMEOUT,
     centroid_threshold="auto",
     file_prefix=None,
     stop_check=None,
@@ -565,8 +586,9 @@ def autofrap_loop_inner(
 ):
     """Internal: the per-FOV cycle loop (a layer of autofrap(); see
     there for the shared parameters nis_exe, out_dir, max_cycles,
-    detection_fun, frap_oc, centroid_threshold, stop_check,
-    allow_interrupt_after_survey and detector_kwargs).
+    detection_fun, frap_oc, survey_timeout, frap_timeout,
+    centroid_threshold, stop_check, allow_interrupt_after_survey and
+    detector_kwargs).
 
     Per cycle:
       1. acquire the survey image via the current ND experiment,
@@ -625,7 +647,7 @@ def autofrap_loop_inner(
         try:
 
             # 1. acquire survey image
-            _inner_loop_do_survey(nis_exe, survey_file, cycle)
+            _inner_loop_do_survey(nis_exe, survey_file, cycle, timeout=survey_timeout)
 
             # 2a. run detection function
             try:
@@ -694,6 +716,8 @@ def autofrap_loop_outer(
     max_cycles=None,
     detection_fun=None,
     frap_oc="FRAPPA",
+    survey_timeout=SURVEY_MACRO_TIMEOUT,
+    frap_timeout=FRAP_MACRO_TIMEOUT,
     centroid_threshold="auto",
     fov_subdirs=False,
     name=None,
@@ -706,8 +730,8 @@ def autofrap_loop_outer(
     """Internal: loop over the precomputed stage positions, running
     autofrap_loop_inner per FOV (a layer of autofrap(); see there for
     the shared parameters nis_exe, out_dir, max_cycles, detection_fun,
-    frap_oc, centroid_threshold, stop_check,
-    allow_interrupt_after_survey and detector_kwargs).
+    frap_oc, survey_timeout, frap_timeout, centroid_threshold,
+    stop_check, allow_interrupt_after_survey and detector_kwargs).
 
     Creates the run directory (<out_dir>/<YYYYmmdd_HHMMSS>[_<name>]; an
     existing non-empty directory aborts the run before any
@@ -781,6 +805,8 @@ def autofrap_loop_outer(
                     max_cycles=max_cycles,
                     detection_fun=detection_fun,
                     frap_oc=frap_oc,
+                    survey_timeout=survey_timeout,
+                    frap_timeout=frap_timeout,
                     centroid_threshold=centroid_threshold,
                     file_prefix=f"fov{i:02d}",
                     stop_check=stop_check,
@@ -922,6 +948,22 @@ def parse_cli_args(argv=None):
         "--frap-oc",
         default="FRAPPA",
         help="optical configuration name to use for FRAP stimulation [default: %(default)s]",
+    )
+    g_microscope.add_argument(
+        "--survey-timeout",
+        type=float,
+        default=SURVEY_MACRO_TIMEOUT,
+        help="macro timeout in seconds for the survey acquisition; set "
+        "~2-3x the longest expected survey [default: %(default)s]",
+    )
+    g_microscope.add_argument(
+        "--frap-timeout",
+        type=float,
+        default=FRAP_MACRO_TIMEOUT,
+        help="macro timeout in seconds for the FRAP/stimulation "
+        "acquisition (covers the optical-configuration switch and the "
+        "stimulation experiment); set ~2-3x the longest expected "
+        "experiment [default: %(default)s]",
     )
     g_positions = p.add_argument_group("stage positions")
     g_positions.add_argument(

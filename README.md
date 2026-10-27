@@ -100,6 +100,8 @@ Key arguments:
 * `--out` output root, per-FOV subdirs created automatically
 * `--nis` path to `nis_ar.exe` (default: the standard NIS-Elements install path)
 * `--frap-oc` optical configuration used for FRAP stimulation (default: `FRAPPA`)
+* `--survey-timeout` macro timeout for the survey acquisition in seconds (default: 60; set ~2-3x the longest expected survey)
+* `--frap-timeout` macro timeout for the FRAP/stimulation acquisition in seconds (default: 300; covers the optical-configuration switch and the stimulation experiment)
 * `--max-positions` / `--num-positions` number of positions to visit; default 25 in the default spiral order (start plus two loops around it), caps the grid in `--grid` mode
 * `--grid` visit positions in a plain NxM grid instead of the default centre-out spiral
 * `--nx/--ny` grid size (`--grid` mode)
