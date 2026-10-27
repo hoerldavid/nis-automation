@@ -22,7 +22,7 @@ autofrap_out
 
 # macOS
 .DS_Store
-nis_manual/nis_help_html/
+nis_manual/*_html/
 
 # NIS manual extracts (copyrighted - keep out of git)
 *.chm
