@@ -24,10 +24,20 @@ Notes from earlier probing:
     a comma-separated string of variable names to substitute; use
     strcpy() for literal strings.
 
-Skipped automatically off the microscope workstation.
+Skipped automatically off the microscope workstation when run via unittest.
+
+Run directly at the microscope (NIS open):
+    python autofrap/autofrap_bitsnpieces/test_nd_exp_getter_live.py
+
+Interactive follow-up (stimulation-phase hunch):
+inspect_current_nd_experiment.ipynb (same directory).
 """
 import os
+import sys
 import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, ROOT)
 
 from autofrap.microscope import nis as nis_util
 
