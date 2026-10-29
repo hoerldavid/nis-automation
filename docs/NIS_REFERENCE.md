@@ -135,8 +135,9 @@ Components:
 
 Notes:
 
+* **The closed-form formula itself is directly live-verified (20261027)**: predicted stage coords for 7 pixels across the FOV vs. the GUI right-click readout (whole-µm precision), agreement at two different stage positions including after a stage move — all within the 1 µm display precision. Works with the live view as the anchor context (continuously acquired at the current position; `get_position` is a valid `p_acq` as long as the stage does not move). Re-verification probe script: `autofrap/autofrap_bitsnpieces/check_pixel_stage_transform.py`. On this setup `det(R) = +1` with R ≈ −I (~180° rotation); the flip comes solely from `F`.
 * The result is in the `StgMoveXY` frame and feeds straight back into `set_position` — the programmatic inverse of the GUI's "Move this point to center".
-* On this setup the fitted map has stage x decreasing left-to-right and stage y increasing top-to-bottom.
+* On this setup stage x decreases left-to-right and stage y increases top-to-bottom.
 * Stitched large images (`Stg_LargeImageScanArea`) are **not covered** here: their anchor (first-tile corner anchoring; what position(s) the stitched nd2 stores) is unverified on this unit — see `docs/SESSION_HISTORY.md` (20260929 legacy retro-analysis, 20261019 live-test attempt).
 
 ## To do X, use macro Y
