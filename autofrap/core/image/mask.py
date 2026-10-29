@@ -894,16 +894,17 @@ def next_stimulatable_cell(labels, stimulated, stimulation_mask=None):
     return None
 
 
-def select_next_cell(labels, stimulated, stimulation_mask=None):
+def select_next_cells(labels, stimulated, stimulation_mask=None, max_cells=1):
     """
-    Pick the next stimulatable cell and compute its ROI polygons.
+    Pick up to ``max_cells`` stimulatable cells and compute their ROI polygons.
 
-    The selection the pipeline performs per cycle: candidates are
-    tried via :func:`next_stimulatable_cell` (smallest label first);
-    a candidate whose whole-cell or stimulation polygon comes out
-    empty (:func:`mask_to_polygon`) is skipped and the next candidate
-    is tried instead. This is the exact logic a live run applies, so
-    an offline preview (the detector runner) picks the same cell.
+    The selection the pipeline performs per cycle (plural form for
+    parallel multi-cell stimulation): candidates are tried via
+    :func:`next_stimulatable_cell` (smallest label first); a candidate
+    whose whole-cell or stimulation polygon comes out empty
+    (:func:`mask_to_polygon`) is skipped and the next candidate is
+    tried instead. This is the exact logic a live run applies, so
+    an offline preview (the detector runner) picks the same cells.
 
     Parameters
     ----------
@@ -913,26 +914,51 @@ def select_next_cell(labels, stimulated, stimulation_mask=None):
         cell IDs to exclude (already stimulated / already tried)
     stimulation_mask: 2D np.ndarray (y, x), optional
         binary mask of areas eligible for photostimulation
+    max_cells: int, optional
+        maximum number of cells to select (default 1; must be >= 1)
 
     Returns
     -------
-    (cell_id, cell_poly, stim_poly, skipped)
-        cell_id: int or None — the selected cell (None if no candidate
-        has a viable polygon pair)
-        cell_poly, stim_poly: list of (x, y) — the whole-cell /
-        stimulation polygons as sent to NIS (None if no cell selected)
+    (selections, skipped)
+        selections: list of (cell_id, cell_poly, stim_poly) in candidate
+        order — cell_poly, stim_poly are lists of (x, y) as sent to NIS
+        (empty list if no candidate has a viable polygon pair)
         skipped: list of int — candidates that were tried but rejected
         (no viable polygon), in the order they were tried
     """
+    if max_cells < 1:
+        raise ValueError(f"max_cells must be >= 1 (got {max_cells})")
     stimulated = set(stimulated)
     skipped = []
-    while True:
+    selections = []
+    while len(selections) < max_cells:
         cell = next_stimulatable_cell(labels, stimulated, stimulation_mask)
         if cell is None:
-            return None, None, None, skipped
+            break
         cell_poly = mask_to_polygon(cell_mask(labels, cell))
         stim_poly = mask_to_polygon(cell_mask(labels, cell, stimulation_mask))
         if cell_poly and stim_poly:
-            return cell, cell_poly, stim_poly, skipped
-        skipped.append(cell)
+            selections.append((cell, cell_poly, stim_poly))
+        else:
+            skipped.append(cell)
         stimulated.add(cell)
+    return selections, skipped
+
+
+def select_next_cell(labels, stimulated, stimulation_mask=None):
+    """
+    Pick the next stimulatable cell and compute its ROI polygons.
+
+    Singular form of :func:`select_next_cells` (max_cells=1), kept for
+    the single-cell pipeline path and the offline detector preview.
+    See :func:`select_next_cells` for the full parameter and return
+    documentation; returns (cell_id, cell_poly, stim_poly, skipped)
+    with cell_id None if no candidate has a viable polygon pair.
+    """
+    selections, skipped = select_next_cells(
+        labels, stimulated, stimulation_mask, max_cells=1
+    )
+    if selections:
+        cell, cell_poly, stim_poly = selections[0]
+        return cell, cell_poly, stim_poly, skipped
+    return None, None, None, skipped

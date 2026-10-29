@@ -18,6 +18,8 @@ from autofrap.core.image.mask import (
     mask_to_polygon,
     match_imaged_centroids,
     next_stimulatable_cell,
+    select_next_cell,
+    select_next_cells,
     relabel_by_distance,
     relabel_max_spread,
     shuffle_labels,
@@ -291,6 +293,65 @@ class TestCentroidMatching(unittest.TestCase):
             # 10x10 square -> area=100 -> equivalent_diameter_area
             # = 2*sqrt(area/pi) = 2*sqrt(100/pi) ~ 11.28
             self.assertAlmostEqual(rp.equivalent_diameter_area, 11.28, places=1)
+
+
+class TestSelectNextCells(unittest.TestCase):
+    """select_next_cells: plural per-cycle selection — smallest labels
+    first, up to max_cells, candidates without a viable polygon pair
+    skipped. The singular select_next_cell must agree (max_cells=1)."""
+
+    def setUp(self):
+        # 3 cells in different positions, all with stim-eligible pixels
+        self.labels = np.zeros((100, 100), dtype=int)
+        self.labels[20:30, 20:30] = 1
+        self.labels[50:60, 50:60] = 2
+        self.labels[80:90, 40:50] = 3
+        self.stim_mask = self.labels > 0
+
+    def test_picks_k_in_label_order(self):
+        selections, skipped = select_next_cells(
+            self.labels, set(), self.stim_mask, max_cells=2
+        )
+        self.assertEqual([c for c, _, _ in selections], [1, 2])
+        self.assertEqual(skipped, [])
+        for _, cell_poly, stim_poly in selections:
+            self.assertTrue(cell_poly)
+            self.assertTrue(stim_poly)
+
+    def test_candidate_without_stim_pixels_not_selected(self):
+        """cell 1 has no stimulation-eligible pixels: next_stimulatable_cell
+        excludes it before the polygon check, so it is not selected and
+        not in skipped either — cell 2 is picked"""
+        stim = self.labels == 2
+        selections, skipped = select_next_cells(
+            self.labels, set(), stim, max_cells=2
+        )
+        self.assertEqual([c for c, _, _ in selections], [2])
+        self.assertEqual(skipped, [])
+
+    def test_fewer_viable_than_k(self):
+        selections, _ = select_next_cells(
+            self.labels, {3}, self.stim_mask, max_cells=5
+        )
+        self.assertEqual([c for c, _, _ in selections], [1, 2])
+
+    def test_none_available(self):
+        selections, skipped = select_next_cells(
+            self.labels, {1, 2, 3}, self.stim_mask, max_cells=2
+        )
+        self.assertEqual(selections, [])
+        self.assertEqual(skipped, [])
+
+    def test_max_cells_one_agrees_with_select_next_cell(self):
+        selections, skipped = select_next_cells(
+            self.labels, {1}, self.stim_mask, max_cells=1
+        )
+        cell, cell_poly, stim_poly, skipped_single = select_next_cell(
+            self.labels, {1}, self.stim_mask
+        )
+        self.assertEqual(len(selections), 1)
+        self.assertEqual(selections[0], (cell, cell_poly, stim_poly))
+        self.assertEqual(skipped, skipped_single)
 
 
 class TestRelabelHelpers(unittest.TestCase):
