@@ -88,6 +88,7 @@ Gotchas
 * `add_polygon_roi_and_set_stim_type(points, color)` → same + `ChangeROIType(id, 3)` in the same macro call
 * `set_roi_type(roi_id, type)` → 0 standard, 1 background, 2 reference, 3 stimulation
   * Type 3 label prefix `S1:<n>` – group 1 of 3
+  * Stimulation ROI groups S1–S3: `ChangeROIType(3)` always lands in S1 (no macro known to change the group). This is fine for multi-ROI FRAP: multiple stimulation ROIs can live in one group, and the sequential stimulation experiment stimulates **all ROIs of its selected group** — only a single group can be selected per experiment, so S1 is where we want them anyway (live-confirmed in GUI 20261029)
   * Return values unreliable (1 and 0 both observed) — verify via `get_roi_count` / the GUI
 * `delete_roi(roi_id)` → removes visible ROI. Always returns 0.
 * `get_roi_info(roi_id)` → bbox, center, Feret, rotation, color. Color read-back always 0.
@@ -101,6 +102,15 @@ Important ROI behavior
 * ROIs added after a doc's save are unsaved changes: `ActivateDocument` pops Save/Discard/Cancel
 * ND experiment save embeds ROIs present at acquisition time
 * NIS stores closed polygons without the repeated closing vertex (one point fewer than the pixel-space polygon sent)
+
+#### Reading ROIs back from a saved ND2 (nd2 library)
+
+Multiple stimulation ROIs in one experiment, end to end (live-verified 20261029): two `ChangeROIType(3)` ROIs (both S1) on the live image → `ND_RunSequentialStimulationExp()` bleaches both sequentially → `save_current_document` → both ROIs readable from the ND2 via `nd2.ND2File(path).rois`, a dict `{roi_id: ROI}`. `ROI.info.interpType` is `StimulationROI`, `stimulationGroup` is 0-based (S1 → 0), `scope` matches the creation-time `ScopeType`. ROI IDs match the values `CreatePolygonROI` returned.
+
+Coordinates are stored in **relative units** and must be converted to pixels:
+* `animParams[0].centerX/centerY` — ROI center: `px = center_rel * res / 2 + res / 2`
+* `extrudedShape.basePoints` — polygon vertices as **offsets from that center**: `px = center_px + point_rel * res / 2`
+(both axes independently; decoded squares matched the sent polygons exactly). Sanity check of the whole chain: intensity traces inside the decoded ROIs show the bleach + recovery in both.
 
 ### Housekeeping / other
 * `get_roi_count` → number of visible ROIs (`GetROICount`)
