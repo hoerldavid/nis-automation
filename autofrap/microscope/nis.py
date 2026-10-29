@@ -545,13 +545,20 @@ def checkpoint(path_to_nis, key='ok', value=1):
 def do_large_image_scan(path_to_nis, save_path,
                    left, right, top, bottom,
                    overlap = 0,
-                   registration = False, z_count=1, z_step=1.5, close=True ):
+                   registration = False, z_count=1, z_step=1.5, close=True,
+                   timeout=180 ):
+    """
+    large-image (stitched) stage scan over a stage-coordinate rectangle
+    via Stg_LargeImageScanArea — left/right/top/bottom are stage
+    positions in um (see the NIS manual). The scan blocks the macro for
+    its whole duration, hence the larger default timeout.
+    """
     cmd = f'''
         Stg_SetLargeImageStageZParams({0 if (z_count <= 1) else 1}, {z_step}, {z_count});
         Stg_LargeImageScanArea({left},{right},{top},{bottom},0,{overlap},0,{1 if registration else 0},0,"{save_path}");
         {'' if not close else 'CloseCurrentDocument(2);'}
         '''
-    _run_macro(path_to_nis, cmd)
+    _run_macro(path_to_nis, cmd, timeout=timeout)
 
 
 def get_camera_format(path_to_nis):
