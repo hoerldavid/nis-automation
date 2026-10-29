@@ -56,13 +56,13 @@ def _remote_detect(image, server_url=DEFAULT_CELLPOSE_SERVER_URL,
                    det_channel=0, **kwargs):
     return remote_detect_objects(image, server_url=server_url, channel=det_channel, **kwargs)
 
-def _filter_intensity(labels, image, channel=0, threshold=550, metric='mean'):
+def _filter_intensity(labels, image, channel=0, threshold=0, metric='mean'):
     return filter_intensity_inside(labels, image, channel=channel, metric=metric, threshold=threshold)
 
 detection_fun = build_detector(
     load_fun=_load,
     detector_fun=_remote_detect,
-    stim_mask_fun=lambda labels, image: cluster_stim_mask(labels, image, channel=2),
+    stim_mask_fun=cluster_stim_mask,
     visualization_fun=default_visualization,
     filter_function=_filter_intensity,
     parameter_map={
@@ -77,5 +77,8 @@ detection_fun = build_detector(
         'filter_function': {'filter_channel': 'channel',
                             'threshold': 'threshold',
                             'metric': 'metric'},
+        'stim_mask_fun': {'contrast': 'contrast',
+                            'cluster_channel' : 'channel'
+                        },  
     },
 )
