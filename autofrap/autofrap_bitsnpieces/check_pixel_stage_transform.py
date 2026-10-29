@@ -22,9 +22,9 @@ Procedure at the microscope:
      predicted stage coordinates.
 
 Caveats:
-  - a camera ROI changes the image size; the anchor is then assumed to
-    be the ROI center (untested — see the reference). Best run with the
-    ROI disabled.
+  - a camera ROI changes the image size; c is then the ROI center in
+    saved-image pixel coordinates (live-verified 20261027, off-center
+    ROI — see docs/NIS_REFERENCE.md § Pixel <-> stage transform).
   - the flip F = diag(1, -1) is a one-time live measurement of this
     unit; if the camera light path was changed since 20261019, a
     mismatch would show up here as a vertical mirror of the residuals.
