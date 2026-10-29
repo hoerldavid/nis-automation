@@ -320,5 +320,37 @@ class TestLoadDetectorFile(unittest.TestCase):
             os.unlink(tmp)
 
 
+class TestRelabelModes(unittest.TestCase):
+    """relabel modes in build_detector: 'max_spread' applies
+    relabel_max_spread (relabel_kwargs forwarded); unknown modes are
+    rejected. Ordering behavior itself is tested in test_mask."""
+
+    def _labels(self):
+        labels = np.zeros((101, 101), dtype=np.int32)
+        labels[50:53, 50:53] = 1   # center
+        labels[5:8, 5:8] = 2       # top-left
+        labels[95:98, 95:98] = 3   # bottom-right
+        return labels
+
+    def _det(self, **kwargs):
+        load = lambda f: np.zeros((101, 101), dtype=np.uint16)
+        det = lambda image: self._labels()
+        return build_detector(load, det, clear_border=False,
+                              visualization_fun=False, **kwargs)
+
+    def test_max_spread_mode(self):
+        labels, = self._det(relabel='max_spread',
+                            relabel_kwargs={'center_frac': 0.6})(None)
+        expected = mask_utils.relabel_max_spread(self._labels(),
+                                                 center_frac=0.6)
+        self.assertTrue(np.array_equal(labels, expected))
+        # center object is label 1
+        self.assertEqual(labels[51, 51], 1)
+
+    def test_unknown_mode_rejected(self):
+        with self.assertRaises(ValueError):
+            self._det(relabel='bogus')
+
+
 if __name__ == '__main__':
     unittest.main()

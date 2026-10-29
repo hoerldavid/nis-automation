@@ -8,9 +8,11 @@ GPU machine, assembled with build_detector.
 
 The compositor also applies its standard label housekeeping: objects
 touching the image border are discarded (clear_border=True) and labels
-are renumbered 1..N by increasing centroid distance to the image center
-(relabel='distance') -- so the cell closest to the center is
-stimulated first.
+are renumbered 1..N in greedy farthest-point ("max spread") order
+(relabel='max_spread', center_frac=0.7) -- the cell closest to the
+center is stimulated first, then well-spread cells from the central 70%
+of the FOV, periphery last. For plain center-out ordering use
+relabel='distance' instead.
 
 Server URL: ``DEFAULT_CELLPOSE_SERVER_URL`` below (edit it there if
 the server moves), or per run via ``--detector-arg server_url=...``.
@@ -62,6 +64,8 @@ def _filter_intensity(labels, image, channel=0, threshold=0, metric='mean'):
 detection_fun = build_detector(
     load_fun=_load,
     detector_fun=_remote_detect,
+    relabel='max_spread',
+    relabel_kwargs={'center_frac': 0.7},
     stim_mask_fun=lambda labels, image: half_object_stim_mask(labels),
     visualization_fun=default_visualization,
     filter_function=_filter_intensity,

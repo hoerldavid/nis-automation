@@ -23,7 +23,11 @@ from dataclasses import dataclass
 import numpy as np
 from skimage.measure import label, regionprops
 
-from autofrap.core.image.mask import relabel_by_distance, shuffle_labels
+from autofrap.core.image.mask import (
+    relabel_by_distance,
+    relabel_max_spread,
+    shuffle_labels,
+)
 from autofrap.core.image.qc import default_visualization as _default_visualization
 
 
@@ -83,6 +87,7 @@ def build_detector(
     load_fun,
     detector_fun,
     relabel="distance",
+    relabel_kwargs=None,
     clear_border=True,
     filter_function=None,
     stim_mask_fun=None,
@@ -110,7 +115,9 @@ def build_detector(
         (clear_border removes the whole label, not just the border
         pixels) and renumber to a gap-free 1..N
       - relabel: 'distance' (default - relabel 1..N by increasing
-        centroid distance to the image center), 'shuffle', or None
+        centroid distance to the image center), 'shuffle',
+        'max_spread' (greedy farthest-point order, see
+        relabel_max_spread), or None
 
     Contract checks (ValueError):
       - labels: 2D, integer, same (y, x) as the image
@@ -184,7 +191,13 @@ def build_detector(
         partial(autofrap.core.image.segmentation.remote_detect_objects,
         server_url=...), or your own model
     relabel: str or None
-        'distance' (default), 'shuffle', or None (no relabelling)
+        'distance' (default), 'shuffle', 'max_spread', or None (no
+        relabelling)
+    relabel_kwargs: dict or None, optional
+        extra keyword arguments forwarded to the relabel function,
+        e.g. {'center_frac': 0.8} for relabel='max_spread' (peripheral
+        objects ordered last; default 1.0 = all objects) or
+        {'seed': 0} for 'shuffle'; None: defaults
     clear_border: bool
         discard border-touching objects and renumber gap-free
         (default: True)
@@ -241,8 +254,12 @@ def build_detector(
             # -> my_load(f, channel=0)
             # -> my_detect(img, channel=1)
     """
-    if relabel not in ("distance", "shuffle", None):
+    if relabel not in ("distance", "shuffle", "max_spread", None):
         raise ValueError(f"unknown relabel mode {relabel!r}")
+    if relabel_kwargs is not None and not isinstance(relabel_kwargs, dict):
+        raise ValueError(
+            f"relabel_kwargs must be None or a dict, got {relabel_kwargs!r}"
+        )
     if parameter_map is not None and not isinstance(parameter_map, dict):
         raise ValueError(
             "parameter_map must be None or an explicit dict, got "
@@ -295,10 +312,13 @@ def build_detector(
             labels = _clear(labels)
             labels, _, _ = relabel_sequential(labels)  # (l, fwd, inv)
 
+        kwargs = relabel_kwargs or {}
         if relabel == "distance":
-            labels = relabel_by_distance(labels)
+            labels = relabel_by_distance(labels, **kwargs)
         elif relabel == "shuffle":
-            labels = shuffle_labels(labels)
+            labels = shuffle_labels(labels, **kwargs)
+        elif relabel == "max_spread":
+            labels = relabel_max_spread(labels, **kwargs)
 
         mask = None
         if stim_mask_fun is not None:
