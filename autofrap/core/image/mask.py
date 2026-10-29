@@ -517,6 +517,104 @@ def relabel_by_distance(labels, reference=None):
     return fastremap.remap(labels, remap)
 
 
+def relabel_max_spread(labels, center_frac=1.0, reference=None):
+    """
+    relabel objects in greedy farthest-point ("max spread") order
+
+    Objects are ordered so that each newly added object is as far as
+    possible from all previously chosen ones (greedy max-min-distance
+    ordering - a practical stand-in for the combinatorially hard exact
+    max-spread permutation). The first object is the one closest to
+    `reference` (the image center by default).
+
+    With center_frac < 1, only objects whose centroid lies within
+    center_frac of the maximum possible distance from the center (the
+    half-diagonal, i.e. the corner distance) take part in the spread
+    ordering; the remaining peripheral objects are appended afterwards,
+    again in greedy spread order. No object is dropped - the result is
+    always a pure permutation of the input labels - so downstream code
+    that picks the smallest labels first (e.g. the autoFRAP pipeline's
+    cell selection) prefers a well-spread set of central objects while
+    keeping the peripheral ones available.
+
+    Parameters
+    ----------
+    labels: np.ndarray
+        label map (0 = background, 1..N = objects), 2D or 3D
+    center_frac: float, optional
+        fraction of the half-diagonal within which objects count as
+        "central" and are spread-ordered first (default 1.0 = all
+        objects; must be >= 0)
+    reference: array-like of pixel coordinates, optional
+        point to measure distances from; one value per axis, e.g. (y, x)
+        for 2D or (z, y, x) for 3D. Defaults to the image center.
+
+    Returns
+    -------
+    relabeled: np.ndarray
+        label map of the same shape and dtype with 1..N renumbered in
+        greedy max-spread order (central objects first when
+        center_frac < 1)
+    """
+    import fastremap
+    from skimage.measure import regionprops
+
+    if center_frac < 0:
+        raise ValueError(f"center_frac must be >= 0 (got {center_frac})")
+
+    n = int(labels.max()) if labels.size else 0
+    if n == 0:
+        return labels.copy()
+
+    shape = np.array(labels.shape, dtype=float)
+    if reference is None:
+        reference = shape / 2.0
+    ref = np.asanyarray(reference, dtype=float)
+
+    props = regionprops(labels)
+    ids = np.array([p.label for p in props])
+    centroids = np.array([p.centroid for p in props])
+    # process candidates in label order for deterministic tie-breaking
+    # (argmin/argmax below take the first minimum/maximum)
+    order = np.argsort(ids, kind="stable")
+    ids = ids[order]
+    centroids = centroids[order]
+
+    dist_ref = np.sqrt(np.sum((centroids - ref) ** 2, axis=1))
+    half_diag = np.sqrt(np.sum((shape / 2.0) ** 2))
+    central = dist_ref <= center_frac * half_diag
+
+    def _greedy(indices):
+        """greedy farthest-point ordering of the candidates `indices`
+        (row indices into ids/centroids), anchored at the candidate
+        closest to the reference"""
+        indices = np.asarray(indices, dtype=int)
+        if indices.size == 0:
+            return []
+        anchor = int(indices[np.argmin(dist_ref[indices])])
+        chosen = [anchor]
+        remaining = indices[indices != anchor]
+        dmin = np.sqrt(np.sum((centroids[remaining] - centroids[anchor]) ** 2, axis=1))
+        while remaining.size:
+            k = int(np.argmax(dmin))
+            chosen.append(int(remaining[k]))
+            d_new = np.sqrt(
+                np.sum((centroids[remaining] - centroids[remaining[k]]) ** 2, axis=1)
+            )
+            dmin = np.minimum(dmin, d_new)
+            remaining = np.delete(remaining, k)
+            dmin = np.delete(dmin, k)
+        return chosen
+
+    spread = _greedy(np.nonzero(central)[0]) + _greedy(np.nonzero(~central)[0])
+
+    remap = {0: 0}
+    for new_lbl, idx in enumerate(spread, start=1):
+        remap[int(ids[idx])] = new_lbl
+
+    return fastremap.remap(labels, remap)
+
+
 def mask_to_polygon(mask, tolerance=2.0):
     """
     convert a binary mask to polygon vertices in pixel coordinates

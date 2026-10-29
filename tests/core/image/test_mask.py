@@ -18,6 +18,9 @@ from autofrap.core.image.mask import (
     mask_to_polygon,
     match_imaged_centroids,
     next_stimulatable_cell,
+    relabel_by_distance,
+    relabel_max_spread,
+    shuffle_labels,
 )
 
 
@@ -288,6 +291,96 @@ class TestCentroidMatching(unittest.TestCase):
             # 10x10 square -> area=100 -> equivalent_diameter_area
             # = 2*sqrt(area/pi) = 2*sqrt(100/pi) ~ 11.28
             self.assertAlmostEqual(rp.equivalent_diameter_area, 11.28, places=1)
+
+
+class TestRelabelHelpers(unittest.TestCase):
+    """generic contract of all relabel_* helpers: the result is a pure
+    permutation of the input label map (same label set, background stays
+    background, each object keeps its exact pixel mask) and an empty
+    label map passes through unchanged"""
+
+    def _objects(self):
+        labels = np.zeros((64, 64), dtype=np.int32)
+        labels[10:20, 10:20] = 1
+        labels[30:45, 40:55] = 2
+        labels[50:60, 5:15] = 3
+        return labels
+
+    def _check_permutation(self, fun, **kwargs):
+        labels = self._objects()
+        out = fun(labels, **kwargs)
+        self.assertEqual(sorted(np.unique(out).tolist()),
+                         sorted(np.unique(labels).tolist()))
+        self.assertTrue(np.all(out[labels == 0] == 0))
+        for old in np.unique(labels):
+            if old == 0:
+                continue
+            new_vals = np.unique(out[labels == old])
+            self.assertEqual(len(new_vals), 1)
+            self.assertEqual(int((out == new_vals[0]).sum()),
+                             int((labels == old).sum()))
+
+    def test_relabel_by_distance(self):
+        self._check_permutation(relabel_by_distance)
+
+    def test_shuffle_labels(self):
+        self._check_permutation(shuffle_labels, seed=0)
+
+    def test_relabel_max_spread(self):
+        self._check_permutation(relabel_max_spread, center_frac=0.6)
+
+    def test_empty(self):
+        labels = np.zeros((32, 32), dtype=np.int32)
+        for fun, kwargs in [(relabel_by_distance, {}),
+                            (shuffle_labels, {"seed": 0}),
+                            (relabel_max_spread, {})]:
+            with self.subTest(fun=fun.__name__):
+                out = fun(labels, **kwargs)
+                self.assertEqual(out.sum(), 0)
+                self.assertEqual(out.shape, labels.shape)
+
+
+class TestRelabelMaxSpread(unittest.TestCase):
+    """relabel_max_spread behavior: greedy farthest-point ordering,
+    central objects first when center_frac < 1 (the permutation/empty
+    contract is covered by TestRelabelHelpers)."""
+
+    def _five_object_labels(self):
+        """101x101 image; disks of radius 3 at the center (label 1),
+        top-middle (2), left-middle (3), bottom-right corner (4),
+        top-right corner (5). Distances from the image center (50, 50):
+        0, 40, 40, ~56.6, ~56.6; half-diagonal ~71.4."""
+        labels = np.zeros((101, 101), dtype=np.int32)
+        for lbl, (cy, cx) in {
+            1: (50, 50), 2: (50, 10), 3: (10, 50), 4: (90, 90), 5: (90, 10)
+        }.items():
+            rr, cc = disk((cy, cx), 3)
+            labels[rr, cc] = lbl
+        return labels
+
+    def test_centermost_first_and_spread_order(self):
+        """center_frac=1.0: anchor is the centermost object, then greedy
+        farthest-point; with the symmetric layout the corners go before
+        the edge-midpoints (distances 56.6 > 40 from the center)"""
+        labels = self._five_object_labels()
+        out = relabel_max_spread(labels)  # center_frac=1.0
+        # new label 1 = old 1 (center); new 2,3 = old 4,5 (corners,
+        # tie broken by label order); new 4,5 = old 2,3
+        new_of_old = {old: int(out[labels == old][0]) for old in range(1, 6)}
+        self.assertEqual(new_of_old[1], 1)
+        self.assertEqual(sorted(new_of_old[l] for l in (4, 5)), [2, 3])
+        self.assertEqual(sorted(new_of_old[l] for l in (2, 3)), [4, 5])
+
+    def test_center_frac_pushes_periphery_last(self):
+        """center_frac=0.6 (threshold ~42.9 px): only the center and the
+        two edge-midpoints (40 px) are central and spread-ordered first;
+        the two corners (~56.6 px) are appended last - but kept"""
+        labels = self._five_object_labels()
+        out = relabel_max_spread(labels, center_frac=0.6)
+        new_of_old = {old: int(out[labels == old][0]) for old in range(1, 6)}
+        self.assertEqual(new_of_old[1], 1)
+        self.assertEqual(sorted(new_of_old[l] for l in (2, 3)), [2, 3])
+        self.assertEqual(sorted(new_of_old[l] for l in (4, 5)), [4, 5])
 
 
 if __name__ == '__main__':
