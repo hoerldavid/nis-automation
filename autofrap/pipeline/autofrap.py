@@ -60,7 +60,7 @@ from autofrap.core.detection import (
     parse_detector_args,
     unpack_detection_result,
 )
-from autofrap.core.image.mask import match_imaged_centroids, select_next_cell
+from autofrap.core.image.mask import match_imaged_centroids, select_next_cells
 from autofrap.core.image.qc import save_qc_overlay
 from autofrap.core.utils.retry import run_with_retries
 
@@ -240,6 +240,7 @@ def autofrap(
     survey_timeout=SURVEY_MACRO_TIMEOUT,
     frap_timeout=FRAP_MACRO_TIMEOUT,
     centroid_threshold="auto",
+    cells_per_cycle=1,
     fov_subdirs=False,
     name=None,
     use_timestamp=True,
@@ -306,6 +307,13 @@ def autofrap(
         centroid distance (px) for matching cells across cycles:
         'auto' (default) matches within each cell's equivalent_diameter
         (regionprops); a number sets a fixed matching radius
+    cells_per_cycle: int
+        number of cells to stimulate in parallel per cycle (default 1 =
+        one cell per stimulation run, the classic sequential mode); the
+        cells are picked in label order (see select_next_cells), all
+        their stimulation ROIs go into NIS group S1 and are bleached in
+        a single stimulation run (live-verified 20261029); spread
+        selection is a detector-side concern (relabel_max_spread)
     fov_subdirs: bool
         give each FOV its own <run_name>/fov<NN>/ sub-directory
         (default: all FOVs in the single run directory, the position
@@ -351,6 +359,10 @@ def autofrap(
             "detection_fun is required - pass a detector file via "
             "--detector (see autofrap/detectors/ and WRITING_DETECTOR.md)"
         )
+    if cells_per_cycle < 1:
+        raise AbortRunError(
+            f"cells_per_cycle must be >= 1 (got {cells_per_cycle})"
+        )
 
     # setup microscope
     start_pos, res = setup_microscope(nis_exe)
@@ -375,6 +387,7 @@ def autofrap(
             survey_timeout=survey_timeout,
             frap_timeout=frap_timeout,
             centroid_threshold=centroid_threshold,
+            cells_per_cycle=cells_per_cycle,
             fov_subdirs=fov_subdirs,
             name=name,
             use_timestamp=use_timestamp,
@@ -452,7 +465,7 @@ def _save_cycle_qc_overlay(
         logger.warning(f"[c{cycle:02d}] QC overlay failed: {e!r}")
 
 
-def _inner_loop_select_cell_and_qc(
+def _inner_loop_select_cells_and_qc(
     labels,
     stimulation_mask,
     viz_image,
@@ -461,9 +474,12 @@ def _inner_loop_select_cell_and_qc(
     cycle,
     out_dir,
     file_prefix,
+    max_cells=1,
 ):
-    """Match detected objects to already-imaged map, pick next cell, build polygons and save QC overlay.
-    Returns (cell, cell_poly, stim_poly, n_obj) or (None, None, None, n_obj) if no cell is available
+    """Match detected objects to already-imaged map, pick up to max_cells
+    cells, build polygons and save QC overlay.
+    Returns (selections, n_obj): selections is a list of
+    (cell, cell_poly, stim_poly), empty if no cell is available
     (a QC overlay is saved in that case too, without cell/ROI polygons).
     """
 
@@ -472,14 +488,14 @@ def _inner_loop_select_cell_and_qc(
     matched = match_imaged_centroids(labels, imaged_centroids,
                                     centroid_threshold)
 
-    cell, cell_poly, stim_poly, skipped = select_next_cell(
-        labels, matched, stimulation_mask
+    selections, skipped = select_next_cells(
+        labels, matched, stimulation_mask, max_cells=max_cells
     )
     if skipped:
         logger.info(
             f"[c{cycle:02d}] cells {skipped}: no viable polygon, skipped"
         )
-    if cell is None:
+    if not selections:
         if skipped:
             logger.info(
                 f"[c{cycle:02d}] all {n_obj} objects have no "
@@ -499,47 +515,65 @@ def _inner_loop_select_cell_and_qc(
                 "(all stimulated / no FRAP mask)"
             ),
         )
-        return None, None, None, n_obj
+        return [], n_obj
 
-    logger.info(f"[c{cycle:02d}] {n_obj} objects, stimulating cell {cell}")
-    logger.debug(f"[c{cycle:02d}] cell {cell}: polygons with "
-                 f"{len(cell_poly)} (cell) / {len(stim_poly)} (stim) vertices")
+    cells = [c for c, _, _ in selections]
+    logger.info(
+        f"[c{cycle:02d}] {n_obj} objects, stimulating "
+        + (f"cell {cells[0]}" if len(cells) == 1 else f"cells {cells}")
+    )
+    for cell, cell_poly, stim_poly in selections:
+        logger.debug(f"[c{cycle:02d}] cell {cell}: polygons with "
+                     f"{len(cell_poly)} (cell) / {len(stim_poly)} (stim) vertices")
     # QC overlay before stimulation
     _save_cycle_qc_overlay(
         viz_image, labels, stimulation_mask, cycle, out_dir, file_prefix,
-        cell_id=cell,
-        cell_poly=cell_poly,
-        stim_poly=stim_poly,
-        caption=f"{CYCLE_PREFIX}{cycle:02d} cell {cell}",
+        cell_ids=cells,
+        cell_polys=[cell_poly for _, cell_poly, _ in selections],
+        stim_polys=[stim_poly for _, _, stim_poly in selections],
+        caption=(f"{CYCLE_PREFIX}{cycle:02d} cell {cells[0]}" if len(cells) == 1
+                 else f"{CYCLE_PREFIX}{cycle:02d} cells {cells}"),
     )
 
-    return cell, cell_poly, stim_poly, n_obj
+    return selections, n_obj
 
 
-def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, cell_poly, stim_poly, cycle,
+def _inner_loop_stimulation(nis_exe, frap_file, frap_oc, selections, cycle,
                              timeout=FRAP_MACRO_TIMEOUT):
-    """Create ROIs in NIS, run FRAP stimulation and save the timeseries.
+    """Create ROIs in NIS (one stimulation + one whole-cell ROI per selected
+    cell), run FRAP stimulation and save the timeseries.
     Raises on failure - the exception propagates to the outer loop
     (the cycle's finally-cleanup runs and the FOV fails).
+
+    selections: list of (cell, cell_poly, stim_poly) from
+    select_next_cells - all stimulation ROIs go into NIS group S1 and the
+    sequential stimulation experiment bleaches all of them in one run
+    (live-verified 20261029).
     """
     roi_calls = [
         (nis_util.OP_DELETE_ALL_ROIS_IN_CURRENT_DOCUMENT, {}),
-        (nis_util.OP_CREATE_AND_SET_STIM_ROI, {"points": stim_poly}),
-        (nis_util.OP_ADD_POLYGON_ROI, {"points": cell_poly}),
     ]
+    for _, cell_poly, stim_poly in selections:
+        roi_calls.append((nis_util.OP_CREATE_AND_SET_STIM_ROI, {"points": stim_poly}))
+        roi_calls.append((nis_util.OP_ADD_POLYGON_ROI, {"points": cell_poly}))
     roi_results = run_with_retries(
         lambda: nis_util.batch_run_macro(nis_exe, roi_calls),
         "create ROIs",
         retry_on=TimeoutError
     )
-    stim_roi = roi_results["create_and_set_stim_roi_1"]
-    cell_roi = roi_results["add_polygon_roi_2"]
-    logger.debug(f"[c{cycle:02d}] ROIs created: stim={stim_roi}, cell={cell_roi}")
+    # batch_run_macro names the ini sections <op.name>_<index in calls>:
+    # stim ops sit at the odd indices 1, 3, 5, ..., cell ops at 2, 4, 6, ...
+    n = len(selections)
+    stim_rois = [roi_results[f"create_and_set_stim_roi_{1 + 2 * i}"] for i in range(n)]
+    cell_rois = [roi_results[f"add_polygon_roi_{2 + 2 * i}"] for i in range(n)]
+    logger.debug(f"[c{cycle:02d}] ROIs created: stim={stim_rois}, cell={cell_rois}")
 
-    if cell_roi <= 0:
-        raise AutofrapError(f"cell ROI creation failed (id={cell_roi})")
-    if stim_roi <= 0:
-        raise AutofrapError(f"stim ROI creation failed (id={stim_roi})")
+    bad_cell = next((i for i in cell_rois if i <= 0), None)
+    if bad_cell is not None:
+        raise AutofrapError(f"cell ROI creation failed (id={bad_cell})")
+    bad_stim = next((i for i in stim_rois if i <= 0), None)
+    if bad_stim is not None:
+        raise AutofrapError(f"stim ROI creation failed (id={bad_stim})")
 
     # Batch set OC and run stimulation experiment
     stim_calls = [
@@ -579,6 +613,7 @@ def autofrap_loop_inner(
     survey_timeout=SURVEY_MACRO_TIMEOUT,
     frap_timeout=FRAP_MACRO_TIMEOUT,
     centroid_threshold="auto",
+    cells_per_cycle=1,
     file_prefix=None,
     stop_check=None,
     allow_interrupt_after_survey=False,
@@ -587,26 +622,27 @@ def autofrap_loop_inner(
     """Internal: the per-FOV cycle loop (a layer of autofrap(); see
     there for the shared parameters nis_exe, out_dir, max_cycles,
     detection_fun, frap_oc, survey_timeout, frap_timeout,
-    centroid_threshold, stop_check, allow_interrupt_after_survey and
-    detector_kwargs).
+    centroid_threshold, cells_per_cycle, stop_check,
+    allow_interrupt_after_survey and detector_kwargs).
 
     Per cycle:
       1. acquire the survey image via the current ND experiment,
          saved to <file_prefix>_cycle<NN>_survey.nd2 and kept open
       2. run detection_fun on it (detector contract: WRITING_DETECTOR.md)
-      3. pick the next cell: the smallest label not yet in the
-         accumulated "already-imaged" map (centroid match via
-         centroid_threshold) that has stimulation-eligible pixels and
+      3. pick up to cells_per_cycle cells: the smallest labels not yet in
+         the accumulated "already-imaged" map (centroid match via
+         centroid_threshold) that have stimulation-eligible pixels and
          viable ROI polygons
       4. save the QC overlay PNG (<file_prefix>_cycle<NN>_survey_qc.png:
-         detection, FRAP mask, selected cell + its polygons as sent to
-         NIS) - before stimulation, so it survives it; also saved when
+         detection, FRAP mask, selected cells + their polygons as sent
+         to NIS) - before stimulation, so it survives it; also saved when
          no cell is selectable (without the polygons, for diagnosis)
-      5. create the stimulation + whole-cell ROIs, switch to frap_oc,
-         run the current sequential stimulation experiment and save
+      5. create one stimulation + one whole-cell ROI per selected cell,
+         switch to frap_oc, run the current sequential stimulation
+         experiment (bleaches all stimulation ROIs in one run) and save
          the timeseries to <file_prefix>_cycle<NN>_frap.nd2
       6. cleanup (ROIs deleted, documents closed - finally-cleanup) and
-         record the stimulated cell's centroid as imaged
+         record the stimulated cells' centroids as imaged
 
     The loop stops when no cell is selectable, at max_cycles, or on a
     stop_check request: at cycle end (P1, the default, cleanest state)
@@ -676,8 +712,8 @@ def autofrap_loop_inner(
                     f"of cycle {cycle}"
                 )
 
-            # 3. find next cell and create QC image
-            cell, cell_poly, stim_poly, _ = _inner_loop_select_cell_and_qc(
+            # 3. find the next cells and create the QC image
+            selections, _ = _inner_loop_select_cells_and_qc(
                 labels,
                 stimulation_mask,
                 viz_image,
@@ -686,21 +722,23 @@ def autofrap_loop_inner(
                 cycle,
                 out_dir,
                 file_prefix,
+                max_cells=cells_per_cycle,
             )
-            if cell is None:
+            if not selections:
                 # no stimulatable cell or no viable polygon; move to next FOV
                 break
 
-            # 4. run stimulation / FRAP
+            # 4. run stimulation / FRAP (all selected cells in one run)
             _inner_loop_stimulation(
-                nis_exe, frap_file, frap_oc, cell_poly, stim_poly, cycle
+                nis_exe, frap_file, frap_oc, selections, cycle
             )
 
-            # add the stimulated cell's centroid to the already-imaged map
-            for rp in regionprops(labels):
-                if rp.label == cell:
-                    imaged_centroids.append(rp.centroid)  # (y, x)
-                    break
+            # add the stimulated cells' centroids to the already-imaged map
+            for cell, _, _ in selections:
+                for rp in regionprops(labels):
+                    if rp.label == cell:
+                        imaged_centroids.append(rp.centroid)  # (y, x)
+                        break
         finally:
             # best-effort cleanup: close all open docs and delete ROIs,
             # so the next FOV starts from a clean GUI state; 
@@ -719,6 +757,7 @@ def autofrap_loop_outer(
     survey_timeout=SURVEY_MACRO_TIMEOUT,
     frap_timeout=FRAP_MACRO_TIMEOUT,
     centroid_threshold="auto",
+    cells_per_cycle=1,
     fov_subdirs=False,
     name=None,
     use_timestamp=True,
@@ -808,6 +847,7 @@ def autofrap_loop_outer(
                     survey_timeout=survey_timeout,
                     frap_timeout=frap_timeout,
                     centroid_threshold=centroid_threshold,
+                    cells_per_cycle=cells_per_cycle,
                     file_prefix=f"fov{i:02d}",
                     stop_check=stop_check,
                     allow_interrupt_after_survey=allow_interrupt_after_survey,
@@ -1013,6 +1053,14 @@ def parse_cli_args(argv=None):
         action="store_true",
         help="run until all cells of a FOV are stimulated " "(ignore --max-cycles)",
     )
+    g_cycles.add_argument(
+        "--cells-per-cycle",
+        type=int,
+        default=1,
+        help="number of cells to stimulate in parallel per cycle, picked "
+        "in label order; all stimulation ROIs are bleached in one "
+        "stimulation run [default: %(default)s]",
+    )
     g_behavior = p.add_argument_group("run behavior")
     g_behavior.add_argument(
         "--max-consecutive-failures",
@@ -1108,6 +1156,7 @@ def main(argv=None):
             spiral=not args.grid,
             max_positions=args.max_positions,
             max_cycles=None if args.until_done else args.max_cycles,
+            cells_per_cycle=args.cells_per_cycle,
             detection_fun=detection_fun,
             frap_oc=args.frap_oc,
             name=args.name,

@@ -237,9 +237,9 @@ def main(argv=None):
             labels,
             out_path,
             stimulation_mask=stimulation_mask,
-            cell_id=cell,
-            cell_poly=cell_poly,
-            stim_poly=stim_poly,
+            cell_ids=[cell] if cell is not None else None,
+            cell_polys=[cell_poly] if cell_poly else None,
+            stim_polys=[stim_poly] if stim_poly else None,
             caption=caption,
         )
     except Exception as e:

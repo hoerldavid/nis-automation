@@ -214,6 +214,25 @@ class TestOfflinePipeline(unittest.TestCase):
         """A5: the macro debug dir context was restored after the runs"""
         self.assertIsNone(nis_util._macro_debug_dir)
 
+    def test_A6_cells_per_cycle_parallel(self):
+        """A6: cells_per_cycle=2: both detected cells are stimulated in one
+        cycle (one stimulation run), the FOV is done after 1 cycle"""
+        out = os.path.join(self.tmp, 'a6')
+        fake = FakeNIS([self.src1])
+        recs, raised = self.run_outer(out, 'par', fake, POS2[:1],
+                                      max_cycles=3, cells_per_cycle=2)
+        self.assertIsNone(raised)
+        self.assertTrue(has_msg(recs, 'INFO', 'stimulating cells [1, 2]'))
+        # cycle 2 finds nothing new and stops the FOV
+        self.assertTrue(has_msg(recs, 'INFO', 'FOV done after 2 cycle(s)'))
+        self.assertTrue(os.path.isfile(
+            self.fov_file(out, 'par', 1, 'frap', cycle=1)))
+        self.assertFalse(os.path.exists(
+            self.fov_file(out, 'par', 1, 'frap', cycle=2)))
+        # QC overlay saved for the cycle
+        qc = os.path.join(out, 'par', 'fov01_cycle01_survey_qc.png')
+        self.assertTrue(os.path.isfile(qc))
+
     # -------------------------------------------------------------- #
     # B. pre-flight -> AbortRunError                                  #
     # -------------------------------------------------------------- #

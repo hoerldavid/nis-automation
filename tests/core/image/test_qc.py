@@ -46,9 +46,9 @@ class TestQcOverlaySynthetic(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             syn_path = os.path.join(tmp, 'qc_synthetic.png')
             save_qc_overlay(
-                simg, slbl, syn_path, stimulation_mask=sstim, cell_id=1,
-                cell_poly=[(150, 150), (280, 150), (280, 280), (150, 280)],
-                stim_poly=[(220, 220), (280, 220), (280, 280), (220, 280)])
+                simg, slbl, syn_path, stimulation_mask=sstim, cell_ids=[1],
+                cell_polys=[[(150, 150), (280, 150), (280, 280), (150, 280)]],
+                stim_polys=[[(220, 220), (280, 220), (280, 280), (220, 280)]])
 
             out = plt.imread(syn_path)  # (h, w, 4) float 0..1
             self.assertEqual(out.shape[:2], (300, 300))
@@ -124,8 +124,8 @@ class TestQcOverlayRealData(unittest.TestCase):
 
             # full artifact, as autofrap() would save it
             save_qc_overlay(
-                image, labels, paths[0], stimulation_mask=stim, cell_id=cell,
-                cell_poly=cell_poly, stim_poly=stim_poly,
+                image, labels, paths[0], stimulation_mask=stim, cell_ids=[cell],
+                cell_polys=[cell_poly], stim_polys=[stim_poly],
                 caption=f'test  cell {cell} of {n_obj}')
 
             # no selection: just image + labels + stim mask
@@ -137,7 +137,7 @@ class TestQcOverlayRealData(unittest.TestCase):
             big = max((l for l in np.unique(labels) if l > 0),
                       key=lambda l: (labels == l).sum())
             save_qc_overlay(
-                image, labels, paths[2], stimulation_mask=stim, cell_id=big,
+                image, labels, paths[2], stimulation_mask=stim, cell_ids=[big],
                 caption=f'test  largest cell {big}')
 
             for p in paths:

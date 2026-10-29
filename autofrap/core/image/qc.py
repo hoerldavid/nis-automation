@@ -51,7 +51,7 @@ def _draw_poly(ax, poly, color, lw, zorder):
 
 
 def save_qc_overlay(image, labels, path, stimulation_mask=None,
-                    cell_id=None, cell_poly=None, stim_poly=None,
+                    cell_ids=None, cell_polys=None, stim_polys=None,
                     caption=None, dpi=100):
     """
     render and save a QC overlay PNG
@@ -66,11 +66,11 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
       3. contours of all labels + stimulation mask contour
       4. polygons sent to NIS (solid: whole cell cyan, stimulation magenta)
       5. label IDs (on top, so they stay readable over the orange fill;
-         the selected cell's ID is bold cyan, matching its ROI)
+         the selected cells' IDs are bold cyan, matching their ROIs)
       6. legend + caption
 
-    The selected cell gets no extra outline: the cyan/magenta ROI
-    polygons already mark it well enough (an extra contour underneath
+    The selected cells get no extra outline: the cyan/magenta ROI
+    polygons already mark them well enough (an extra contour underneath
     them is practically invisible).
 
     The solid polygons show the *simplified* outlines actually sent to
@@ -86,14 +86,14 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
         output PNG path
     stimulation_mask: 2D np.ndarray (y, x), bool, optional
         stimulation-eligible areas (all cells); filled in orange
-    cell_id: int, optional
-        the label selected for FRAP;
-    cell_poly: list of (x, y), optional
-        whole-cell polygon as sent to NIS
-    stim_poly: list of (x, y), optional
-        stimulation polygon as sent to NIS
+    cell_ids: int or list of int, optional
+        the label(s) selected for FRAP
+    cell_polys: list of (x, y) or list of lists of (x, y), optional
+        whole-cell polygon(s) as sent to NIS, one per selected cell
+    stim_polys: list of (x, y) or list of lists of (x, y), optional
+        stimulation polygon(s) as sent to NIS, one per selected cell
     caption: str, optional
-        text shown top-left (e.g. 'c02  cell 5 of 23')
+        text shown top-left (e.g. 'c02  cells [5, 7] of 23')
     dpi: int
         output resolution; the figure is image-sized, so dpi sets the
         pixel size of the PNG (100 -> a 1024 x 1024 image gives a
@@ -105,6 +105,19 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
     """
     if labels.ndim != 2:
         raise ValueError(f'labels must be 2D, got {labels.shape}')
+
+    def _as_list(x):
+        """normalize a scalar-or-list argument to a list"""
+        if x is None:
+            return []
+        if isinstance(x, (list, tuple)):
+            return list(x)
+        return [x]
+
+    cell_ids = _as_list(cell_ids)
+    cell_polys = _as_list(cell_polys)
+    stim_polys = _as_list(stim_polys)
+    selected_ids = set(cell_ids)
     if image is not None:
         if image.ndim == 2:
             if image.shape != labels.shape:
@@ -156,21 +169,24 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
             ax.plot(contour[:, 1], contour[:, 0], color=COLOR_STIM,
                     lw=1.0, alpha=0.9, zorder=2.5)
 
-    # 4. selected cell: no outline (the ROI polygons mark it); only its
-    # ID text is highlighted below. Still warn if the id is bogus.
-    if cell_id is not None and not (labels == cell_id).any():
-        warnings.warn(f'cell_id {cell_id} not present in labels',
-                      stacklevel=2)
+    # 4. selected cells: no outline (the ROI polygons mark them); only
+    # their ID text is highlighted below. Still warn if an id is bogus.
+    for cid in cell_ids:
+        if not (labels == cid).any():
+            warnings.warn(f'cell_id {cid} not present in labels',
+                          stacklevel=2)
 
     # 5. polygons sent to NIS
-    _draw_poly(ax, cell_poly, COLOR_CELL_POLY, 1.5, zorder=3)
-    _draw_poly(ax, stim_poly, COLOR_STIM_POLY, 2.0, zorder=3)
+    for poly in cell_polys:
+        _draw_poly(ax, poly, COLOR_CELL_POLY, 1.5, zorder=3)
+    for poly in stim_polys:
+        _draw_poly(ax, poly, COLOR_STIM_POLY, 2.0, zorder=3)
 
     # 6. label IDs (on top of everything, incl. the orange fill)
     text_outline = [path_effects.withStroke(linewidth=2.0,
                                             foreground='black')]
     for prop in regionprops(labels):
-        selected = prop.label == cell_id
+        selected = prop.label in selected_ids
         ax.text(prop.centroid[1], prop.centroid[0], str(prop.label),
                 color=COLOR_CELL_POLY if selected else COLOR_TEXT,
                 fontsize=16 if selected else 10,
@@ -184,12 +200,12 @@ def save_qc_overlay(image, labels, path, stimulation_mask=None,
     if stimulation_mask is not None:
         handles.append(Patch(facecolor=(*COLOR_STIM, 0.3),
                              edgecolor=COLOR_STIM, label='FRAP mask'))
-    if cell_poly:
+    if cell_polys:
         handles.append(Line2D([], [], color=COLOR_CELL_POLY, lw=1.5,
-                              label='selected cell'))
-    if stim_poly:
+                              label='selected cell(s)'))
+    if stim_polys:
         handles.append(Line2D([], [], color=COLOR_STIM_POLY, lw=2.0,
-                              label='stim ROI'))
+                              label='stim ROI(s)'))
     legend = ax.legend(handles=handles, loc='upper left', fontsize=12,
                        facecolor='black', framealpha=0.55, edgecolor='none',
                        labelcolor='white')
