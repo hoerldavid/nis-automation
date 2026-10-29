@@ -114,8 +114,12 @@ class TestBuildDetectorVisualization(unittest.TestCase):
                                  visualization_fun=lambda image:
                                  image[..., :1])('x')
         self.assertEqual(len(res), 2)
-        self.assertEqual(len(w), 1)
-        self.assertIn('visualization', str(w[0].message))
+        # count only our own viz warnings - unrelated library warnings
+        # (e.g. skimage's NumPy 2.5 DeprecationWarning in _map_array)
+        # must not break this assertion
+        viz_w = [x for x in w if 'visualization' in str(x.message)]
+        self.assertEqual(len(viz_w), 1)
+        self.assertIn('expected 2D', str(viz_w[0].message))
 
     def test_raising_viz_dropped_with_warning(self):
         """raising viz -> warn + drop, run survives"""
@@ -128,8 +132,9 @@ class TestBuildDetectorVisualization(unittest.TestCase):
                                  stim_mask_fun=maskfun,
                                  visualization_fun=boom)('x')
         self.assertEqual(len(res), 2)
-        self.assertEqual(len(w), 1)
-        self.assertIn('visualization_fun failed', str(w[0].message))
+        viz_w = [x for x in w if 'visualization' in str(x.message)]
+        self.assertEqual(len(viz_w), 1)
+        self.assertIn('visualization_fun failed', str(viz_w[0].message))
 
     def test_labels_dtype_check_still_raises(self):
         """the real contract checks still raise (viz must not swallow them)"""
