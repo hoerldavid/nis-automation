@@ -22,7 +22,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * Remote Cellpose: `cellpose_server/` (self-contained directory: script + `requirements.txt` + README; runs on a separate machine) FastAPI, `POST /detect` np.save in/out. Client `remote_detect_objects` 60 s timeout + 1 retry.
 * Border discard + relabel `distance`/`shuffle`. Stim mask default = left half of object.
 * Detector files live in `autofrap/detectors/` (see the directory for the current list; built-ins table in `WRITING_DETECTOR.md`).
-* `read_channel` (`autofrap/io/nd2.py`) loads via `ND2File.to_xarray` and selects by dimension name (20261020) — the hand-rolled axis-normalization (`_extract`) was deleted; nd2/xarray own the axis handling. `xarray` added to `requirements.txt`/`pyproject.toml` (check the workstation env before the next live run).
+* `read_channel` (`autofrap/io/nd2.py`) loads via `ND2File.to_xarray` and selects by dimension name (20261020) — the hand-rolled axis-normalization (`_extract`) was deleted; nd2/xarray own the axis handling. `xarray` added to `requirements.txt`/`pyproject.toml`; installed on the workstation after the missing import surfaced in a live run (20261029, user). The pipeline (incl. the xarray `read_channel` and the separate acquisition timeouts at their defaults) was used successfully for real experiments by a colleague (20261028, user report).
 * Deprecated import aliases removed 20261001: the `autofrap/core/detection.py` `__getattr__` shim and the `autofrap/core/simple_seg.py` shim are gone — import building blocks from `autofrap.core.image.segmentation` / `autofrap.core.image.mask` / `autofrap.core.image.qc` directly.
 
 **Pipeline**
