@@ -6,6 +6,5 @@
 fastapi
 uvicorn
 cellpose
-# the default model (cpdino-vitb) is DINOv3-based and needs one more
-# package that is not on PyPI:
-#   pip install git+https://github.com/facebookresearch/dinov3
+# our default model (cpdino-vitb) needs source package for DINOv3
+git+https://github.com/facebookresearch/dinov3

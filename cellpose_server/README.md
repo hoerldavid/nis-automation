@@ -11,31 +11,20 @@ machine and run it there.
 
 ## Setup
 
-Install a **CUDA-matched torch first**. cellpose depends on torch, and
-pip will install a default build if it is missing — that build does not
-always match your CUDA version:
+Install **torch first**. Installing the requirements (cellpose) below would transiently install it as well but it's a good idea to install a package that explicitly matches your GPU environment (e.g. to prevent CUDA version mismatches):
 
 ```bash
-# pick the wheel for your CUDA version, see
-# https://pytorch.org/get-started/locally/
-pip install torch --index-url https://download.pytorch.org/whl/cu124   # example: CUDA 12.4
+# pick the wheel for your CUDA version, see e.g. https://pytorch.org/get-started/locally/
+pip install torch --index-url https://download.pytorch.org/whl/cu126   # example: CUDA 12.6
 ```
 
-Then the server dependencies:
+Then install the server dependencies:
 
 ```bash
-pip install -r requirements.txt      # fastapi, uvicorn, cellpose
+pip install -r requirements.txt      # fastapi, uvicorn, cellpose, DINOv3
 ```
 
-We default to using the `cpdino-vitb` model, which is smaller and faster than cellpose's default SAM. To use this DINOv3-based model, we need one more
-package that is not on PyPI:
-
-```bash
-pip install git+https://github.com/facebookresearch/dinov3
-```
-
-Pretrained weights are downloaded on first model load, or copy the local
-model cache over to skip the download.
+Pretrained model weights will be downloaded on first model load.
 
 ## Run
 
@@ -43,10 +32,10 @@ model cache over to skip the download.
 python cellpose_server.py --model cpdino-vitb --host 0.0.0.0 --port 8000
 ```
 
+The `--model`, `--host` and `--port` arguments in the example are the defaults, so you could also leave them out (or adjust).
+
 Device: `--device auto` (default) picks cuda, then mps (Apple Silicon),
-then cpu; override with `--device cuda` / `mps` / `cpu`. (mps support
-depends on the installed cellpose version — if a model errors on mps,
-retry with `--device cpu` or a newer cellpose.)
+then cpu; override with `--device cuda` / `mps` / `cpu`.
 
 ## Client side
 
