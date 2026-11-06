@@ -1046,12 +1046,8 @@ def parse_cli_args(argv=None):
         "--max-cycles",
         type=int,
         default=1,
-        help="max FRAP cycles per FOV [default: %(default)s]",
-    )
-    g_cycles.add_argument(
-        "--until-done",
-        action="store_true",
-        help="run until all cells of a FOV are stimulated " "(ignore --max-cycles)",
+        help="max FRAP cycles per FOV; -1 runs until all cells of a FOV "
+        "are stimulated [default: %(default)s]",
     )
     g_cycles.add_argument(
         "--cells-per-cycle",
@@ -1091,6 +1087,10 @@ def parse_cli_args(argv=None):
     args = p.parse_args(argv)
     if args.no_timestamp and not args.name:
         p.error("--no-timestamp requires --name")
+    if args.max_cycles < -1:
+        p.error("--max-cycles must be >= 1 or -1 (run until done)")
+    if args.max_cycles == -1:
+        args.max_cycles = None  # sentinel: run until all cells stimulated
     return args
 
 
@@ -1155,7 +1155,7 @@ def main(argv=None):
             spacing=args.spacing,
             spiral=not args.grid,
             max_positions=args.max_positions,
-            max_cycles=None if args.until_done else args.max_cycles,
+            max_cycles=args.max_cycles,
             cells_per_cycle=args.cells_per_cycle,
             detection_fun=detection_fun,
             frap_oc=args.frap_oc,

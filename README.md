@@ -106,8 +106,8 @@ Key arguments:
 * `--grid` visit positions in a plain NxM grid instead of the default centre-out spiral
 * `--nx/--ny` grid size (`--grid` mode)
 * `--spacing` FOV spacing in FOV units
-* `--max-cycles` cycles per FOV (default: 1)
-* `--until-done` run until all cells of a FOV are stimulated (ignores `--max-cycles`)
+* `--max-cycles` cycles per FOV (default: 1; `-1` = run until all cells of a FOV are stimulated — rarely needed in practice)
+* `--cells-per-cycle` cells to stimulate in parallel per cycle, picked in label order; all stimulation ROIs are bleached in one stimulation run (default: 1)
 * `--max-consecutive-failures` abort the run after this many consecutive FOV failures (default: 3)
 * `--detector` path to the detector module (required – see below)
 * `--detector-arg key=value` tuning parameters forwarded to the detector (repeatable)
