@@ -36,7 +36,9 @@ The `--model`, `--host` and `--port` arguments in the example are the defaults, 
 
 Device: `--device auto` (default) picks cuda, then mps (Apple Silicon),
 then cpu; override with `--device cuda` / `mps` / `cpu` / `cuda:N`
-(e.g. `cuda:1` to pin a specific GPU on a multi-GPU host).
+(e.g. `cuda:1` to pin a specific GPU on a multi-GPU host). An
+out-of-range index or an unavailable backend exits with a clear error
+(code 2) before the model loads.
 
 ## Client side
 

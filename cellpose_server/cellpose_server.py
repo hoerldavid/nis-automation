@@ -60,7 +60,8 @@ def _device_arg(s):
 
 
 def _resolve_device(device):
-    """resolve 'auto' to the best available torch device"""
+    """resolve 'auto' to the best available torch device; validate an
+    explicit cuda index against the devices torch actually sees"""
     if device == 'auto':
         if torch.cuda.is_available():
             device = 'cuda'
@@ -68,7 +69,18 @@ def _resolve_device(device):
             device = 'mps'
         else:
             device = 'cpu'
-    return torch.device(device)
+    device = torch.device(device)
+    if device.type == 'cuda':
+        n = torch.cuda.device_count()
+        if n == 0:
+            raise ValueError('CUDA device requested, but torch sees no CUDA devices')
+        if device.index is not None and device.index >= n:
+            avail = ', '.join(f'cuda:{i} ({torch.cuda.get_device_name(i)})'
+                              for i in range(n))
+            raise ValueError(f'cuda:{device.index} does not exist; available: {avail}')
+    elif device.type == 'mps' and not torch.backends.mps.is_available():
+        raise ValueError('MPS device requested, but torch reports MPS is not available')
+    return device
 
 
 def create_app(model_name: str, device: str = 'auto') -> FastAPI:
@@ -151,6 +163,11 @@ if __name__ == '__main__':
     p.add_argument('--host', default='0.0.0.0')
     p.add_argument('--port', type=int, default=8000)
     a = p.parse_args()
+
+    try:
+        _resolve_device(a.device)  # fail fast on a bad device, before the model loads
+    except ValueError as e:
+        p.error(str(e))
 
     import uvicorn
     uvicorn.run(create_app(a.model, a.device), host=a.host, port=a.port)
