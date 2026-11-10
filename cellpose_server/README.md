@@ -35,7 +35,8 @@ python cellpose_server.py --model cpdino-vitb --host 0.0.0.0 --port 8000
 The `--model`, `--host` and `--port` arguments in the example are the defaults, so you could also leave them out (or adjust).
 
 Device: `--device auto` (default) picks cuda, then mps (Apple Silicon),
-then cpu; override with `--device cuda` / `mps` / `cpu`.
+then cpu; override with `--device cuda` / `mps` / `cpu` / `cuda:N`
+(e.g. `cuda:1` to pin a specific GPU on a multi-GPU host).
 
 ## Client side
 

@@ -37,6 +37,7 @@ for the default model).
 """
 import argparse
 import io
+import re
 import threading
 import time
 
@@ -44,6 +45,18 @@ import numpy as np
 import torch
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import Response
+
+
+_DEVICE_RE = re.compile(r'^(auto|cpu|mps|cuda(?::\d+)?)$')
+
+
+def _device_arg(s):
+    """argparse type for --device: any cuda index is allowed (cuda, cuda:0,
+    cuda:1, ...) so multi-GPU hosts are not limited to a fixed list"""
+    if not _DEVICE_RE.match(s):
+        raise argparse.ArgumentTypeError(
+            f"invalid device {s!r}: expected 'auto', 'cpu', 'mps' or 'cuda[:N]'")
+    return s
 
 
 def _resolve_device(device):
@@ -73,7 +86,7 @@ def create_app(model_name: str, device: str = 'auto') -> FastAPI:
     def health():
         return {'status': 'ok', 'model': model_name,
                 'cuda': device.type == 'cuda',
-                'device': (torch.cuda.get_device_name(0)
+                'device': (torch.cuda.get_device_name(device)
                            if device.type == 'cuda' else device.type)}
 
     @app.post('/detect')
@@ -130,10 +143,11 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('--model', default='cpdino-vitb',
                    help='cellpose pretrained model name')
-    p.add_argument('--device', default='auto',
-                   choices=('auto', 'cuda', 'mps', 'cpu'),
-                   help="torch device; 'auto' = cuda if available, then "
-                        "mps (Apple Silicon), then cpu [default: %(default)s]")
+    p.add_argument('--device', default='auto', type=_device_arg, metavar='DEVICE',
+                   help="torch device: 'auto', 'cpu', 'mps' or 'cuda[:N]' "
+                        "(e.g. cuda:1 for the second GPU); 'auto' = cuda if "
+                        "available, then mps (Apple Silicon), then cpu "
+                        "[default: %(default)s]")
     p.add_argument('--host', default='0.0.0.0')
     p.add_argument('--port', type=int, default=8000)
     a = p.parse_args()
