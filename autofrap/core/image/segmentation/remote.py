@@ -5,6 +5,7 @@ Runs cellpose on a separate server via HTTP.
 """
 
 import io
+import json
 import time
 
 import numpy as np
@@ -24,7 +25,9 @@ def remote_detect_objects(image, server_url, timeout=60, retries=1,
     Parameters
     ----------
     image: 2D np.ndarray (y, x) or 3D np.ndarray (c, y, x)
-        input image; if 3D, the channel is selected with `channel`
+        input image; if 3D, the channel is selected with `channel`.
+        This client enforces the 2-D contract: the array sent to the
+        server is always 2-D (the server itself accepts any shape)
     server_url: str
         base URL of the cellpose server, e.g. 'http://192.168.1.10:8000'
     timeout: float
@@ -36,9 +39,10 @@ def remote_detect_objects(image, server_url, timeout=60, retries=1,
         channel index to select from a (c, y, x) image; ignored for 2D
         input (assumes the correct channel was already loaded)
     eval_kwargs: dict
-        optional cellpose model.eval() parameters, sent as query params:
-        diameter, min_size, cellprob_threshold, flow_threshold,
-        max_size_fraction (see cellpose_server.py for defaults)
+        optional cellpose model.eval() parameters, sent to the server as
+        one JSON query param (any parameter, incl. dict-valued ones like
+        normalize); accepted names and cellpose's own defaults are listed
+        by the server's /health endpoint
 
     Returns
     -------
@@ -57,11 +61,12 @@ def remote_detect_objects(image, server_url, timeout=60, retries=1,
 
     buf = io.BytesIO()
     np.save(buf, image)
+    params = {'eval_kwargs': json.dumps(eval_kwargs)} if eval_kwargs else None
     for attempt in range(retries + 1):
         try:
             r = requests.post(f'{server_url}/detect', data=buf.getvalue(),
                               headers={'Content-Type': 'application/x-numpy'},
-                              params=eval_kwargs or None,
+                              params=params,
                               timeout=timeout)
             r.raise_for_status()
             break

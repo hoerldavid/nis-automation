@@ -54,6 +54,8 @@ check (FastAPI dependency on `/detect`) if it ever leaves that network.
 
 Full contract in the module docstring of `cellpose_server.py`:
 
-    POST /detect    one 2-D numpy array (np.save bytes) -> label map
-                    (query params: the model.eval() knobs)
-    GET  /health    {"status": "ok", "model": "<name>"}
+    POST /detect    one numpy array, any shape (np.save bytes) -> label map
+                    (query param eval_kwargs: JSON object with any
+                    model.eval() knob, e.g. ?eval_kwargs={"diameter": 30};
+                    accepted names listed by /health)
+    GET  /health    {"status": "ok", "model": "<name>", "eval_params": [...]}

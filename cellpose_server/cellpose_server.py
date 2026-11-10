@@ -4,23 +4,25 @@ cellpose inference server (runs on a separate, ideally GPU, machine).
 Endpoints:
 
     POST /detect
-        request body  : one 2D numpy array, serialized with np.save
-                        (Content-Type: application/x-numpy)
-        query params  : main model.eval() knobs, all optional (defaults
-                        in brackets = cellpose's own defaults):
-                          diameter          (None: estimate from image)
-                          min_size          (15) - discard smaller objects [px]
-                          cellprob_threshold (0.0) - discard objects with lower
-                                                     cell probability
-                          flow_threshold    (0.4) - discard objects with lower
-                                                     flow coherence
-                          max_size_fraction (0.4) - discard objects larger
-                                                     than this fraction of the image
-        response body : the cellpose label map (2D numpy array), same
-                        serialization; extras in headers
-                        (X-Inference-Time-S, X-N-Objects)
+        request body  : one numpy array, any shape, serialized with
+                        np.save (Content-Type: application/x-numpy);
+                        2-D for plain cellpose, 3-D with do_3D in
+                        eval_kwargs for volumetric input
+        query params  : eval_kwargs - a JSON object holding any
+                        CellposeModel.eval() keyword arguments (all
+                        optional; cellpose's own defaults apply), e.g.
+                        ?eval_kwargs={"diameter": 30, "min_size": 50,
+                                      "normalize": {"percentile": [1, 99]}}
+                        'progress' (a live object) and compute_masks=False
+                        (no label map would come back) are rejected with
+                        a 400, as are unknown keys; /health lists the
+                        accepted parameter names
+        response body : the cellpose label map (numpy array, same
+                        serialization); extras in headers
+                        (X-Inference-Time-S, X-N-Objects, X-Shape)
     GET /health
-        {"status": "ok", "model": "<name>"}
+        {"status": "ok", "model": "<name>", "cuda": ..., "device": ...,
+         "eval_params": [<accepted model.eval() kwarg names>]}
 
 The model is loaded once at startup; inference requests are serialized
 with a lock (single GPU).
@@ -36,7 +38,9 @@ the pip dependencies; install a CUDA-matched torch first, and dinov3
 for the default model).
 """
 import argparse
+import inspect
 import io
+import json
 import re
 import threading
 import time
@@ -93,49 +97,51 @@ def create_app(model_name: str, device: str = 'auto') -> FastAPI:
     app = FastAPI(title='cellpose inference server')
     model = models.CellposeModel(pretrained_model=model_name, device=device)  # once, at startup
     lock = threading.Lock()  # serialize inference (single device)
+    # accepted model.eval() kwargs, for /health (excluding self and the image)
+    eval_params = sorted(p for p in inspect.signature(models.CellposeModel.eval).parameters
+                         if p not in ('self', 'x'))
 
     @app.get('/health')
     def health():
         return {'status': 'ok', 'model': model_name,
                 'cuda': device.type == 'cuda',
                 'device': (torch.cuda.get_device_name(device)
-                           if device.type == 'cuda' else device.type)}
+                           if device.type == 'cuda' else device.type),
+                'eval_params': eval_params}
 
     @app.post('/detect')
-    def detect(image: bytes = Body(..., description='np.save-serialized 2-D array'),
-               diameter: float = Query(None,
-                                       description='expected object diameter [px]; '
-                                                   'null = estimate from image'),
-               min_size: int = Query(15, ge=0,
-                                     description='discard objects smaller than this [px]'),
-               cellprob_threshold: float = Query(0.0, ge=0.0,
-                                                 description='discard objects with '
-                                                             'lower cell probability'),
-               flow_threshold: float = Query(0.4, ge=0.0,
-                                             description='discard objects with lower '
-                                                         'flow coherence'),
-               max_size_fraction: float = Query(0.4, gt=0.0, le=1.0,
-                                                description='discard objects larger '
-                                                            'than this fraction of '
-                                                            'the image')):
+    def detect(image: bytes = Body(..., description='np.save-serialized numpy array'),
+               eval_kwargs: str = Query(None,
+                                        description='JSON object of CellposeModel.eval() '
+                                                    'keyword arguments')):
         # sync def on purpose: FastAPI runs it in a worker thread, so the
         # blocking model.eval doesn't stall the event loop
         # (explicit Body(...): a bare `bytes` annotation is read as a query
         #  param in current FastAPI versions)
         arr = np.load(io.BytesIO(image), allow_pickle=False)
-        if arr.ndim != 2:
-            raise HTTPException(400, f'expected a 2-D array, got {arr.ndim}-D')
 
-        eval_kwargs = dict(min_size=min_size,
-                           cellprob_threshold=cellprob_threshold,
-                           flow_threshold=flow_threshold,
-                           max_size_fraction=max_size_fraction)
-        if diameter is not None:
-            eval_kwargs['diameter'] = diameter
+        if eval_kwargs is None:
+            kwargs = {}
+        else:
+            try:
+                kwargs = json.loads(eval_kwargs)
+            except json.JSONDecodeError as e:
+                raise HTTPException(400, f'eval_kwargs is not valid JSON: {e}')
+            if not isinstance(kwargs, dict):
+                raise HTTPException(400, 'eval_kwargs must be a JSON object')
+        if 'progress' in kwargs:
+            raise HTTPException(400, "'progress' is a live object and cannot be "
+                                     'passed over HTTP')
+        if kwargs.get('compute_masks') is False:
+            raise HTTPException(400, 'compute_masks=False would return no label map')
 
         t0 = time.time()
         with lock:
-            masks, flows, styles = model.eval(arr, **eval_kwargs)
+            try:
+                masks, flows, styles = model.eval(arr, **kwargs)
+            except (TypeError, ValueError) as e:
+                # unknown kwarg or invalid parameter combination -> client error
+                raise HTTPException(400, f'bad eval_kwargs: {e}')
         dt = time.time() - t0
         n_obj = len(np.unique(masks)) - 1
 
@@ -145,7 +151,8 @@ def create_app(model_name: str, device: str = 'auto') -> FastAPI:
             content=buf.getvalue(),
             media_type='application/x-numpy',
             headers={'X-Inference-Time-S': f'{dt:.3f}',
-                     'X-N-Objects': str(int(n_obj))},
+                     'X-N-Objects': str(int(n_obj)),
+                     'X-Shape': ','.join(map(str, masks.shape))},
         )
 
     return app
