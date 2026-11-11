@@ -6,7 +6,7 @@ All wrappers in `autofrap/microscope/nis.py` follow:
 2. `nis_ar.exe -mw <file>` attaches to running GUI, blocks until done
 3. Return values via `Int_SetKeyValue` / `Int_SetKeyString` into temp `.ini`
 
-Macro function signatures: the NIS macro function reference (CHM from a NIS installation, extracted to greppable HTML — see `nis_manual/README.md` how to obtain/extract it; extracted copy at `nis_ar_help_html/`) is the source of truth.
+Macro function signatures: the NIS **function reference** is the source of truth (obtain the CHM from a NIS installation — see `nis_manual/README.md`). Curated extract for autofocus / PFS / Z drives → `docs/NIS_AUTOFOCUS_PFS.md` (sources: function reference + main manual).
 
 ### Macro batching
 To reduce `nis_ar` overhead, `autofrap/microscope/nis.py` now uses a `MacroOp` pattern:
@@ -117,7 +117,7 @@ Coordinates are stored in **relative units** and must be converted to pixels:
 * `delete_all_rois_in_current_document()` → batched `DeleteROI` loop (backward iteration), one macro call
 * `close_all_docs(save_flag=2)` → close all open documents (default: discard)
 * `checkpoint(key='ok', value=1)` → writes an ini key via a macro (liveness / progress marker)
-* `do_autofocus(step_coarse, step_fine, focus_criterion, focus_with_piezo)` → two-pass adaptive stage focus (`StgFocusAdaptiveTwoPasses`) + freeze
+* `do_autofocus(step_coarse, step_fine, focus_criterion, focus_with_piezo)` → two-pass adaptive stage focus (`StgFocusAdaptiveTwoPasses`) + freeze; for the full autofocus / Z-drive / PFS macro capability reference see `docs/NIS_AUTOFOCUS_PFS.md`
 * `do_large_image_scan(save_path, left, right, top, bottom, ...)` → `Stg_LargeImageScanArea` stitched scan
 * `backup_optical_configurations(backup_path)` → `BackupOptConf` exports all optical configurations as XML
 * `export_nd2_to_tiff(nd2_file, out_dir, combine_t/yx/z/c)` → converts an ND2 to TIFFs via NIS
@@ -158,6 +158,7 @@ Notes:
 * Create stimulation ROI → `add_polygon_roi_and_set_stim_type` (one macro call), or `add_polygon_roi` + `set_roi_type(3)`
 * Remove all ROIs → `delete_all_rois_in_current_document` (batched), or `get_roi_ids` → `delete_roi` for each
 * Move stage → `set_position`
+* Autofocus / PFS / focus devices → `do_autofocus` wrapper; macro-level capabilities (all `StgFocus*`, `Stg_*PFS*`, `StgZ_*`, per-loop AF in ND) in `docs/NIS_AUTOFOCUS_PFS.md`
 * Check survey template is single image → `get_nd_acq_tabs` → Time/XY/Large Image must be inactive
 * Switch optical configuration → `set_optical_configuration` (FRAPPA required before stimulation)
 

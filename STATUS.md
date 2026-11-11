@@ -63,6 +63,7 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * Other NIS-specific gotchas (macro file handles, `Int_SetKeyValue`, absolute paths, `CloseCurrentDocument` dialog, `ND_DefineExperiment` save switch, `Frozen` live view, ...): `docs/NIS_REFERENCE.md` § Gotchas.
 
 ## Recent sessions
+* 20261111 – NIS manual research documented: new `docs/NIS_AUTOFOCUS_PFS.md` capability reference (autofocus methods, focus criteria/surface, PFS, Z drives, ND per-loop AF/PFS, nis.py coverage), linked from `docs/NIS_REFERENCE.md`. See `docs/SESSION_HISTORY.md`.
 * 20261110 – cellpose_server `--device cuda:N` + all-JSON `/detect` API: argparse `choices` replaced by a regex validator so any GPU index works; `/health` now reports the selected GPU (was hardcoded cuda:0); invalid/unavailable device exits cleanly (code 2) before model load. `/detect` now takes any array shape and all `model.eval()` kwargs as one JSON `eval_kwargs` param (2-D contract enforced client-side in `remote_detect_objects`); 400 on bad JSON/unknown keys; `X-Shape` header + `eval_params` in `/health`. Verified on the 2-GPU AMD host (env-py314): /health + /detect on cuda:0 and cuda:1, incl. 3D input. Suite 144 tests OK. See `docs/SESSION_HISTORY.md`.
 * 20261103 – CLI: `--until-done` removed; `--max-cycles -1` is now the "run until all cells of a FOV are stimulated" sentinel (validated, mapped to `None` in `parse_cli_args`); README mentions it briefly. Suite 144 tests OK. See `docs/SESSION_HISTORY.md`.
 * 20261029 – Fixed the 2 pre-existing `test_detection.py` env failures: warning-count assertions now filter on message content (NumPy 2.5/skimage DeprecationWarning leak); suite fully green, 144 tests / 6 skipped. See `docs/SESSION_HISTORY.md`.
@@ -71,4 +72,5 @@ Automate multi-FOV, multi-cycle FRAP on Nikon microscopes via NIS Elements. Surv
 * 20261029 – Parallel multi-cell FRAP wired into the pipeline: `cells_per_cycle` / `--cells-per-cycle` (default 1), plural selection + looped ROI ops + plural QC overlay; FakeNIS-verified `cells_per_cycle=2`. Suite 142 tests, 6 skipped, 2 known env failures. See `docs/SESSION_HISTORY.md`.
 Full session history: `docs/SESSION_HISTORY.md`
 NIS macro reference: `docs/NIS_REFERENCE.md`
+NIS autofocus / PFS capability reference: `docs/NIS_AUTOFOCUS_PFS.md`
 Architecture / file map: `docs/ARCHITECTURE.md`
